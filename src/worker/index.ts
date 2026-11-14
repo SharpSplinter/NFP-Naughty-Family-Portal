@@ -6537,14 +6537,31 @@ export default {
       const toExclusive = toMs + 86400 * 1000
       const firstSeason = Math.max(2021, new Date(fromMs).getUTCFullYear())
       const lastSeason = new Date(toMs).getUTCFullYear()
-      const now = new Date().toISOString()
+      const currentYear = new Date().getUTCFullYear()
+      const nowMs = Date.now()
+      const now = new Date(nowMs).toISOString()
+      const currentChristmasActivity = lastSeason === currentYear
+        ? await loadTornCalendarActivity(env, session.player_id, "christmas-town", "Christmas town")
+        : null
+      const currentChristmasWindow = currentChristmasActivity
+        ? buildTornCalendarEventWindow(currentChristmasActivity)
+        : null
       const jobs: Array<{ eventYear: number; status: string; jobId: string; logsCollected: number }> = []
       for (let year = firstSeason; year <= lastSeason; year++) {
         const seasonStart = Date.UTC(year, 11, 1)
         const seasonEnd = Date.UTC(year + 1, 0, 1)
         if (seasonEnd <= fromMs || seasonStart >= toExclusive) continue
-        const startAt = new Date(seasonStart).toISOString()
-        const endAt = new Date(seasonEnd).toISOString()
+        let startAt = new Date(seasonStart).toISOString()
+        let endAt = new Date(seasonEnd).toISOString()
+        // For the current in-progress Christmas Town event, use Torn's nominal
+        // calendar dates and the authenticated player's TCT start time. Past
+        // years remain full-season collections because the current API cannot
+        // authoritatively reconstruct those players' historical calendar slots.
+        if (year === currentYear && currentChristmasActivity && currentChristmasWindow &&
+            Date.parse(currentChristmasWindow.startAt) <= nowMs && Date.parse(currentChristmasWindow.endAt) > nowMs) {
+          startAt = currentChristmasWindow.startAt
+          endAt = currentChristmasWindow.endAt
+        }
         const existing = await requireDb(env).prepare(
           "SELECT job_id AS jobId, status, logs_collected AS logsCollected, window_start_at AS windowStartAt, window_end_at AS windowEndAt FROM christmas_town_collection_jobs WHERE player_id = ? AND event_year = ?",
         ).bind(session.player_id, year).first<{
