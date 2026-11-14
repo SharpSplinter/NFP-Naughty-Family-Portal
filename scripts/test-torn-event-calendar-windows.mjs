@@ -31,8 +31,10 @@ assert.ok(worker.includes("await ensureHalloweenEventDefinition(env, session.pla
 assert.ok(worker.includes('url.pathname === "/api/me/christmas-town/calendar"'))
 assert.ok(worker.includes('loadTornCalendarActivity(env, session.player_id, "christmas-town", "Christmas town")'))
 assert.ok(christmasUi.includes("/api/me/christmas-town/calendar"))
-assert.ok(christmasUi.includes("calendarStartAt"), "the current Christmas Town year must not become selectable before the calendar start")
+assert.ok(christmasUi.includes("calendarEndAt"), "the current Christmas Town year must not become selectable before the calendar start")
 assert.ok(christmasUi.includes("calendarEvent?.eventYear === year"), "the current Christmas Town season must compare against its exact API window")
+assert.ok(worker.includes('status: "upcoming"') && worker.includes("Date.parse(currentChristmasWindow.endAt) > nowMs"), "Christmas Town historical collection must wait for the API-defined season to close")
+assert.ok(christmasUi.includes("Date.now() >= Date.parse(calendarEndAt as string)"), "the current season should only become selectable after its confirmed end")
 assert.ok(halloweenUi.includes("personalWindow?.requiresConfirmation"), "only known historical years should show the per-year time confirmation control")
 assert.ok(halloweenUi.includes("complete nominal event window"), "unknown years must explain their full-window fallback")
 
