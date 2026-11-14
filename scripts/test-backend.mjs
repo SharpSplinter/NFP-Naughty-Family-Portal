@@ -1963,7 +1963,7 @@ try {
     assert.ok(workerSource.includes("halloween_live_snapshot_jobs WHERE player_id = ? AND event_year = ? LIMIT 1"), "queued live captures must lock time-slot edits")
     assert.ok(uiSource.includes("length: 25") && uiSource.includes("10 * 60 + index * 15"), "the UI must expose all 25 times from 10:00 through 16:00")
     assert.ok(uiSource.includes('id="halloween-personal-start-time"'), "the member must be able to select a personal event start time")
-    assert.ok(uiSource.includes("November 1 at the same selected clock time"), "the UI must explain the correlated end time")
+    assert.ok(uiSource.includes("event's final day"), "the UI must explain that the selected TCT time also defines the end boundary")
   })
 
   await test("admin endpoint refresh is admin-gated, selective, audited, and live-only", () => {
