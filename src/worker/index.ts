@@ -6713,6 +6713,7 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const yearValue = Number(url.searchParams.get("year") || new Date().getUTCFullYear())
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       const personal = await getHalloweenMemberEventWindow(env, session.player_id, yearValue)
       if (!personal) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
       const db = requireDb(env)
@@ -6742,9 +6743,11 @@ export default {
         return jsonResponse({ error: "Start times must be between 10:00 and 16:00 TCT in 15-minute increments." }, 400, origin)
       }
       const db = requireDb(env)
-      const event = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt FROM halloween_event_windows WHERE event_year = ?")
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
+      const event = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt, requires_time_confirmation AS requiresTimeConfirmation FROM halloween_event_windows WHERE event_year = ?")
         .bind(yearValue).first<HalloweenEventDefinition>()
       if (!event) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
+      if (Number(event.requiresTimeConfirmation ?? 1) !== 1) return jsonResponse({ error: "Torn already supplied this event's collection window. A manual time confirmation is not needed." }, 409, origin)
       let personalWindow: HalloweenMemberEventWindow
       try { personalWindow = buildHalloweenMemberEventWindow(event, startMinuteOfDay) }
       catch (error) { return jsonResponse({ error: error instanceof Error ? error.message : "The event window is invalid." }, 409, origin) }
@@ -6761,7 +6764,7 @@ export default {
         return jsonResponse({ error: "Your event time is locked because collection or snapshot capture has already started. Contact an administrator to correct it safely." }, 409, origin)
       }
       const now = new Date().toISOString()
-      await db.prepare("INSERT INTO halloween_member_event_slots (event_year, player_id, start_minute_of_day, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_year, player_id) DO UPDATE SET start_minute_of_day = excluded.start_minute_of_day, updated_at = excluded.updated_at")
+      await db.prepare("INSERT INTO halloween_member_event_slots (event_year, player_id, start_minute_of_day, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, 'user_confirmed') ON CONFLICT(event_year, player_id) DO UPDATE SET start_minute_of_day = excluded.start_minute_of_day, source = 'user_confirmed', updated_at = excluded.updated_at")
         .bind(yearValue, session.player_id, startMinuteOfDay, now, now).run()
       return jsonResponse({ saved: true, locked: false, myWindow: personalWindow }, 200, origin)
     }
@@ -6770,6 +6773,7 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const yearValue = Number(url.searchParams.get("year") || new Date().getUTCFullYear())
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       const db = requireDb(env)
       const event = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt, live_collection_enabled AS liveCollectionEnabled FROM halloween_event_windows WHERE event_year = ?")
         .bind(yearValue).first<{ eventYear: number; startAt: string; endAt: string; liveCollectionEnabled: number }>()
@@ -6836,6 +6840,7 @@ export default {
       if (requestedYear === "all") return jsonResponse(await loadHalloweenAllTimeArchive(env, db, session.player_id), 200, origin)
       const yearValue = Number(requestedYear)
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       const event = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt FROM halloween_event_windows WHERE event_year = ?")
         .bind(yearValue).first<{ eventYear: number; startAt: string; endAt: string }>()
       if (!event) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
@@ -7018,6 +7023,7 @@ export default {
         return jsonResponse({ error: "Review the updated Halloween collection terms and enable User → Attacks access before collecting Revitalize data." }, 409, origin)
       }
 
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       const event = await db.prepare("SELECT start_at AS startAt, end_at AS endAt, historical_collection_enabled AS enabled FROM halloween_event_windows WHERE event_year = ?")
         .bind(yearValue).first<{ startAt: string; endAt: string; enabled: number }>()
       if (!event || event.enabled !== 1) return jsonResponse({ error: "Historical collection is not enabled for this event year." }, 409, origin)
