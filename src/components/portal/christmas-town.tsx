@@ -280,11 +280,17 @@ export function ChristmasTownWorkspace({
       }
       if (!response.ok) throw new Error(payload.error || "Could not start Christmas Town collection.")
       const queued = (payload.jobs ?? []).filter(job => job.status === "queued").length
-      setMessage(queued
+      const upcoming = (payload.jobs ?? []).filter(job => job.status === "upcoming").length
+      const upcomingNote = upcoming
+        ? " The current season is still open in Torn and will become collectible after its calendar window closes."
+        : ""
+      setMessage((queued
         ? automatic
           ? "Collection automatically started for Christmas Town " + (selectedYear === "all" ? "seasons" : selectedYear) + ". Progress will appear here as Torn logs are processed."
           : "Queued " + queued.toLocaleString() + " Christmas Town season(s) for collection. Progress will appear here as the logs are processed."
-        : "The selected Christmas Town seasons are already up to date.")
+        : upcoming
+          ? "The current Christmas Town season has not closed yet."
+          : "The selected Christmas Town seasons are already up to date.") + upcomingNote)
       await loadArchive(from, to)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not start Christmas Town collection.")
