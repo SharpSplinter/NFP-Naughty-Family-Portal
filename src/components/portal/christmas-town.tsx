@@ -58,16 +58,15 @@ type ChristmasTownArchivePayload = {
 
 const todayUtc = () => new Date().toISOString().slice(0, 10)
 
-function christmasTownAvailableYears(calendarStartAt: string | null): number[] {
+function christmasTownAvailableYears(calendarEndAt: string | null): number[] {
   const currentYear = Number(todayUtc().slice(0, 4))
-  // Do not offer the current season for collection until Torn's own nominal
-  // event start has arrived. This avoids scanning an empty future event range.
-  const calendarStartMs = calendarStartAt ? Date.parse(calendarStartAt) : Number.NaN
-  const apiWindowKnown = Number.isFinite(calendarStartMs)
-  const fallbackSeasonReached = todayUtc() >= currentYear + "-12-10"
+  // Historical collection is enabled only after the whole season closes. The
+  // collector can then scan every day exactly once without missing later logs.
+  const apiWindowKnown = Boolean(calendarEndAt && Number.isFinite(Date.parse(calendarEndAt)))
+  const fallbackSeasonClosed = todayUtc() >= currentYear + "-12-31"
   const latestYear = apiWindowKnown
-    ? Date.now() >= calendarStartMs ? currentYear : currentYear - 1
-    : fallbackSeasonReached ? currentYear : currentYear - 1
+    ? Date.now() >= Date.parse(calendarEndAt as string) ? currentYear : currentYear - 1
+    : fallbackSeasonClosed ? currentYear : currentYear - 1
   return Array.from({ length: Math.max(0, latestYear - 2021 + 1) }, (_, index) => 2021 + index)
 }
 
@@ -173,7 +172,7 @@ export function ChristmasTownWorkspace({
 }: ChristmasTownWorkspaceProps) {
   const [selectedYear, setSelectedYear] = useState("all")
   const [calendarEvent, setCalendarEvent] = useState<ChristmasTownCalendarEvent | null>(null)
-  const availableYears = christmasTownAvailableYears(calendarEvent?.startAt ?? null)
+  const availableYears = christmasTownAvailableYears(calendarEvent?.endAt ?? null)
   const { from: appliedFromDate, to: appliedToDate } = christmasTownDateRange(selectedYear, calendarEvent)
   const [keyStatus, setKeyStatus] = useState<ChristmasTownKeyStatus | null>(null)
   const [archive, setArchive] = useState<ChristmasTownArchivePayload | null>(null)
@@ -401,7 +400,7 @@ export function ChristmasTownWorkspace({
         <div>
           <div className="christmas-town-section-kicker">EVENT SEASON COVERAGE</div>
           <h2>Historical collection</h2>
-          <p>Past seasons use the full December window when their exact historical calendar times are unavailable. Once the current season begins, its collection window is detected from Torn's event calendar and your personal TCT start time.</p>
+          <p>Past seasons use the full December window when their exact historical calendar times are unavailable. The current season becomes collectible after it closes; its exact window is detected from Torn's event calendar and your personal TCT start time.</p>
           {archive && <SeasonCollectionStatus fromDate={appliedFromDate} toDate={appliedToDate} jobs={archive.collection} />}
         </div>
         <div className="christmas-town-collection-actions">
