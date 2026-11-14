@@ -6773,7 +6773,7 @@ export default {
       if (!event) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
       if (Number(event.requiresTimeConfirmation ?? 1) !== 1) return jsonResponse({ error: "Torn already supplied this event's collection window. A manual time confirmation is not needed." }, 409, origin)
       let personalWindow: HalloweenMemberEventWindow
-      try { personalWindow = buildHalloweenMemberEventWindow(event, startMinuteOfDay) }
+      try { personalWindow = { ...buildHalloweenMemberEventWindow(event, startMinuteOfDay), requiresConfirmation: true, source: "user_confirmed" } }
       catch (error) { return jsonResponse({ error: error instanceof Error ? error.message : "The event window is invalid." }, 409, origin) }
       const existingSlot = await db.prepare("SELECT start_minute_of_day AS startMinuteOfDay FROM halloween_member_event_slots WHERE player_id = ? AND event_year = ?")
         .bind(session.player_id, yearValue).first<{ startMinuteOfDay: number }>()
