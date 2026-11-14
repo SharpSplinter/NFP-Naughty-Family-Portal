@@ -64,6 +64,7 @@ try {
     parseFactionGymEnergyResponse,
     parseFactionPublicStatsResponse,
     parseFactionStatsResponse,
+    filterCurrentFactionStats,
     countCompletePublicMetrics,
   } = require(join(temp, "lib/faction-performance/collector.js"))
   const {
@@ -178,18 +179,33 @@ try {
     assert.equal(factionRows.every(row=>row.factionId==="8317"),true)
   })
 
-  await test("faction-wide stats parser validates the enum and reports missing/future fields explicitly", () => {
+  await test("faction-wide stats parser excludes deprecated Torn counters and filters legacy snapshots", () => {
+    const deprecatedStats = [
+      { name: "gymtrains", value: 13199807 },
+      { name: "gymstrength", value: 43229780 },
+      { name: "gymspeed", value: 41462200 },
+      { name: "gymdefense", value: 45613685 },
+      { name: "gymdexterity", value: 38562055 },
+      { name: "gymenergy", value: 0 },
+      { name: "attackschain", value: 0 },
+    ]
     const parsed = parseFactionStatsResponse({ stats: [
       { name: "medicalitemsused", value: 1167570 },
       { name: "organisedcrimemoney", value: 369055040000 },
+      ...deprecatedStats,
       { name: "membersamount", value: 6 },
       { name: "futurestat", value: 11 },
     ] })
     assert.equal(parsed.stats.find(stat => stat.name === "organisedcrimemoney")?.value, 369055040000)
-    assert.ok(parsed.missingStatNames.includes("gymdexterity"))
+    assert.ok(parsed.missingStatNames.includes("traveltime"))
     assert.ok(!parsed.missingStatNames.includes("membersamount"))
+    assert.ok(!parsed.missingStatNames.some(name => deprecatedStats.some(stat => stat.name === name)))
+    assert.ok(!parsed.stats.some(stat => deprecatedStats.some(deprecated => deprecated.name === stat.name)))
     assert.ok(!parsed.stats.some(stat => stat.name === "membersamount"))
     assert.deepEqual(parsed.unexpectedStatNames, ["futurestat", "membersamount"])
+    assert.deepEqual(filterCurrentFactionStats([...deprecatedStats, { name: "attackswon", value: 19 }]), [
+      { name: "attackswon", value: 19 },
+    ])
     assert.throws(() => parseFactionStatsResponse({ stats: [{ name: "medicalitemsused", value: "11" }] }))
     assert.throws(() => parseFactionStatsResponse({ stats: [{ name: "medicalitemsused", value: 1 }, { name: "medicalitemsused", value: 2 }] }))
   })

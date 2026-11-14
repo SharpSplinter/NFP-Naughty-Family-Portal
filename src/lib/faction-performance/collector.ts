@@ -16,7 +16,6 @@ export const FACTION_STAT_NAMES = [
   "organisedcrimefail",
   "attackswon",
   "attackslost",
-  "attackschain",
   "attacksleave",
   "attacksmug",
   "attackshosp",
@@ -27,12 +26,6 @@ export const FACTION_STAT_NAMES = [
   "hosps",
   "medicalitemrecovery",
   "medicalcooldownused",
-  "gymtrains",
-  "gymstrength",
-  "gymspeed",
-  "gymenergy",
-  "gymdefense",
-  "gymdexterity",
   "candyused",
   "alcoholused",
   "energydrinkused",
@@ -51,6 +44,17 @@ export const FACTION_STAT_NAMES = [
   "attacksrunaway",
   "highestterritories",
   "territoryrespect",
+] as const
+
+/** Torn no longer returns these legacy counters from /faction/stats. */
+export const DEPRECATED_FACTION_STAT_NAMES = [
+  "gymtrains",
+  "gymstrength",
+  "gymspeed",
+  "gymdefense",
+  "gymdexterity",
+  "gymenergy",
+  "attackschain",
 ] as const
 
 export type FactionStatName = (typeof FACTION_STAT_NAMES)[number]
@@ -80,7 +84,7 @@ export function parseFactionStatsResponse(payload: unknown): ParsedFactionStatsR
       throw new Error("Torn faction stats response contains an invalid stat name.")
     }
     if (!allowedNames.has(name)) {
-      unexpected.add(name)
+      if (!(DEPRECATED_FACTION_STAT_NAMES as readonly string[]).includes(name)) unexpected.add(name)
       continue
     }
     if (seen.has(name)) throw new Error("Torn faction stats response contains a duplicate stat name.")
@@ -95,6 +99,22 @@ export function parseFactionStatsResponse(payload: unknown): ParsedFactionStatsR
     missingStatNames: FACTION_STAT_NAMES.filter((name) => !seen.has(name)),
     unexpectedStatNames: Array.from(unexpected).sort(),
   }
+}
+
+/** Removes legacy or malformed entries from a previously persisted faction snapshot. */
+export function filterCurrentFactionStats(payload: unknown): FactionStat[] {
+  if (!Array.isArray(payload)) return []
+  const allowedNames = new Set<string>(FACTION_STAT_NAMES)
+  const seen = new Set<string>()
+  const filtered: FactionStat[] = []
+  for (const raw of payload) {
+    if (!isRecord(raw) || typeof raw.name !== "string" || typeof raw.value !== "number" || !Number.isFinite(raw.value)) continue
+    const name = raw.name.trim()
+    if (!allowedNames.has(name) || seen.has(name)) continue
+    seen.add(name)
+    filtered.push({ name: name as FactionStatName, value: raw.value })
+  }
+  return filtered
 }
 
 

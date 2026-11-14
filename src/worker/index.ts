@@ -6,6 +6,8 @@ import {
   parseFactionPublicStatsResponse,
   parseFactionRosterResponse,
   parseFactionStatsResponse,
+  DEPRECATED_FACTION_STAT_NAMES,
+  filterCurrentFactionStats,
 } from "../lib/faction-performance/collector"
 import {
   calculateWeeklyMemberResult,
@@ -7882,6 +7884,11 @@ export default {
             "SELECT last_success_at AS lastSuccessAt, last_run_id AS lastRunId, last_error AS lastError, updated_at AS updatedAt FROM faction_stats_collection_state WHERE faction_id = ?"
           ).bind(NAUGHTY_SOULS_FACTION_ID).first<Record<string, unknown>>(),
         ])
+        const stats = snapshot ? filterCurrentFactionStats(parseStoredJson(snapshot.statsJson)) : []
+        const deprecatedNames = new Set<string>(DEPRECATED_FACTION_STAT_NAMES)
+        const retainedStatNames = (value: unknown): string[] => Array.isArray(value)
+          ? value.filter((name): name is string => typeof name === "string" && !deprecatedNames.has(name))
+          : []
         return jsonResponse({
           factionId: NAUGHTY_SOULS_FACTION_ID,
           generatedAt: new Date().toISOString(),
@@ -7890,11 +7897,11 @@ export default {
             capturedAt: String(snapshot.capturedAt),
             scheduledAt: String(snapshot.scheduledAt),
             status: String(snapshot.status),
-            returnedStatCount: Number(snapshot.returnedStatCount),
+            returnedStatCount: stats.length,
           } : null,
-          stats: snapshot ? parseStoredJson(snapshot.statsJson) ?? [] : [],
-          missingStatNames: snapshot ? parseStoredJson(snapshot.missingStatNamesJson) ?? [] : [],
-          unexpectedStatNames: snapshot ? parseStoredJson(snapshot.unexpectedStatNamesJson) ?? [] : [],
+          stats,
+          missingStatNames: snapshot ? retainedStatNames(parseStoredJson(snapshot.missingStatNamesJson)) : [],
+          unexpectedStatNames: snapshot ? retainedStatNames(parseStoredJson(snapshot.unexpectedStatNamesJson)) : [],
           collection: state ? {
             lastSuccessAt: state.lastSuccessAt == null ? null : String(state.lastSuccessAt),
             lastRunId: state.lastRunId == null ? null : String(state.lastRunId),
