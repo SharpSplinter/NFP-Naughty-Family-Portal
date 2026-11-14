@@ -63,9 +63,11 @@ function christmasTownAvailableYears(calendarStartAt: string | null): number[] {
   // Do not offer the current season for collection until Torn's own nominal
   // event start has arrived. This avoids scanning an empty future event range.
   const calendarStartMs = calendarStartAt ? Date.parse(calendarStartAt) : Number.NaN
-  const latestYear = Number.isFinite(calendarStartMs) && Date.now() >= calendarStartMs
-    ? currentYear
-    : currentYear - 1
+  const apiWindowKnown = Number.isFinite(calendarStartMs)
+  const fallbackSeasonReached = todayUtc() >= currentYear + "-12-10"
+  const latestYear = apiWindowKnown
+    ? Date.now() >= calendarStartMs ? currentYear : currentYear - 1
+    : fallbackSeasonReached ? currentYear : currentYear - 1
   return Array.from({ length: Math.max(0, latestYear - 2021 + 1) }, (_, index) => 2021 + index)
 }
 
