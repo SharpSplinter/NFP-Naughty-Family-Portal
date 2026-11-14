@@ -2509,13 +2509,31 @@ async function runHalloweenAttackMetricsPage(env: WorkerEnv, jobId: string): Pro
     .bind(pages, reviewed, successfulAttacks, lostStalematedAttacks, procs, asJson(chances), now, now, jobId).run()
 }
 
-type HalloweenEventDefinition = { eventYear: number; startAt: string; endAt: string }
+type HalloweenEventDefinition = {
+  eventYear: number
+  startAt: string
+  endAt: string
+  fixedStartTime?: number
+  requiresTimeConfirmation?: number
+  calendarSource?: string
+}
 type HalloweenMemberEventWindow = {
   configured: boolean
   startMinuteOfDay: number | null
   startTime: string | null
   startAt: string | null
   endAt: string | null
+  requiresConfirmation?: boolean
+  source?: string
+}
+type TornCalendarActivity = {
+  title: string
+  startAt: string
+  endAt: string
+  earliestStartAt: string
+  latestEndAt: string
+  fixedStartTime: boolean
+  personalStartMinuteOfDay: number | null
 }
 
 function formatHalloweenStartTime(startMinuteOfDay: number): string {
@@ -2524,8 +2542,130 @@ function formatHalloweenStartTime(startMinuteOfDay: number): string {
   return String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0")
 }
 
-function buildHalloweenMemberEventWindow(event: HalloweenEventDefinition, startMinuteOfDay: number): HalloweenMemberEventWindow {
-  if (!Number.isInteger(startMinuteOfDay) || startMinuteOfDay < 600 || startMinuteOfDay > 960 || startMinuteOfDay % 15 !== 0) {
+function unixSecondsToIso(value: unknown): string | null {
+  const seconds = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : null
+}
+
+function parseTornCalendarStartTime(value: unknown): number | null {
+  if (typeof value !== "string") return null
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?:\s*TCT)?$/i)
+  if (!match) return null
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : null
+}
+
+async function loadTornCalendarActivity(
+  env: WorkerEnv,
+  playerId: string,
+  eventKey: string,
+  expectedTitle: string,
+): Promise<TornCalendarActivity | null> {
+  const db = requireDb(env)
+  const cached = await db.prepare(
+    "SELECT title, start_at AS startAt, end_at AS endAt, earliest_start_at AS earliestStartAt, latest_end_at AS latestEndAt, fixed_start_time AS fixedStartTime, personal_start_minute_of_day AS personalStartMinuteOfDay, fetched_at AS fetchedAt FROM torn_event_calendar_cache WHERE player_id = ? AND event_key = ? AND event_year = ?",
+  ).bind(playerId, eventKey, new Date().getUTCFullYear()).first<{
+    title: string; startAt: string; endAt: string; earliestStartAt: string; latestEndAt: string
+    fixedStartTime: number; personalStartMinuteOfDay: number | null; fetchedAt: string
+  }>()
+  const freshAfter = Date.now() - 6 * 60 * 60 * 1000
+  if (cached && Date.parse(cached.fetchedAt) >= freshAfter) {
+    return {
+      title: cached.title, startAt: cached.startAt, endAt: cached.endAt,
+      earliestStartAt: cached.earliestStartAt, latestEndAt: cached.latestEndAt,
+      fixedStartTime: cached.fixedStartTime === 1,
+      personalStartMinuteOfDay: cached.personalStartMinuteOfDay == null ? null : Number(cached.personalStartMinuteOfDay),
+    }
+  }
+
+  const apiKey = await savedKey(env, playerId).catch(() => null)
+  if (!apiKey) return cached ? {
+    title: cached.title, startAt: cached.startAt, endAt: cached.endAt,
+    earliestStartAt: cached.earliestStartAt, latestEndAt: cached.latestEndAt,
+    fixedStartTime: cached.fixedStartTime === 1,
+    personalStartMinuteOfDay: cached.personalStartMinuteOfDay == null ? null : Number(cached.personalStartMinuteOfDay),
+  } : null
+
+  try {
+    await throttleHalloweenRequest(env, playerId)
+    const response = await trackedTornFetch("event-calendar-sync", "https://api.torn.com/v2/torn/calendar", {
+      headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+    }, fetch, playerId)
+    const payload: unknown = await response.json().catch(() => null)
+    const root = isRecord(payload) && isRecord(payload.calendar) ? payload.calendar : null
+    if (!response.ok || !root) throw new Error("Torn's event calendar could not be read.")
+    const activities = [
+      ...(Array.isArray(root.events) ? root.events : []),
+      ...(Array.isArray(root.competitions) ? root.competitions : []),
+    ]
+    const normalizedTitle = expectedTitle.toLowerCase().replace(/[^a-z0-9]+/g, "")
+    const activity = activities.find(item => isRecord(item) &&
+      typeof item.title === "string" &&
+      item.title.toLowerCase().replace(/[^a-z0-9]+/g, "") === normalizedTitle)
+    if (!isRecord(activity)) return null
+    const startAt = unixSecondsToIso(activity.start)
+    const endAt = unixSecondsToIso(activity.end)
+    const earliestStartAt = unixSecondsToIso(activity.earliest_start)
+    const latestEndAt = unixSecondsToIso(activity.latest_end)
+    if (!startAt || !endAt || !earliestStartAt || !latestEndAt || Date.parse(endAt) < Date.parse(startAt)) {
+      throw new Error("Torn returned an invalid event calendar window.")
+    }
+    const fixedStartTime = activity.fixed_start_time === true
+    let personalStartMinuteOfDay: number | null = null
+    if (!fixedStartTime) {
+      await throttleHalloweenRequest(env, playerId)
+      const personalResponse = await trackedTornFetch("event-personal-calendar-time", "https://api.torn.com/v2/user/calendar", {
+        headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+      }, fetch, playerId)
+      const personalPayload: unknown = await personalResponse.json().catch(() => null)
+      const personalRoot = isRecord(personalPayload) && isRecord(personalPayload.calendar) ? personalPayload.calendar : null
+      if (personalResponse.ok && personalRoot) personalStartMinuteOfDay = parseTornCalendarStartTime(personalRoot.start_time)
+    }
+    const now = new Date().toISOString()
+    await db.prepare(
+      "INSERT INTO torn_event_calendar_cache (player_id, event_key, event_year, title, start_at, end_at, earliest_start_at, latest_end_at, fixed_start_time, personal_start_minute_of_day, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id, event_key, event_year) DO UPDATE SET title = excluded.title, start_at = excluded.start_at, end_at = excluded.end_at, earliest_start_at = excluded.earliest_start_at, latest_end_at = excluded.latest_end_at, fixed_start_time = excluded.fixed_start_time, personal_start_minute_of_day = excluded.personal_start_minute_of_day, fetched_at = excluded.fetched_at",
+    ).bind(playerId, eventKey, new Date().getUTCFullYear(), String(activity.title), startAt, endAt, earliestStartAt, latestEndAt, fixedStartTime ? 1 : 0, personalStartMinuteOfDay, now).run()
+    return { title: String(activity.title), startAt, endAt, earliestStartAt, latestEndAt, fixedStartTime, personalStartMinuteOfDay }
+  } catch {
+    return cached ? {
+      title: cached.title, startAt: cached.startAt, endAt: cached.endAt,
+      earliestStartAt: cached.earliestStartAt, latestEndAt: cached.latestEndAt,
+      fixedStartTime: cached.fixedStartTime === 1,
+      personalStartMinuteOfDay: cached.personalStartMinuteOfDay == null ? null : Number(cached.personalStartMinuteOfDay),
+    } : null
+  }
+}
+
+function buildTornCalendarEventWindow(activity: TornCalendarActivity): { startAt: string; endAt: string; startMinuteOfDay: number | null } {
+  const nominalStartMs = Date.parse(activity.startAt)
+  const nominalEndExclusiveMs = Date.parse(activity.endAt) + 1000
+  if (activity.fixedStartTime) {
+    return { startAt: activity.startAt, endAt: new Date(nominalEndExclusiveMs).toISOString(), startMinuteOfDay: null }
+  }
+  const minute = activity.personalStartMinuteOfDay
+  if (minute !== null) {
+    const startDate = activity.startAt.slice(0, 10)
+    const endDate = activity.endAt.slice(0, 10)
+    const startDay = Date.parse(startDate + "T00:00:00.000Z")
+    const endDay = Date.parse(endDate + "T00:00:00.000Z")
+    const candidateStart = startDay + minute * 60 * 1000
+    const candidateEnd = endDay + minute * 60 * 1000
+    const earliest = Date.parse(activity.earliestStartAt)
+    const latest = Date.parse(activity.latestEndAt)
+    if (Number.isFinite(candidateStart) && Number.isFinite(candidateEnd) &&
+        candidateStart >= earliest && candidateEnd <= latest && candidateEnd > candidateStart) {
+      return { startAt: new Date(candidateStart).toISOString(), endAt: new Date(candidateEnd).toISOString(), startMinuteOfDay: minute }
+    }
+  }
+  // If Torn has no usable personal start time, collect the complete nominal
+  // calendar envelope instead of guessing a personalized start or end.
+  return { startAt: new Date(nominalStartMs).toISOString(), endAt: new Date(nominalEndExclusiveMs).toISOString(), startMinuteOfDay: null }
+}
+
+function buildHalloweenMemberEventWindow(event: HalloweenEventDefinition, startMinuteOfDay: number, apiDerived = false): HalloweenMemberEventWindow {
+  if (!Number.isInteger(startMinuteOfDay) || startMinuteOfDay < 600 || startMinuteOfDay > 960 ||
+      (!apiDerived && startMinuteOfDay % 15 !== 0)) {
     throw new Error("Choose a Trick or Treat start time from 10:00 through 16:00 TCT in 15-minute increments.")
   }
   const startDate = event.startAt.slice(0, 10)
@@ -2538,20 +2678,88 @@ function buildHalloweenMemberEventWindow(event: HalloweenEventDefinition, startM
   const time = formatHalloweenStartTime(startMinuteOfDay)
   const startAt = new Date(startDay + startMinuteOfDay * 60 * 1000).toISOString()
   const endAt = new Date(endDay + startMinuteOfDay * 60 * 1000).toISOString()
-  return { configured: true, startMinuteOfDay, startTime: time, startAt, endAt }
+  return { configured: true, startMinuteOfDay, startTime: time, startAt, endAt, source: apiDerived ? "torn_api" : "user_confirmed" }
+}
+
+async function ensureHalloweenEventDefinition(env: WorkerEnv, playerId: string, eventYear: number): Promise<void> {
+  const db = requireDb(env)
+  const currentYear = new Date().getUTCFullYear()
+  if (eventYear === currentYear) {
+    const activity = await loadTornCalendarActivity(env, playerId, "halloween", "Trick or Treat")
+    if (activity && Date.parse(activity.endAt) + 1000 > Date.now()) {
+      const hasAnyCollection = await db.prepare(
+        "SELECT 1 AS found FROM halloween_collection_jobs WHERE event_year = ? LIMIT 1",
+      ).bind(eventYear).first<{ found: number }>()
+      const hasAnyLogs = await db.prepare(
+        "SELECT 1 AS found FROM halloween_event_logs WHERE event_year = ? LIMIT 1",
+      ).bind(eventYear).first<{ found: number }>()
+      const hasAnySnapshots = await db.prepare(
+        "SELECT 1 AS found FROM halloween_live_snapshots WHERE event_year = ? LIMIT 1",
+      ).bind(eventYear).first<{ found: number }>()
+      if (!hasAnyCollection && !hasAnyLogs && !hasAnySnapshots) {
+        await db.prepare(
+          "INSERT INTO halloween_event_windows (event_year, start_at, end_at, historical_collection_enabled, live_collection_enabled, created_at, updated_at, fixed_start_time, requires_time_confirmation, calendar_source) VALUES (?, ?, ?, 1, 0, ?, ?, ?, 0, 'torn_calendar') ON CONFLICT(event_year) DO UPDATE SET start_at = excluded.start_at, end_at = excluded.end_at, fixed_start_time = excluded.fixed_start_time, requires_time_confirmation = 0, calendar_source = 'torn_calendar', updated_at = excluded.updated_at",
+        ).bind(eventYear, activity.startAt, activity.endAt, new Date().toISOString(), new Date().toISOString(), activity.fixedStartTime ? 1 : 0).run()
+      }
+      if (!activity.fixedStartTime && activity.personalStartMinuteOfDay !== null) {
+        const [existingSlot, memberJob, memberLog, memberSnapshot] = await Promise.all([
+          db.prepare("SELECT start_minute_of_day FROM halloween_member_event_slots WHERE player_id = ? AND event_year = ?").bind(playerId, eventYear).first<{ start_minute_of_day: number }>(),
+          db.prepare("SELECT 1 AS found FROM halloween_collection_jobs WHERE player_id = ? AND event_year = ? LIMIT 1").bind(playerId, eventYear).first<{ found: number }>(),
+          db.prepare("SELECT 1 AS found FROM halloween_event_logs WHERE player_id = ? AND event_year = ? LIMIT 1").bind(playerId, eventYear).first<{ found: number }>(),
+          db.prepare("SELECT 1 AS found FROM halloween_live_snapshots WHERE player_id = ? AND event_year = ? LIMIT 1").bind(playerId, eventYear).first<{ found: number }>(),
+        ])
+        if (!existingSlot && !memberJob && !memberLog && !memberSnapshot) {
+          const now = new Date().toISOString()
+          await db.prepare(
+            "INSERT OR IGNORE INTO halloween_member_event_slots (event_year, player_id, start_minute_of_day, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, 'torn_api')",
+          ).bind(eventYear, playerId, activity.personalStartMinuteOfDay, now, now).run()
+        }
+      }
+      return
+    }
+  }
+
+  const existing = await db.prepare("SELECT event_year FROM halloween_event_windows WHERE event_year = ?")
+    .bind(eventYear).first<{ event_year: number }>()
+  if (existing || eventYear >= currentYear) return
+  const startAt = eventYear + "-10-25T00:00:00.000Z"
+  const endAt = eventYear + "-11-01T23:59:59.000Z"
+  const now = new Date().toISOString()
+  await db.prepare(
+    "INSERT OR IGNORE INTO halloween_event_windows (event_year, start_at, end_at, historical_collection_enabled, live_collection_enabled, created_at, updated_at, fixed_start_time, requires_time_confirmation, calendar_source) VALUES (?, ?, ?, 1, 0, ?, ?, 0, 0, 'historical_fallback')",
+  ).bind(eventYear, startAt, endAt, now, now).run()
 }
 
 async function getHalloweenMemberEventWindow(env: WorkerEnv, playerId: string, eventYear: number): Promise<{ event: HalloweenEventDefinition; window: HalloweenMemberEventWindow } | null> {
+  await ensureHalloweenEventDefinition(env, playerId, eventYear)
   const db = requireDb(env)
-  const event = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt FROM halloween_event_windows WHERE event_year = ?")
-    .bind(eventYear).first<HalloweenEventDefinition>()
+  const event = await db.prepare(
+    "SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt, fixed_start_time AS fixedStartTime, requires_time_confirmation AS requiresTimeConfirmation, calendar_source AS calendarSource FROM halloween_event_windows WHERE event_year = ?",
+  ).bind(eventYear).first<HalloweenEventDefinition>()
   if (!event) return null
-  const slot = await db.prepare("SELECT start_minute_of_day AS startMinuteOfDay FROM halloween_member_event_slots WHERE player_id = ? AND event_year = ?")
-    .bind(playerId, eventYear).first<{ startMinuteOfDay: number }>()
-  if (!slot || slot.startMinuteOfDay == null) {
-    return { event, window: { configured: false, startMinuteOfDay: null, startTime: null, startAt: null, endAt: null } }
+  const slot = await db.prepare(
+    "SELECT start_minute_of_day AS startMinuteOfDay, source FROM halloween_member_event_slots WHERE player_id = ? AND event_year = ?",
+  ).bind(playerId, eventYear).first<{ startMinuteOfDay: number; source: string }>()
+  const requiresConfirmation = Number(event.requiresTimeConfirmation ?? 1) === 1
+  if (slot?.startMinuteOfDay != null) {
+    const window = buildHalloweenMemberEventWindow(event, Number(slot.startMinuteOfDay), slot.source === "torn_api")
+    return { event, window: { ...window, requiresConfirmation, source: slot.source } }
   }
-  return { event, window: buildHalloweenMemberEventWindow(event, Number(slot.startMinuteOfDay)) }
+  if (requiresConfirmation) {
+    return { event, window: { configured: false, startMinuteOfDay: null, startTime: null, startAt: null, endAt: null, requiresConfirmation: true, source: "confirmation_required" } }
+  }
+  return {
+    event,
+    window: {
+      configured: true,
+      startMinuteOfDay: null,
+      startTime: null,
+      startAt: event.fixedStartTime === 1 ? event.startAt : event.startAt,
+      endAt: new Date(Date.parse(event.endAt) + 1000).toISOString(),
+      requiresConfirmation: false,
+      source: event.calendarSource ?? "historical_fallback",
+    },
+  }
 }
 
 async function runHalloweenLogCollectionPage(env: WorkerEnv, jobId: string): Promise<void> {
