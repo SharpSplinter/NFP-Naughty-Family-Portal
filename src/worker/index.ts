@@ -6573,14 +6573,22 @@ export default {
         if (seasonEnd <= fromMs || seasonStart >= toExclusive) continue
         let startAt = new Date(seasonStart).toISOString()
         let endAt = new Date(seasonEnd).toISOString()
-        // For the current in-progress Christmas Town event, use Torn's nominal
-        // calendar dates and the authenticated player's TCT start time. Past
-        // years remain full-season collections because the current API cannot
-        // authoritatively reconstruct those players' historical calendar slots.
-        if (year === currentYear && currentChristmasActivity && currentChristmasWindow &&
-            Date.parse(currentChristmasWindow.startAt) <= nowMs && Date.parse(currentChristmasWindow.endAt) > nowMs) {
-          startAt = currentChristmasWindow.startAt
-          endAt = currentChristmasWindow.endAt
+        // Historical collection walks the entire window. Do not start the
+        // current season while it is still open, or the worker could finish its
+        // day-by-day scan before later event activity exists. Once it closes,
+        // use Torn's exact nominal dates and the player's authenticated TCT time.
+        if (year === currentYear) {
+          if (currentChristmasActivity && currentChristmasWindow) {
+            if (Date.parse(currentChristmasWindow.endAt) > nowMs) {
+              jobs.push({ eventYear: year, status: "upcoming", jobId: "", logsCollected: 0 })
+              continue
+            }
+            startAt = currentChristmasWindow.startAt
+            endAt = currentChristmasWindow.endAt
+          } else if (nowMs < seasonEnd) {
+            jobs.push({ eventYear: year, status: "upcoming", jobId: "", logsCollected: 0 })
+            continue
+          }
         }
         const existing = await requireDb(env).prepare(
           "SELECT job_id AS jobId, status, logs_collected AS logsCollected, window_start_at AS windowStartAt, window_end_at AS windowEndAt FROM christmas_town_collection_jobs WHERE player_id = ? AND event_year = ?",
