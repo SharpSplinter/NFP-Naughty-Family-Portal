@@ -63,10 +63,9 @@ function christmasTownAvailableYears(calendarEndAt: string | null): number[] {
   // Historical collection is enabled only after the whole season closes. The
   // collector can then scan every day exactly once without missing later logs.
   const apiWindowKnown = Boolean(calendarEndAt && Number.isFinite(Date.parse(calendarEndAt)))
-  const fallbackSeasonClosed = todayUtc() >= currentYear + "-12-31"
-  const latestYear = apiWindowKnown
-    ? Date.now() >= Date.parse(calendarEndAt as string) ? currentYear : currentYear - 1
-    : fallbackSeasonClosed ? currentYear : currentYear - 1
+  const latestYear = apiWindowKnown && Date.now() >= Date.parse(calendarEndAt as string)
+    ? currentYear
+    : currentYear - 1
   return Array.from({ length: Math.max(0, latestYear - 2021 + 1) }, (_, index) => 2021 + index)
 }
 
