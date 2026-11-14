@@ -6544,8 +6544,8 @@ export default {
       if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) ||
           new Date(fromMs).toISOString().slice(0, 10) !== fromDate ||
           new Date(toMs).toISOString().slice(0, 10) !== toDate ||
-          fromMs > toMs || fromDate < "2021-12-10" || toDate > today) {
-        return jsonResponse({ error: "Choose a valid date range from 10 December 2021 through today." }, 400, origin)
+          fromMs > toMs || fromDate < "2021-12-01" || toDate > today) {
+        return jsonResponse({ error: "Choose a valid date range from 1 December 2021 through today." }, 400, origin)
       }
       const key = await requireDb(env).prepare(
         "SELECT consent_version FROM christmas_town_historical_keys WHERE player_id = ?",
@@ -6625,7 +6625,7 @@ export default {
     if (url.pathname === "/api/me/christmas-town/archive" && request.method === "GET") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
-      const fromDate = url.searchParams.get("from") || "2021-12-10"
+      const fromDate = url.searchParams.get("from") || "2021-12-01"
       const toDate = url.searchParams.get("to") || new Date().toISOString().slice(0, 10)
       const datePattern = /^\d{4}-\d{2}-\d{2}$/
       const fromMs = datePattern.test(fromDate) ? Date.parse(fromDate + "T00:00:00Z") : Number.NaN
