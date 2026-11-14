@@ -6510,6 +6510,26 @@ export default {
       return jsonResponse({ deleted: true, historicalRecordsRetained: true }, 200, origin)
     }
 
+    if (url.pathname === "/api/me/christmas-town/calendar" && request.method === "GET") {
+      const session = await authenticate(request, env)
+      if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
+      const activity = await loadTornCalendarActivity(env, session.player_id, "christmas-town", "Christmas town")
+      if (!activity) return jsonResponse({ event: null }, 200, origin)
+      const window = buildTornCalendarEventWindow(activity)
+      return jsonResponse({
+        event: {
+          eventYear: new Date().getUTCFullYear(),
+          title: activity.title,
+          startAt: window.startAt,
+          endAt: window.endAt,
+          nominalStartAt: activity.startAt,
+          nominalEndAt: activity.endAt,
+          fixedStartTime: activity.fixedStartTime,
+          personalStartTimeDetected: window.startMinuteOfDay !== null,
+        },
+      }, 200, origin)
+    }
+
     if (url.pathname === "/api/me/christmas-town/collect" && request.method === "POST") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
