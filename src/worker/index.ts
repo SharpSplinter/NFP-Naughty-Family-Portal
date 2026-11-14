@@ -2120,9 +2120,16 @@ async function loadHalloweenExchangeMarketValue(
 }
 
 async function loadRecordedHalloweenEventWindows(db: D1Database): Promise<Array<{ eventYear: number; startAt: string; endAt: string }>> {
-  // Configured event years must be selectable before the first member collection.
-  // Otherwise the UI creates a dead end: no records means no year option, and no
-  // year option means the member cannot start the first collection.
+  // Keep every historical year selectable. Years without a confirmed nominal
+  // definition use the full October 25–November 1 event envelope; they must not
+  // inherit a guessed personal clock time from a neighboring season.
+  const currentYear = new Date().getUTCFullYear()
+  for (let year = 2021; year < currentYear; year++) {
+    const now = new Date().toISOString()
+    await db.prepare(
+      "INSERT OR IGNORE INTO halloween_event_windows (event_year, start_at, end_at, historical_collection_enabled, live_collection_enabled, created_at, updated_at, fixed_start_time, requires_time_confirmation, calendar_source) VALUES (?, ?, ?, 1, 0, ?, ?, 0, 0, 'historical_fallback')",
+    ).bind(year, year + "-10-25T00:00:00.000Z", year + "-11-01T23:59:59.000Z", now, now).run()
+  }
   const rows = await db.prepare(
     `SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt
      FROM halloween_event_windows
