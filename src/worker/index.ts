@@ -2728,7 +2728,7 @@ async function ensureHalloweenEventDefinition(env: WorkerEnv, playerId: string, 
 
   const existing = await db.prepare("SELECT event_year FROM halloween_event_windows WHERE event_year = ?")
     .bind(eventYear).first<{ event_year: number }>()
-  if (existing || eventYear >= currentYear) return
+  if (existing || eventYear > currentYear) return
   const startAt = eventYear + "-10-25T00:00:00.000Z"
   const endAt = eventYear + "-11-01T23:59:59.000Z"
   const now = new Date().toISOString()
@@ -2738,7 +2738,6 @@ async function ensureHalloweenEventDefinition(env: WorkerEnv, playerId: string, 
 }
 
 async function getHalloweenMemberEventWindow(env: WorkerEnv, playerId: string, eventYear: number): Promise<{ event: HalloweenEventDefinition; window: HalloweenMemberEventWindow } | null> {
-  await ensureHalloweenEventDefinition(env, playerId, eventYear)
   const db = requireDb(env)
   const event = await db.prepare(
     "SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt, fixed_start_time AS fixedStartTime, requires_time_confirmation AS requiresTimeConfirmation, calendar_source AS calendarSource FROM halloween_event_windows WHERE event_year = ?",
@@ -6871,6 +6870,7 @@ export default {
       const body: unknown = await request.json().catch(() => null)
       const yearValue = isRecord(body) ? Number(body.year) : new Date().getUTCFullYear()
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
+      await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       try {
         const snapshot = await runHalloweenLiveSnapshot(env, session.player_id, yearValue, "manual")
         return jsonResponse({ captured: true, snapshot }, 200, origin)
