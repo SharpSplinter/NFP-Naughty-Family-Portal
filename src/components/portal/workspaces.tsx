@@ -21,6 +21,8 @@ type HalloweenMemberEventWindow = {
   startTime: string | null
   startAt: string | null
   endAt: string | null
+  requiresConfirmation?: boolean
+  source?: string
 }
 
 type HalloweenLiveMember = {
@@ -1694,7 +1696,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
       setPersonalWindow(payload.myWindow ?? null)
       setPersonalWindowYear(targetYear)
       setEventWindowLocked(payload.locked === true)
-      setEventWindowNotice("Your " + targetYear + " personal event window is saved. The end time uses the same TCT clock time on November 1.")
+      setEventWindowNotice("Your " + targetYear + " historical event start time is confirmed. The end time uses the same TCT clock time on the event's final day.")
       if (tab === "live") await Promise.all([loadLive(), loadArchive(String(targetYear))])
       else await loadArchive(historicalYear)
     } catch (caught) { setEventWindowError(caught instanceof Error ? caught.message : "Could not save your personal event time.") }
@@ -1894,8 +1896,12 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
               <section className="halloween-personal-window" aria-labelledby="halloween-personal-window-title">
                 <div className="halloween-personal-window-copy">
                   <div className="halloween-status"><i /> YOUR PERSONAL EVENT WINDOW · {personalWindowYear ?? eventYear}</div>
-                  <h2 id="halloween-personal-window-title">Your Trick or Treat start time</h2>
-                  <p>Choose the same start time you selected in Torn's Calendar. TCT is UTC. Your personal window starts on October 25 and ends on November 1 at the same selected clock time, so members can have different start and finish times.</p>
+                  <h2 id="halloween-personal-window-title">Your Trick or Treat event window</h2>
+                  <p>{personalWindow?.requiresConfirmation
+                    ? "Confirm the start time you used in Torn for this historical year. The same TCT clock time is applied to October 25 and the event's final day."
+                    : personalWindow?.source === "torn_api"
+                      ? "This future or active event window was detected from Torn's calendar and your personal calendar time. TCT is UTC."
+                      : "No reliable personal start time is recorded for this year, so collection uses the complete nominal event window rather than guessing a start time."}</p>
                   {personalWindow?.configured && personalWindow.startAt && personalWindow.endAt ? (
                     <div className="halloween-personal-window-range">
                       <span><small>START</small><strong>{formatTctDateTime(personalWindow.startAt)} TCT</strong></span>
@@ -1903,17 +1909,17 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
                     </div>
                   ) : <div className="halloween-personal-window-unset">No personal time saved yet. Select your Torn event slot before contributing historical logs or receiving scheduled live snapshots.</div>}
                 </div>
-                <div className="halloween-personal-window-control">
-                  <label htmlFor="halloween-personal-start-time">Start time (TCT)</label>
+                {personalWindow?.requiresConfirmation && <div className="halloween-personal-window-control">
+                  <label htmlFor="halloween-personal-start-time">Confirm this year's start time (TCT)</label>
                   <select id="halloween-personal-start-time" value={personalStartTime} onChange={event => setPersonalStartTime(event.target.value)} disabled={eventWindowBusy || eventWindowLocked}>
                     <option value="">Choose your time</option>
                     {halloweenStartTimeOptions.map(time => <option value={time} key={time}>{time}</option>)}
                   </select>
-                  <button type="button" onClick={() => void savePersonalEventWindow()} disabled={eventWindowBusy || eventWindowLocked || !personalStartTime}>{eventWindowBusy ? "Saving…" : eventWindowLocked ? "Time locked after collection" : "Save my event time"}</button>
+                  <button type="button" onClick={() => void savePersonalEventWindow()} disabled={eventWindowBusy || eventWindowLocked || !personalStartTime}>{eventWindowBusy ? "Saving…" : eventWindowLocked ? "Time locked after collection" : personalWindow.startTime ? "Update confirmed time" : "Confirm this year's time"}</button>
                   {eventWindowLocked && <small className="halloween-slot-hint">Locked because collection or snapshot capture has started. This protects existing records from being assigned to a different window.</small>}
                   {eventWindowError && <p className="historical-key-error" role="alert">{eventWindowError}</p>}
                   {eventWindowNotice && <p className="historical-key-message" role="status">{eventWindowNotice}</p>}
-                </div>
+                </div>}
               </section>
       )}
           {archive?.myEventMetrics && <section className="halloween-panel halloween-event-metrics halloween-personal-event-metrics">
