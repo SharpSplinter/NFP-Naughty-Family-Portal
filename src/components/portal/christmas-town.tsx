@@ -31,6 +31,17 @@ type ChristmasTownCollectionJob = {
   updatedAt: string
 }
 
+type ChristmasTownCalendarEvent = {
+  eventYear: number
+  title: string
+  startAt: string
+  endAt: string
+  nominalStartAt: string
+  nominalEndAt: string
+  fixedStartTime: boolean
+  personalStartTimeDetected: boolean
+}
+
 type ChristmasTownArchivePayload = {
   fromDate: string
   toDate: string
@@ -47,19 +58,24 @@ type ChristmasTownArchivePayload = {
 
 const todayUtc = () => new Date().toISOString().slice(0, 10)
 
-function christmasTownAvailableYears(): number[] {
-  const today = todayUtc()
-  const currentYear = Number(today.slice(0, 4))
-  const latestYear = today >= currentYear + "-12-10" ? currentYear : currentYear - 1
+function christmasTownAvailableYears(calendarStartAt: string | null): number[] {
+  const currentYear = Number(todayUtc().slice(0, 4))
+  // Do not offer the current season for collection until Torn's own nominal
+  // event start has arrived. This avoids scanning an empty future event range.
+  const calendarStartMs = calendarStartAt ? Date.parse(calendarStartAt) : Number.NaN
+  const latestYear = Number.isFinite(calendarStartMs) && Date.now() >= calendarStartMs
+    ? currentYear
+    : currentYear - 1
   return Array.from({ length: Math.max(0, latestYear - 2021 + 1) }, (_, index) => 2021 + index)
 }
 
-function christmasTownDateRange(yearScope: string): { from: string; to: string } {
+function christmasTownDateRange(yearScope: string, calendarEvent: ChristmasTownCalendarEvent | null): { from: string; to: string } {
   const today = todayUtc()
-  if (yearScope === "all") return { from: "2021-12-10", to: today }
+  if (yearScope === "all") return { from: "2021-12-01", to: today }
   const year = Number(yearScope)
   const seasonEnd = year + "-12-31"
-  return { from: year + "-12-10", to: seasonEnd > today ? today : seasonEnd }
+  const calendarStart = calendarEvent?.eventYear === year ? calendarEvent.startAt.slice(0, 10) : year + "-12-01"
+  return { from: calendarStart, to: seasonEnd > today ? today : seasonEnd }
 }
 const formatMoney = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value) ? "—" : "$" + Math.round(value).toLocaleString()
@@ -154,8 +170,9 @@ export function ChristmasTownWorkspace({
   sessionToken,
 }: ChristmasTownWorkspaceProps) {
   const [selectedYear, setSelectedYear] = useState("all")
-  const availableYears = christmasTownAvailableYears()
-  const { from: appliedFromDate, to: appliedToDate } = christmasTownDateRange(selectedYear)
+  const [calendarEvent, setCalendarEvent] = useState<ChristmasTownCalendarEvent | null>(null)
+  const availableYears = christmasTownAvailableYears(calendarEvent?.startAt ?? null)
+  const { from: appliedFromDate, to: appliedToDate } = christmasTownDateRange(selectedYear, calendarEvent)
   const [keyStatus, setKeyStatus] = useState<ChristmasTownKeyStatus | null>(null)
   const [archive, setArchive] = useState<ChristmasTownArchivePayload | null>(null)
   const [archiveLoadedRange, setArchiveLoadedRange] = useState("")
@@ -166,6 +183,19 @@ export function ChristmasTownWorkspace({
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
+
+  const loadCalendarEvent = async () => {
+    try {
+      const response = await fetch(apiBase + "/api/me/christmas-town/calendar", {
+        headers: { Authorization: "Bearer " + sessionToken },
+      })
+      const payload = await response.json() as { error?: string; event?: ChristmasTownCalendarEvent | null }
+      if (!response.ok) throw new Error(payload.error || "Could not load Torn's Christmas Town calendar.")
+      setCalendarEvent(payload.event ?? null)
+    } catch {
+      setCalendarEvent(null)
+    }
+  }
 
   const loadKeyStatus = async () => {
     const response = await fetch(apiBase + "/api/me/christmas-town/key", {
@@ -197,6 +227,12 @@ export function ChristmasTownWorkspace({
 
   useEffect(() => {
     void loadKeyStatus().catch(caught => setError(caught instanceof Error ? caught.message : "Could not load history permission."))
+  }, [apiBase, sessionToken])
+
+  useEffect(() => {
+    void loadCalendarEvent()
+    const refreshCalendar = window.setInterval(() => { void loadCalendarEvent() }, 60_000)
+    return () => window.clearInterval(refreshCalendar)
   }, [apiBase, sessionToken])
 
   useEffect(() => {
@@ -263,8 +299,12 @@ export function ChristmasTownWorkspace({
     const year = Number(selectedYear)
     if (!Number.isInteger(year)) return
     const job = archive.collection.find(item => item.eventYear === year)
-    const expectedStart = new Date(Date.UTC(year, 11, 1)).toISOString()
-    const expectedEnd = new Date(Date.UTC(year + 1, 0, 1)).toISOString()
+    const expectedStart = calendarEvent?.eventYear === year
+      ? calendarEvent.startAt
+      : new Date(Date.UTC(year, 11, 1)).toISOString()
+    const expectedEnd = calendarEvent?.eventYear === year
+      ? calendarEvent.endAt
+      : new Date(Date.UTC(year + 1, 0, 1)).toISOString()
     if (job?.status === "complete" && job.windowStartAt === expectedStart && job.windowEndAt === expectedEnd) return
     if (job && (job.status === "queued" || job.status === "running")) return
     const requestKey = year + ":" + (keyStatus.key?.consentedAt ?? keyStatus.key?.lastValidatedAt ?? "")
@@ -274,7 +314,7 @@ export function ChristmasTownWorkspace({
     // incomplete or failed season. All-time remains opt-in to avoid bulk collection.
     void collectHistory(appliedFromDate, appliedToDate, true)
   }, [selectedYear, keyStatus?.connected, keyStatus?.key?.consentedAt,
-    archive, busy, collectBusy, keyBusy, archiveLoadedRange, appliedFromDate, appliedToDate])
+    archive, busy, collectBusy, keyBusy, archiveLoadedRange, appliedFromDate, appliedToDate, calendarEvent])
 
   const metrics = archive?.metrics ?? null
   const itemNames = useMemo(() => new Map([
@@ -359,7 +399,7 @@ export function ChristmasTownWorkspace({
         <div>
           <div className="christmas-town-section-kicker">EVENT SEASON COVERAGE</div>
           <h2>Historical collection</h2>
-          <p>Christmas Town logs are collected only during December for each year that overlaps your selected date range. The 1–31 December collection window covers years when the event starts at different times in mid-December.</p>
+          <p>Past seasons use the full December window when their exact historical calendar times are unavailable. Once the current season begins, its collection window is detected from Torn's event calendar and your personal TCT start time.</p>
           {archive && <SeasonCollectionStatus fromDate={appliedFromDate} toDate={appliedToDate} jobs={archive.collection} />}
         </div>
         <div className="christmas-town-collection-actions">
