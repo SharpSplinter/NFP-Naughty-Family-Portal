@@ -2708,7 +2708,8 @@ async function ensureHalloweenEventDefinition(env: WorkerEnv, playerId: string, 
           "INSERT INTO halloween_event_windows (event_year, start_at, end_at, historical_collection_enabled, live_collection_enabled, created_at, updated_at, fixed_start_time, requires_time_confirmation, calendar_source) VALUES (?, ?, ?, 1, 0, ?, ?, ?, 0, 'torn_calendar') ON CONFLICT(event_year) DO UPDATE SET start_at = excluded.start_at, end_at = excluded.end_at, fixed_start_time = excluded.fixed_start_time, requires_time_confirmation = 0, calendar_source = 'torn_calendar', updated_at = excluded.updated_at",
         ).bind(eventYear, activity.startAt, activity.endAt, new Date().toISOString(), new Date().toISOString(), activity.fixedStartTime ? 1 : 0).run()
       }
-      if (!activity.fixedStartTime && activity.personalStartMinuteOfDay !== null) {
+      const resolvedWindow = buildTornCalendarEventWindow(activity)
+      if (!activity.fixedStartTime && resolvedWindow.startMinuteOfDay !== null) {
         const [existingSlot, memberJob, memberLog, memberSnapshot] = await Promise.all([
           db.prepare("SELECT start_minute_of_day FROM halloween_member_event_slots WHERE player_id = ? AND event_year = ?").bind(playerId, eventYear).first<{ start_minute_of_day: number }>(),
           db.prepare("SELECT 1 AS found FROM halloween_collection_jobs WHERE player_id = ? AND event_year = ? LIMIT 1").bind(playerId, eventYear).first<{ found: number }>(),
@@ -2719,7 +2720,7 @@ async function ensureHalloweenEventDefinition(env: WorkerEnv, playerId: string, 
           const now = new Date().toISOString()
           await db.prepare(
             "INSERT OR IGNORE INTO halloween_member_event_slots (event_year, player_id, start_minute_of_day, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, 'torn_api')",
-          ).bind(eventYear, playerId, activity.personalStartMinuteOfDay, now, now).run()
+          ).bind(eventYear, playerId, resolvedWindow.startMinuteOfDay, now, now).run()
         }
       }
       return
