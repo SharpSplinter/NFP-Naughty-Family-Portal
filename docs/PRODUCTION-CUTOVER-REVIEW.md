@@ -263,6 +263,55 @@ The portal branch Worker deployment workflow remains manual-only and requires th
 
 **NO-GO for production cutover.** The production baseline, external SQL backup/restore rehearsal, current Time Travel bookmark, target isolation and manual deployment safeguards have been reviewed. Before any merge/deployment, complete functional staging acceptance on this exact release candidate, resolve/accept the Custom Access fallback for the public global-ranking service-key path, and obtain explicit owner approval. After approval, take another current bookmark immediately before migration, verify the external backup is accessible/checksummed, recheck pending migration filenames, then follow Sections 7–8. This review did not merge the PR, change its draft status, deploy Worker/Pages, run SQL writes, apply migrations, modify secrets, or restore production D1.
 
+## 12. Post-sync branch and environment refresh (2026-11-14 19:56 UTC)
+
+**Scope:** read-only GitHub/Cloudflare verification after synchronizing `portal-rebuild` with `main`. This is not production-release approval.
+
+### Branch synchronization
+
+- The GitHub branch merge completed successfully without conflicts. Merge commit: [`a333a2292b5bb154f59bb14e3d64e7ebd2787b42`](https://github.com/SharpSplinter/Naughty-Company-Dashboard/commit/a333a2292b5bb154f59bb14e3d64e7ebd2787b42), message: “Merge current main into portal-rebuild”.
+- Merge parents are the previous portal head `e8d3b3c45101bb966e4fb3b8a6adc88e64f1a421` and current `main` head `ddb0257f8d99905f9e1fc3080e7c4d1ea2b36a8b`.
+- GitHub compare `main...portal-rebuild` reports status `ahead`, 689 commits ahead and **zero commits behind**. Merge base equals current `main` at `ddb0257f8d99905f9e1fc3080e7c4d1ea2b36a8b`.
+- PR #152 remains OPEN/DRAFT and GitHub reports it mergeable. No submitted PR reviews or inline review threads were returned. The two prior quality-gate successes (runs #43631623195 and #43631623177) predate this merge commit; they are not validation of the synchronized HEAD. The staging workflow below runs its own typecheck, backend tests and production frontend build.
+
+### Complete portal migration chain
+
+The current branch carries the portal migration chain through `0031_torn_event_calendar_windows.sql`. Production currently has 16 migration entries and ends at `0012_company_ranking_snapshots.sql`; exact filename matters because `0012_administrator_registry.sql` is a distinct pending migration. The 20 portal-specific pending files are `0012_administrator_registry.sql` and `0013` through `0031`. The added migrations after the previous 0025 cutover-review ceiling are:
+
+| Migration | Schema/data effect |
+|---|---|
+| `0026_halloween_attack_outcome_metrics.sql` | Adds successful-attack and lost/stalemated-attack totals plus an outcomes-version field to per-member Halloween attack jobs |
+| `0027_halloween_exchange_market_price_cache.sql` | Creates a shared public item-market average-price cache keyed by Torn item ID |
+| `0028_christmas_town_archive.sql` | Creates owner-scoped encrypted Christmas Town history credentials, per-member/year collection jobs and event logs, with supporting indexes |
+| `0029_halloween_historical_event_years.sql` | Seeds known October 25–November 1 historical Halloween event windows for 2021–2025, preserving existing rows |
+| `0030_event_history_consent_records.sql` | Creates per-player Halloween/Christmas Town initial-consent records and backfills records from existing keys and collection jobs |
+| `0031_torn_event_calendar_windows.sql` | Adds source/confirmation metadata to event windows and member slots; creates the per-player Torn event-calendar cache and index |
+
+Together with the previously reviewed migrations 0012–0025, this brings the portal release's pending production chain to 20 exact migration filenames. The isolated staging D1 has already recorded 36 migrations through `0031_torn_event_calendar_windows.sql` and 72 tables. Staging ledger evidence is not proof that production has applied any of these migrations.
+
+### Current production baseline (read-only recheck)
+
+- Production D1: `naughty-company-dashboard`, UUID `bbbe128a-c5cc-46ec-b8ef-93860183e795`. The read-only migration query still returns 16 entries, ending at `0012_company_ranking_snapshots.sql`. The SQLite catalog query returned 42 table names including Cloudflare's `_cf_KV` and SQLite's `sqlite_sequence`; no writes were made.
+- The current D1 Time Travel bookmark read during this refresh is `000004ca-000007b8-00005123-478147ed475d7c4eb4a1ec783f8bcffa`. Bookmarks are automatically generated; re-read immediately before migrations and verify that the encrypted external backup remains accessible and checksummed.
+- Production Worker `naughty-company-api` remains on version `af3b0630-c758-4910-9a41-d43c8c330960`, deployment `c1705050-3a5b-424d-bd1d-50a71c185fcc`, serving 100% traffic. Live binding names still include legacy `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`, `DB`, `GLOBAL_RANKINGS_QUEUE`, `KEY_ENCRYPTION_SECRET`, `TORN_API_KEY_CUSTOM` and `TORN_FACTION_API_KEY`. `TORN_API_KEY_FULL_ACCESS` remains absent. Secret values were not read.
+- Legacy Pages project `naughty-company-dashboard` remains the live fallback, with latest known successful deployment `b0352cf1-db23-437e-87b4-a363d08b53b8`. Separate production Pages project `naughtyfamily` still has no production deployment. Production and preview automatic Git deployments remain disabled for both projects.
+
+### Isolated staging baseline before manual run
+
+- Staging D1: `naughtyfamily-acceptance-staging`, UUID `02cca699-1232-495f-8a0a-de525058b92a`, with 36 migration entries through `0031_torn_event_calendar_windows.sql` and 72 tables. This is a separate database from production.
+- Latest successful `naughtyfamily-staging` Pages deployment observed before the manual rerun: deployment `4a20a907-340b-44ca-8cec-b619544f3446`, 2026-11-14 18:51:56 UTC, commit `ec43ebfa8535e597bd103b9cf46f15742b6915e8`. The staging Worker also received a deployment at approximately 18:51 UTC. Deployment success does not by itself prove every later GitHub acceptance step completed.
+- The merged head includes the Discord reconnect UI commit after that Pages deployment. The staging workflow's push path list does not include `src/components/floor/alerts-panel.tsx`; therefore the manual staging dispatch is required to deploy and validate this UI change as part of the synchronized branch.
+- The manual workflow is `.github/workflows/deploy-staging-acceptance.yml`, dispatched on ref `portal-rebuild` with input `confirm_target=naughtyfamily-staging`. It runs repository typecheck, backend tests and frontend build; verifies staging-only D1/Queue/Worker targets; applies pending migrations to the staging D1; deploys the staging API Worker; checks API health, DB, encryption readiness and browser CORS; builds and deploys the staging Pages project with the staging API URL; runs responsive and authenticated admin/non-admin/accessibility/request-budget checks; performs a 285-second read-only sustained request test at 5 requests/second; and cleans synthetic private-history fixtures in an `always()` step.
+- This acceptance workflow does not replace the separately scoped explicit functional walkthrough for every Halloween/Christmas feature. Review the exact workflow result and, where not covered by its automated steps, verify Halloween Live/current-year and Historical all-time/year-specific views, member comparisons, partial coverage and Revitalize numerator/denominator, Christmas Town archive views, Torn calendar windows, and Discord reconnect/`/link-code` before production approval.
+
+### Updated release decision
+
+**NO-GO for production cutover pending post-sync staging acceptance and the service-key decision.** The branch synchronization and documentation refresh do not authorize a production change. The public global-ranking path still prefers `TORN_API_KEY_FULL_ACCESS` and falls back to `TORN_API_KEY_CUSTOM`; the production Worker does not currently have the dedicated Full Access binding. Functionally accept the configured fallback in isolated staging or supply and test a dedicated compatible Full Access service key.
+
+The next controlled sequence is: finish manual staging acceptance on this exact synchronized HEAD; review all job results and perform feature-specific checks not covered by the workflow; resolve the service-key question; obtain explicit release approval; re-read production's current bookmark and exact migration ledger immediately before the change; then, only after approval, merge PR #152 and manually dispatch the protected production Worker workflow from `main` with the explicit `naughty-company-api` target and independently verified external backup reference. Publish the separate `naughtyfamily` Pages target only after production API health is confirmed. Keep the legacy Pages deployment available as the UI fallback.
+
+No production SQL writes, migrations, Worker/Pages deployments, restores, secret changes or PR merge were performed during this refresh.
+
 ## Cloudflare references
 
 - [D1 import/export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
