@@ -306,7 +306,7 @@ Together with the previously reviewed migrations 0012–0025, this brings the po
 
 ### Manual isolated staging acceptance result (2026-11-14 19:57–20:04 UTC)
 
-<https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43634883077|Run #43634883077> completed **SUCCESS** on `portal-rebuild` at exact tested HEAD `b6fee3526614bbf97caff2281222918f9b29fcd4`. This HEAD includes merge commit `a333a2292b5bb154f59bb14e3d64e7ebd2787b42` and the initial cutover-review refresh. The run completed all 25 job steps successfully.
+[Run #43634883077](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43634883077) completed **SUCCESS** on `portal-rebuild` at exact tested HEAD `b6fee3526614bbf97caff2281222918f9b29fcd4`. This HEAD includes merge commit `a333a2292b5bb154f59bb14e3d64e7ebd2787b42` and the initial cutover-review refresh. The run completed all 25 job steps successfully.
 
 - Repository typecheck, backend test suite and production frontend build passed.
 - Explicit staging-target checks passed. Staging-only Queues were provisioned; migrations were applied/listed against `naughtyfamily-acceptance-staging` only. Its ledger remains 36 entries through `0031_torn_event_calendar_windows.sql`.
