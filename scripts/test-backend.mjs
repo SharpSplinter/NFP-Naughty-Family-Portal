@@ -137,7 +137,7 @@ try {
               }
               if (statementProperty === "first") {
                 return async (...args) => (await statementTarget.first(...args)) ?? {
-                  consentVersion: "portal-data-policy-v1",
+                  consentVersion: "portal-data-policy-v2",
                 }
               }
               const value = Reflect.get(statementTarget, statementProperty, statementTarget)
@@ -1316,7 +1316,7 @@ try {
     const primaryKeyIv = crypto.getRandomValues(new Uint8Array(12))
     const primaryKeyCiphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: primaryKeyIv }, primaryKeyCrypto, new TextEncoder().encode(apiKey))
     const state = { key: null, snapshot: null, throttleAt: null, writes: [], centralPreferences: {
-      consentVersion: "portal-data-policy-v1", sharePrivateLive: 0, shareNetworth: 0,
+      consentVersion: "portal-data-policy-v2", sharePrivateLive: 0, shareNetworth: 0,
     }, primaryKey: {
       ciphertext: Buffer.from(primaryKeyCiphertext).toString("base64"), iv: Buffer.from(primaryKeyIv).toString("base64"),
     } }
@@ -4318,7 +4318,7 @@ try {
       if (member.apiKey) apiKeys.set(playerId, await makeEncryptedTestKey(secret, member.apiKey))
       portalConsents.set(playerId, {
         player_id: playerId,
-        consent_version: "portal-data-policy-v1",
+        consent_version: "portal-data-policy-v2",
         historical_collection_enabled: 1,
         share_halloween_history: 0,
         share_private_live: 0,
