@@ -12,6 +12,7 @@ import { AlertsPanel, NotificationSettingsPanel } from "./alerts-panel"
 import { companyTypeIdFromProfile, estimateWeeklyProfit, financialCosts, formatMoney, formatNumber, getObject, pretty, reportedCompanyProfit, resolveDisplayedDailyProfit, stockPriceRows } from "./financial-utils"
 import { AccountSettingsWorkspace, FactionWorkspacePlaceholder, HalloweenWorkspace, PortalHome, PortalSetupWorkspace } from "../portal/workspaces"
 import { ChristmasTownWorkspace } from "../portal/christmas-town"
+import { TrainingCalculatorWorkspace } from "../portal/training-calculator"
 import "../portal/workspaces.css"
 
 const catalog = positionsData as CompanyPositionCatalog
@@ -1070,6 +1071,7 @@ export function FloorApp() {
   if (routePath === "/faction") return <FactionWorkspacePlaceholder playerName={playerName} apiBase={API_BASE} sessionToken={sessionToken} onNavigate={navigateToPath} />
   if (routePath === "/halloween") return <HalloweenWorkspace playerName={playerName} apiBase={API_BASE} sessionToken={sessionToken} onNavigate={navigateToPath} />
   if (routePath === "/christmas-town") return <ChristmasTownWorkspace playerName={playerName} apiBase={API_BASE} sessionToken={sessionToken} onNavigate={navigateToPath} />
+  if (routePath === "/training-calculator") return <TrainingCalculatorWorkspace playerName={playerName} onNavigate={navigateToPath} />
   if (routePath === "/settings") return <AccountSettingsWorkspace playerName={playerName} playerId={playerId} isAdmin={isAdmin} loginKeySaved={keySaved} companyKeySaved={companyKeySaved} companies={savedCompanies} apiBase={API_BASE} sessionToken={sessionToken} onCompaniesChanged={(companies) => { setSavedCompanies(companies); setCompanyKeySaved(companies.some(company => company.has_api_key === true)) }} onLoginKeyChanged={setKeySaved} onNavigate={navigateToPath} onSignOut={() => signOut()} />
   if (routePath === "/admin") {
     if (!isAdmin || demoMode) return <main className="module-page admin-portal-module"><section className="module-placeholder"><div className="portal-eyebrow"><span /> RESTRICTED WORKSPACE</div><h1>Administrator access required</h1><p>This workspace is available only to accounts with an active administrator role.</p><button type="button" className="portal-primary-button" onClick={() => navigateToPath("/")}>Return to portal →</button></section></main>
