@@ -214,17 +214,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
         run: node scripts/seed-staging-private-history.mjs
 
-      - name: Run authenticated Company Dashboard responsive checks on staging
-        env:
-          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
-          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-        run: node scripts/test-staging-responsive.mjs
-
       - name: Run synthetic Halloween, Christmas Town, calendar, Gym Training, and Discord feature walkthrough
         env:
           STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
           STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
         run: node scripts/test-staging-features.mjs
+
+      - name: Run authenticated Company Dashboard responsive checks on staging
+        env:
+          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
+          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
+        run: node scripts/test-staging-responsive.mjs
 
       - name: Run authenticated admin/non-admin, accessibility, and request-budget checks on staging
         env:
