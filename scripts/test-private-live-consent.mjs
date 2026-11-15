@@ -43,12 +43,13 @@ assert.ok(worker.includes("st.disabled_at IS NULL"), "disabled accounts must not
 
 assert.ok(workspace.includes("faction-private-live-v1"))
 assert.ok(workspace.includes("shareWithFaction: true"))
-assert.ok(workspace.includes("I consent to encrypted storage of my own key"))
-assert.ok(workspace.includes("Also share my detailed networth breakdown with the faction."))
-assert.ok(workspace.includes("No second key is required."))
+assert.ok(workspace.includes("I have read and acknowledge the Naughty Family data policy and privacy notice."), "the central setup page must capture the required policy acknowledgement")
+assert.ok(workspace.includes("Also share my detailed networth breakdown."), "detailed networth remains a separate opt-in")
+assert.ok(workspace.includes("No company key is required to finish setup."))
 assert.doesNotMatch(workspace, /settings-private-live-key|privateLiveKey\.trim\(\)/)
 assert.ok(workspace.includes("Disconnect & delete snapshot"))
 assert.ok(workspace.includes("Your API key is not shared."))
 assert.ok(workspace.includes("Only the latest bars, cooldowns and optionally networth snapshot are retained"))
 
-console.log("PASS private live key owner validation, explicit faction sharing, separate optional networth consent, encrypted storage, revocation, and departure cleanup contract")
+assert.ok(!workspace.includes("I consent to encrypted storage of my own key"), "private-live setup must not ask for a second feature-specific consent")
+console.log("PASS private live key owner validation, centralized faction-sharing opt-in, separate optional networth choice, encrypted storage, revocation, and departure cleanup contract")
