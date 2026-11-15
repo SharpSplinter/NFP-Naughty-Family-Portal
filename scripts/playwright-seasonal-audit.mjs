@@ -322,18 +322,23 @@ async function installApiFixtures(page, state) {
 }
 
 async function auditLayout(page, pageName, viewportName, pagePath, selectorId, headingPattern, state) {
-  await page.goto(`${baseUrl}${pagePath}`, { waitUntil: "networkidle" });
+  await page.goto(baseUrl + pagePath, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: headingPattern }).waitFor({ state: "visible", timeout: 30000 });
-  const selector = page.locator(`#${selectorId}`);
+
+  const isTraining = pageName === "Training Calculator";
+  const selector = isTraining ? page.getByTestId("training-tab-session") : page.locator("#" + selectorId);
   await selector.waitFor({ state: "visible", timeout: 30000 });
   if (pageName === "Christmas Town") await page.getByRole("heading", { name: "Minigames" }).waitFor({ state: "visible", timeout: 30000 });
-  else await page.locator(".halloween-personal-window").waitFor({ state: "visible", timeout: 30000 });
+  else if (pageName === "Halloween") await page.locator(".halloween-personal-window").waitFor({ state: "visible", timeout: 30000 });
+  else await page.getByRole("heading", { name: "Session forecast" }).waitFor({ state: "visible", timeout: 30000 });
 
-  const layout = await page.evaluate(({ selectorId, isHalloween }) => {
-    const heading = document.querySelector(".module-heading");
-    const filter = document.querySelector(isHalloween ? ".halloween-year-filter" : ".christmas-town-year-filter");
-    const select = document.getElementById(selectorId);
-    const next = isHalloween ? document.querySelector(".halloween-tabs") : document.querySelector(".christmas-town-collection");
+  const layout = await page.evaluate(({ selectorId, pageName }) => {
+    const isHalloween = pageName === "Halloween";
+    const isTraining = pageName === "Training Calculator";
+    const heading = document.querySelector(isTraining ? ".tc-hero-copy h1" : ".module-heading");
+    const filter = document.querySelector(isTraining ? ".tc-tabs" : isHalloween ? ".halloween-year-filter" : ".christmas-town-year-filter");
+    const select = isTraining ? document.querySelector(".tc-tabs button.is-active") : document.getElementById(selectorId);
+    const next = isTraining ? document.querySelector(".tc-layout") : isHalloween ? document.querySelector(".halloween-tabs") : document.querySelector(".christmas-town-collection");
     const rect = (element) => {
       if (!element) return null;
       const box = element.getBoundingClientRect();
@@ -342,6 +347,7 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
     return {
       viewportWidth: window.innerWidth,
       documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
       heading: rect(heading),
       filter: rect(filter),
       select: rect(select),
@@ -349,38 +355,65 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
       title: document.title,
       headingCount: document.querySelectorAll("h1").length,
       bodyTextLength: document.body.innerText.length,
+      activeTab: isTraining ? select?.textContent?.trim() ?? null : null,
     };
-  }, { selectorId, isHalloween: pageName === "Halloween" });
+  }, { selectorId, pageName });
   const pageReport = { page: pageName, viewport: viewportName, path: pagePath, layout, apiCalls: state.calls.slice() };
   audit.pages.push(pageReport);
 
-  recordAssertion(`${pageName} ${viewportName}: one page title`, layout.headingCount === 1, `found ${layout.headingCount}`);
-  recordAssertion(`${pageName} ${viewportName}: no horizontal page overflow`, layout.documentWidth <= layout.viewportWidth + 1, `${layout.documentWidth}px content in ${layout.viewportWidth}px viewport`);
-  recordAssertion(`${pageName} ${viewportName}: year control follows page heading`, layout.filter && layout.heading && layout.filter.y >= layout.heading.bottom - 1, JSON.stringify({ heading: layout.heading, filter: layout.filter }));
-  recordAssertion(`${pageName} ${viewportName}: year control is compact`, layout.select && layout.select.height <= 40 && layout.filter.height <= 64, JSON.stringify({ filter: layout.filter, select: layout.select }));
-  if (pageName === "Halloween") {
-    recordAssertion(`${pageName} ${viewportName}: selector precedes section tabs`, layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1, JSON.stringify({ filter: layout.filter, tabs: layout.nextSection }));
-    const liveRegion = page.locator(".halloween-live-leaderboard");
-    const liveControls = liveRegion.locator(".halloween-table-scroll-controls button");
-    const liveAccess = await liveRegion.evaluate(element => ({
-      tabIndex: element.tabIndex,
-      scrollWidth: element.scrollWidth,
-      clientWidth: element.clientWidth,
-      controls: element.querySelectorAll(".halloween-table-scroll-controls button").length,
-    }));
-    recordAssertion(`${pageName} ${viewportName}: Live leaderboard has keyboard focus`, liveAccess.tabIndex === 0, JSON.stringify(liveAccess));
-    recordAssertion(`${pageName} ${viewportName}: Live leaderboard exposes both scroll controls`, liveAccess.controls === 2, JSON.stringify(liveAccess));
-    if (viewportName !== "desktop" && liveAccess.scrollWidth > liveAccess.clientWidth) {
-      await liveControls.nth(1).click();
-      await page.waitForFunction(() => {
-        const element = document.querySelector(".halloween-live-leaderboard");
-        return element instanceof HTMLElement && element.scrollLeft > 0;
-      }, null, { timeout: 2500 });
-      const scrolled = await liveRegion.evaluate(element => element.scrollLeft > 0);
-      recordAssertion(`${pageName} ${viewportName}: right scroll button moves the Live leaderboard`, scrolled, `scrollLeft after click: ${await liveRegion.evaluate(element => element.scrollLeft)}`);
-    }
+  recordAssertion(pageName + " " + viewportName + ": one page title", layout.headingCount === 1, "found " + layout.headingCount);
+  recordAssertion(pageName + " " + viewportName + ": no horizontal page overflow",
+    layout.documentWidth <= layout.viewportWidth + 1 && layout.bodyWidth <= layout.viewportWidth + 1,
+    layout.documentWidth + "px document / " + layout.bodyWidth + "px body in " + layout.viewportWidth + "px viewport");
+
+  if (isTraining) {
+    recordAssertion(pageName + " " + viewportName + ": section tabs follow hero heading",
+      layout.filter && layout.heading && layout.filter.y >= layout.heading.bottom - 1,
+      JSON.stringify({ heading: layout.heading, tabs: layout.filter }));
+    recordAssertion(pageName + " " + viewportName + ": active session tab is visible",
+      Boolean(layout.select && layout.activeTab), JSON.stringify({ activeTab: layout.activeTab, tabRect: layout.select }));
+    recordAssertion(pageName + " " + viewportName + ": calculator content follows tabs",
+      layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1,
+      JSON.stringify({ tabs: layout.filter, content: layout.nextSection }));
+    recordAssertion(pageName + " " + viewportName + ": tab controls fit their scroll container",
+      Boolean(layout.filter && layout.filter.height <= 68 && layout.filter.width <= layout.viewportWidth + 1),
+      JSON.stringify(layout.filter));
   } else {
-    recordAssertion(`${pageName} ${viewportName}: selector precedes archive data`, layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1, JSON.stringify({ filter: layout.filter, data: layout.nextSection }));
+    recordAssertion(pageName + " " + viewportName + ": year control follows page heading",
+      layout.filter && layout.heading && layout.filter.y >= layout.heading.bottom - 1,
+      JSON.stringify({ heading: layout.heading, filter: layout.filter }));
+    recordAssertion(pageName + " " + viewportName + ": year control is compact",
+      layout.select && layout.select.height <= 40 && layout.filter.height <= 64,
+      JSON.stringify({ filter: layout.filter, select: layout.select }));
+    if (pageName === "Halloween") {
+      recordAssertion(pageName + " " + viewportName + ": selector precedes section tabs",
+        layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1,
+        JSON.stringify({ filter: layout.filter, tabs: layout.nextSection }));
+      const liveRegion = page.locator(".halloween-live-leaderboard");
+      const liveControls = liveRegion.locator(".halloween-table-scroll-controls button");
+      const liveAccess = await liveRegion.evaluate(element => ({
+        tabIndex: element.tabIndex,
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        controls: element.querySelectorAll(".halloween-table-scroll-controls button").length,
+      }));
+      recordAssertion(pageName + " " + viewportName + ": Live leaderboard has keyboard focus", liveAccess.tabIndex === 0, JSON.stringify(liveAccess));
+      recordAssertion(pageName + " " + viewportName + ": Live leaderboard exposes both scroll controls", liveAccess.controls === 2, JSON.stringify(liveAccess));
+      if (viewportName !== "desktop" && liveAccess.scrollWidth > liveAccess.clientWidth) {
+        await liveControls.nth(1).click();
+        await page.waitForFunction(() => {
+          const element = document.querySelector(".halloween-live-leaderboard");
+          return element instanceof HTMLElement && element.scrollLeft > 0;
+        }, null, { timeout: 2500 });
+        const scrolled = await liveRegion.evaluate(element => element.scrollLeft > 0);
+        recordAssertion(pageName + " " + viewportName + ": right scroll button moves the Live leaderboard",
+          scrolled, "scrollLeft after click: " + await liveRegion.evaluate(element => element.scrollLeft));
+      }
+    } else {
+      recordAssertion(pageName + " " + viewportName + ": selector precedes archive data",
+        layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1,
+        JSON.stringify({ filter: layout.filter, data: layout.nextSection }));
+    }
   }
 
   const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
@@ -394,13 +427,121 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
   }));
   audit.accessibility.push({ page: pageName, viewport: viewportName, passes: axe.passes.length, violations });
   const serious = violations.filter(violation => violation.impact === "critical" || violation.impact === "serious");
-  recordAssertion(`${pageName} ${viewportName}: no critical/serious WCAG violations`, serious.length === 0, serious.map(v => `${v.id} (${v.nodes})`).join(", "));
+  recordAssertion(pageName + " " + viewportName + ": no critical/serious WCAG violations",
+    serious.length === 0, serious.map(v => v.id + " (" + v.nodes + ")").join(", "));
 
-  const screenshot = path.join(artifactDir, `${pageName.toLowerCase().replaceAll(" ", "-")}-${viewportName}.png`);
+  const screenshot = path.join(artifactDir, pageName.toLowerCase().replaceAll(" ", "-") + "-" + viewportName + ".png");
   await page.screenshot({ path: screenshot, fullPage: true, animations: "disabled" });
   pageReport.screenshot = screenshot;
   pageReport.accessibility = { passes: axe.passes.length, violations };
   return pageReport;
+}
+
+async function auditTrainingCalculatorInteractions(page, viewportName) {
+  const tab = name => page.getByTestId("training-tab-" + name);
+  const noOverflow = async label => {
+    const dimensions = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      document: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+    }));
+    recordAssertion("Training Calculator " + viewportName + ": " + label + " has no horizontal page overflow",
+      dimensions.document <= dimensions.viewport + 1 && dimensions.body <= dimensions.viewport + 1,
+      JSON.stringify(dimensions));
+  };
+  const scanAxe = async label => {
+    const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+    const violations = axe.violations.map(violation => ({
+      id: violation.id, impact: violation.impact, description: violation.description,
+      help: violation.help, nodes: violation.nodes.length,
+      examples: violation.nodes.slice(0, 4).map(node => ({ target: node.target, html: node.html, summary: node.failureSummary })),
+    }));
+    audit.accessibility.push({ page: "Training Calculator · " + label, viewport: viewportName, passes: axe.passes.length, violations });
+    const serious = violations.filter(violation => violation.impact === "critical" || violation.impact === "serious");
+    recordAssertion("Training Calculator " + viewportName + ": " + label + " has no critical/serious WCAG violations",
+      serious.length === 0, serious.map(item => item.id + " (" + item.nodes + ")").join(", "));
+  };
+
+  await tab("session").click();
+  await page.getByTestId("training-stat-select").selectOption("defense");
+  const changedStat = await page.locator(".tc-hero-stats strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": changing battle stat updates the model", changedStat === "Defense", changedStat);
+  await page.getByTestId("training-gym-select").selectOption("core");
+  const changedGym = await page.locator(".tc-hero-stats small").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": changing gym updates energy cost", changedGym.includes("10E / train"), changedGym);
+  await page.getByTestId("training-gym-select").selectOption("gun-shop");
+  await page.getByTestId("training-stat-select").selectOption("strength");
+  await page.getByTestId("training-stat-value").fill("1000000");
+  const sessionGain = await page.locator(".tc-metric").first().locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": current gym session produces positive training gain", sessionGain.startsWith("+"), sessionGain);
+  await noOverflow("session");
+
+  await tab("energy").click();
+  await page.getByTestId("training-current-energy").fill("0");
+  await page.getByTestId("training-xanax-count").fill("2");
+  await page.getByTestId("training-can-type").selectOption("red-cow");
+  await page.getByTestId("training-can-count").fill("2");
+  await page.getByTestId("training-fhc-count").fill("1");
+  await page.getByTestId("training-faction-voracity").check();
+  await page.getByTestId("training-xanax-price").fill("850000");
+  await page.getByTestId("training-can-price").fill("2500000");
+  await page.getByTestId("training-fhc-price").fill("15000000");
+  const energyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
+  recordAssertion("Training Calculator " + viewportName + ": energy plan totals 725E", Number(energyTotal) === 725, energyTotal);
+  const supplyCost = await page.locator(".tc-cost-total strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": energy plan includes known consumable cost", supplyCost === "$20,700,000", supplyCost);
+  await noOverflow("energy supply");
+  await scanAxe("Energy & cans");
+
+  await tab("happy").click();
+  await page.getByTestId("training-current-happy").fill("5025");
+  await page.getByTestId("training-ecstasy").check();
+  await page.getByTestId("training-dvd-count").fill("40");
+  await page.getByTestId("training-dvd-happy").selectOption("2500");
+  await page.getByTestId("training-other-happy").fill("0");
+  const happyTotal = await page.locator(".tc-happy-meter-top strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": happy jump correctly caps at 99,999", happyTotal === "99,999", happyTotal);
+  const jumpGain = await page.locator(".tc-metric").nth(1).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": happy jump forecasts additional stat gain", jumpGain.startsWith("+"), jumpGain);
+  await noOverflow("happy jump");
+  await scanAxe("99K Happy Jump");
+
+  await tab("enhancers").click();
+  await page.getByTestId("training-se-quantity").fill("2");
+  await page.getByTestId("training-se-price").fill("400000000");
+  const seGain = await page.locator(".tc-metric").first().locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
+  const seCost = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": SE market price is included", seCost === "$800,000,000", seCost);
+  await noOverflow("Stat Enhancers");
+  await scanAxe("Stat Enhancers");
+
+  await tab("projection").click();
+  await page.getByTestId("training-daily-energy").fill("480");
+  await page.getByTestId("training-projection-days").fill("30");
+  const projectedGain = (await page.locator(".tc-metric").first().locator("strong").innerText()).replaceAll(",", "").replace("+", "");
+  recordAssertion("Training Calculator " + viewportName + ": 30-day projection calculates positive gains", Number(projectedGain) > 0, projectedGain);
+  const projectionEnergy = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": projection accounts for 14,400E", projectionEnergy === "14,400", projectionEnergy);
+  await noOverflow("long-term projection");
+  await scanAxe("Long-term Projection");
+
+  await page.screenshot({ path: path.join(artifactDir, "training-calculator-" + viewportName + "-projection.png"), fullPage: true, animations: "disabled" });
+}
+
+async function auditTrainingCalculatorEntry(browser) {
+  const { context, page } = await createPage(browser, { width: 1440, height: 1000 });
+  try {
+    await page.goto(baseUrl + "/", { waitUntil: "networkidle" });
+    const card = page.getByRole("button", { name: /Training Calculator/ });
+    await card.waitFor({ state: "visible", timeout: 20000 });
+    await card.click();
+    await page.getByRole("heading", { name: /Train with a plan/ }).waitFor({ state: "visible", timeout: 20000 });
+    const currentPath = new URL(page.url()).pathname;
+    recordAssertion("Training Calculator: sixth workspace card opens the calculator route", currentPath === "/training-calculator", currentPath);
+  } finally {
+    await context.close();
+  }
 }
 
 async function createPage(browser, viewport) {
@@ -419,27 +560,33 @@ async function createPage(browser, viewport) {
 async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
+    await auditTrainingCalculatorEntry(browser);
     for (const viewportCase of [
       { name: "desktop", viewport: { width: 1440, height: 1000 } },
       { name: "tablet", viewport: { width: 768, height: 1024 } },
       { name: "mobile", viewport: { width: 390, height: 844 } },
+      { name: "small-mobile", viewport: { width: 320, height: 720 } },
     ]) {
       for (const pageCase of [
         { name: "Christmas Town", path: "/christmas-town", selector: "christmas-town-year", heading: /Christmas Town/i },
         { name: "Halloween", path: "/halloween", selector: "halloween-year-scope", heading: /Halloween Dashboard/i },
+        { name: "Training Calculator", path: "/training-calculator", selector: "training-tab-session", heading: /Train with a plan/i },
       ]) {
         const { context, page, state } = await createPage(browser, viewportCase.viewport);
         try {
           await auditLayout(page, pageCase.name, viewportCase.name, pageCase.path, pageCase.selector, pageCase.heading, state);
+          if (pageCase.name === "Training Calculator") {
+            await auditTrainingCalculatorInteractions(page, viewportCase.name);
+          }
           if (viewportCase.name === "desktop" && pageCase.name === "Christmas Town") {
-            const control = page.locator(`#${pageCase.selector}`);
+            const control = page.locator("#" + pageCase.selector);
             await control.selectOption(String(priorYear));
             await page.getByRole("heading", { name: "Minigames" }).waitFor({ state: "visible" });
             await page.waitForFunction((expected) => {
               const select = document.querySelector("#christmas-town-year");
               return select && select.value === expected;
             }, String(priorYear));
-            const expectedFrom = `${priorYear}-12-01`;
+            const expectedFrom = priorYear + "-12-01";
             recordAssertion("Christmas Town: choosing a year requests that season only", state.calls.some(call => call.path === "/api/me/christmas-town/archive" && new URLSearchParams(call.search).get("from") === expectedFrom), expectedFrom);
             await page.screenshot({ path: path.join(artifactDir, "christmas-town-selected-year.png"), fullPage: true, animations: "disabled" });
             state.scenario = "empty";
@@ -454,7 +601,7 @@ async function main() {
             await page.screenshot({ path: path.join(artifactDir, "christmas-town-error.png"), fullPage: true, animations: "disabled" });
           }
           if (viewportCase.name === "desktop" && pageCase.name === "Halloween") {
-            const control = page.locator(`#${pageCase.selector}`);
+            const control = page.locator("#" + pageCase.selector);
             await page.waitForFunction((expected) => {
               const select = document.querySelector("#halloween-year-scope");
               return select && [...select.options].some(option => option.value === expected);
