@@ -2263,15 +2263,22 @@ async function loadHalloweenAllTimeArchive(env: WorkerEnv, db: D1Database, signe
   const membersResult = await db.prepare(
     `SELECT p.player_id AS playerId, p.player_name AS playerName,
        EXISTS(SELECT 1 FROM halloween_historical_keys k WHERE k.player_id = p.player_id) AS keyConnected,
-       COALESCE(pc.share_halloween_history, 0) AS shareHistory
+       COALESCE(pc.private_data_visibility, 'self') AS privateDataVisibility
      FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id
      LEFT JOIN portal_user_consents pc ON pc.player_id = p.player_id
      WHERE p.faction_id = ? AND st.disabled_at IS NULL
      ORDER BY p.player_name`
-  ).bind(NAUGHTY_SOULS_FACTION_ID).all<{ playerId: string; playerName: string; keyConnected: number; shareHistory: number }>()
-  const members = (membersResult.results ?? []).filter(member =>
-    member.playerId === signedInPlayerId || Number(member.shareHistory) === 1,
+  ).bind(NAUGHTY_SOULS_FACTION_ID).all<{ playerId: string; playerName: string; keyConnected: number; privateDataVisibility: string }>()
+  const memberRows = membersResult.results ?? []
+  const needsFactionAccess = memberRows.some(member =>
+    member.playerId !== signedInPlayerId && normalizePrivateDataVisibility(member.privateDataVisibility) === "faction_access",
   )
+  const viewerHasFactionAccess = needsFactionAccess && await memberHasFactionApiAccess(env, signedInPlayerId)
+  const members = memberRows.filter(member => {
+    if (member.playerId === signedInPlayerId) return true
+    const visibility = normalizePrivateDataVisibility(member.privateDataVisibility)
+    return visibility === "faction_members" || (visibility === "faction_access" && viewerHasFactionAccess)
+  })
   if (!eventYears.length) {
     return {
       event: null, events: [], eventYears: [], myWindow: null, leaderboard: [],
@@ -7902,9 +7909,17 @@ export default {
         .bind(yearValue).first<{ eventYear: number; startAt: string; endAt: string; liveCollectionEnabled: number }>()
       if (!event) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
       const rows = await db.prepare(
-        "SELECT p.player_id AS playerId, p.player_name AS playerName, es.start_minute_of_day AS startMinuteOfDay, (SELECT s.treats_current FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS treatsCurrent, (SELECT s.treats_total FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS treatsTotal, (SELECT s.upgrades_json FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS upgradesJson, (SELECT s.captured_at FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS capturedAt, (SELECT s.snapshot_kind FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS snapshotKind, (SELECT s.source_timestamp FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS sourceTimestamp, COALESCE(pc.share_halloween_history, 0) AS shareHistory FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id LEFT JOIN portal_user_consents pc ON pc.player_id = p.player_id LEFT JOIN halloween_member_event_slots es ON es.player_id = p.player_id AND es.event_year = ? WHERE p.faction_id = ? AND st.disabled_at IS NULL AND (COALESCE(pc.share_halloween_history, 0) = 1 OR p.player_id = ?)"
-      ).bind(yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, NAUGHTY_SOULS_FACTION_ID, session.player_id).all<Record<string, unknown>>()
-      const leaderboard = (rows.results ?? []).map((row) => {
+        "SELECT p.player_id AS playerId, p.player_name AS playerName, es.start_minute_of_day AS startMinuteOfDay, (SELECT s.treats_current FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS treatsCurrent, (SELECT s.treats_total FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS treatsTotal, (SELECT s.upgrades_json FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS upgradesJson, (SELECT s.captured_at FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS capturedAt, (SELECT s.snapshot_kind FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS snapshotKind, (SELECT s.source_timestamp FROM halloween_live_snapshots s WHERE s.event_year = ? AND s.player_id = p.player_id ORDER BY s.captured_at DESC LIMIT 1) AS sourceTimestamp, COALESCE(pc.private_data_visibility, 'self') AS privateDataVisibility FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id LEFT JOIN portal_user_consents pc ON pc.player_id = p.player_id LEFT JOIN halloween_member_event_slots es ON es.player_id = p.player_id AND es.event_year = ? WHERE p.faction_id = ? AND st.disabled_at IS NULL"
+      ).bind(yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, NAUGHTY_SOULS_FACTION_ID).all<Record<string, unknown>>()
+      const liveRows = rows.results ?? []
+      const needsFactionAccess = liveRows.some(row => String(row.playerId) !== session.player_id && normalizePrivateDataVisibility(row.privateDataVisibility) === "faction_access")
+      const viewerHasFactionAccess = needsFactionAccess && await memberHasFactionApiAccess(env, session.player_id)
+      const visibleLiveRows = liveRows.filter(row => {
+        if (String(row.playerId) === session.player_id) return true
+        const visibility = normalizePrivateDataVisibility(row.privateDataVisibility)
+        return visibility === "faction_members" || (visibility === "faction_access" && viewerHasFactionAccess)
+      })
+      const leaderboard = visibleLiveRows.map((row) => {
         const memberWindow = row.startMinuteOfDay == null ? null : buildHalloweenMemberEventWindow(event, Number(row.startMinuteOfDay))
         const snapshotMs = row.capturedAt == null ? Number.NaN : Date.parse(String(row.capturedAt))
         const memberStartMs = memberWindow?.startAt ? Date.parse(memberWindow.startAt) : Number.NaN
@@ -7969,9 +7984,17 @@ export default {
         .bind(yearValue).first<{ eventYear: number; startAt: string; endAt: string }>()
       if (!event) return jsonResponse({ error: "No Halloween event window is configured for that year." }, 404, origin)
       const members = await db.prepare(
-        "SELECT p.player_id AS playerId, p.player_name AS playerName, es.start_minute_of_day AS startMinuteOfDay, EXISTS(SELECT 1 FROM halloween_historical_keys k WHERE k.player_id = p.player_id) AS keyConnected, (SELECT j.status FROM halloween_collection_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS collectionStatus, (SELECT j.pages_collected FROM halloween_collection_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS pagesCollected, (SELECT j.status FROM halloween_attack_metrics_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS attackMetricsStatus, (SELECT j.outcomes_version FROM halloween_attack_metrics_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS attackOutcomesVersion, (SELECT COUNT(*) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS storedLogCount, (SELECT COALESCE(SUM(l.is_hit), 0) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS storedHitCount, (SELECT MAX(l.collected_at) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS lastCollectedAt FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id LEFT JOIN portal_user_consents pc ON pc.player_id = p.player_id LEFT JOIN halloween_member_event_slots es ON es.player_id = p.player_id AND es.event_year = ? WHERE p.faction_id = ? AND st.disabled_at IS NULL AND (COALESCE(pc.share_halloween_history, 0) = 1 OR p.player_id = ?)"
-      ).bind(yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, NAUGHTY_SOULS_FACTION_ID, session.player_id).all<Record<string, unknown>>()
-      const leaderboard = (members.results ?? []).map((row) => {
+        "SELECT p.player_id AS playerId, p.player_name AS playerName, es.start_minute_of_day AS startMinuteOfDay, EXISTS(SELECT 1 FROM halloween_historical_keys k WHERE k.player_id = p.player_id) AS keyConnected, (SELECT j.status FROM halloween_collection_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS collectionStatus, (SELECT j.pages_collected FROM halloween_collection_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS pagesCollected, (SELECT j.status FROM halloween_attack_metrics_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS attackMetricsStatus, (SELECT j.outcomes_version FROM halloween_attack_metrics_jobs j WHERE j.player_id = p.player_id AND j.event_year = ? ORDER BY j.updated_at DESC LIMIT 1) AS attackOutcomesVersion, (SELECT COUNT(*) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS storedLogCount, (SELECT COALESCE(SUM(l.is_hit), 0) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS storedHitCount, (SELECT MAX(l.collected_at) FROM halloween_event_logs l WHERE l.event_year = ? AND l.player_id = p.player_id) AS lastCollectedAt, COALESCE(pc.private_data_visibility, 'self') AS privateDataVisibility FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id LEFT JOIN portal_user_consents pc ON pc.player_id = p.player_id LEFT JOIN halloween_member_event_slots es ON es.player_id = p.player_id AND es.event_year = ? WHERE p.faction_id = ? AND st.disabled_at IS NULL"
+      ).bind(yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, yearValue, NAUGHTY_SOULS_FACTION_ID).all<Record<string, unknown>>()
+      const archiveRows = members.results ?? []
+      const needsFactionAccess = archiveRows.some(row => String(row.playerId) !== session.player_id && normalizePrivateDataVisibility(row.privateDataVisibility) === "faction_access")
+      const viewerHasFactionAccess = needsFactionAccess && await memberHasFactionApiAccess(env, session.player_id)
+      const visibleArchiveRows = archiveRows.filter(row => {
+        if (String(row.playerId) === session.player_id) return true
+        const visibility = normalizePrivateDataVisibility(row.privateDataVisibility)
+        return visibility === "faction_members" || (visibility === "faction_access" && viewerHasFactionAccess)
+      })
+      const leaderboard = visibleArchiveRows.map((row) => {
         const status = typeof row.collectionStatus === "string" ? row.collectionStatus : null
         const statusText = status ?? (row.keyConnected ? "ready" : "not_collected")
         const complete = statusText === "complete"
@@ -8046,12 +8069,8 @@ export default {
       const member = await db.prepare("SELECT p.player_id AS playerId, p.player_name AS playerName FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id WHERE p.player_id = ? AND p.faction_id = ? AND st.disabled_at IS NULL")
         .bind(targetId, NAUGHTY_SOULS_FACTION_ID).first<{ playerId: string; playerName: string }>()
       if (!member) return jsonResponse({ error: "That member is not currently verified as a Naughty Souls member." }, 404, origin)
-       if (targetId !== session.player_id) {
-         const visibility = await db.prepare("SELECT share_halloween_history AS shareHistory FROM portal_user_consents WHERE player_id = ?")
-           .bind(targetId).first<{ shareHistory: number }>()
-         if (Number(visibility?.shareHistory) !== 1) {
-           return jsonResponse({ error: "This member has not opted to share their Halloween event history with the faction." }, 403, origin)
-         }
+       if (!(await privateDataVisibilityAllows(env, targetId, session.player_id))) {
+         return jsonResponse({ error: "This member's private-data visibility does not include your account." }, 403, origin)
        }
       if (allTimeDetail) {
         const eventYears = (await loadRecordedHalloweenEventWindows(db)).map((item) => item.eventYear)
