@@ -2522,6 +2522,7 @@ type PortalSetupResponse = Record<string, unknown> & { error?: string }
 export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [policyAccepted, setPolicyAccepted] = useState(props.isEdit === true)
   const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
+  const [shareHalloweenHistory, setShareHalloweenHistory] = useState(false)
   const [sharePrivateLive, setSharePrivateLive] = useState(false)
   const [shareNetworth, setShareNetworth] = useState(false)
   const [secondaryCompanyKey, setSecondaryCompanyKey] = useState("")
@@ -2545,6 +2546,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         : {}
       setPolicyAccepted(true)
       setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
+      setShareHalloweenHistory(consent.shareHalloweenHistory === true)
       setSharePrivateLive(consent.sharePrivateLive === true)
       setShareNetworth(consent.shareNetworth === true)
     }).catch(caught => {
@@ -2588,6 +2590,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         policyAccepted: true,
         consentVersion: "portal-data-policy-v1",
         historicalCollectionEnabled,
+        shareHalloweenHistory: historicalCollectionEnabled && shareHalloweenHistory,
         sharePrivateLive,
         shareNetworth: sharePrivateLive && shareNetworth,
       })
@@ -2719,7 +2722,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             <div className="portal-setup-policy-grid">
               <article><strong>Your member API key</strong><p>Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions. The encrypted key is stored by the portal API, not in this browser's local storage.</p></article>
               <article><strong>Shared faction and market data</strong><p>Shared faction information and public market prices are requested by the portal Worker using its own server-side Torn service key. Your personal API key is not used for these shared requests.</p></article>
-              <article><strong>Historical collections</strong><p>When enabled below, supported personal event archives are imported automatically using your own key. Halloween event metrics are contributed to the shared faction archive and visible to authenticated Naughty Souls members; Christmas Town records remain private to your account. Torn permissions and available records determine what can be collected.</p></article>
+              <article><strong>Historical collections & sharing</strong><p>When enabled below, supported personal event archives are imported automatically using your own key. Halloween event metrics are shared with authenticated Naughty Souls members only when you separately enable the Halloween sharing option. Christmas Town records remain private to your account.</p></article>
               <article><strong>Retention & revocation</strong><p>You can turn off collection and sharing later. Revocation stops future collection and removes the stored collection credential or shared live snapshot. Previously collected historical event records are retained under the portal's data-retention policy.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
@@ -2732,14 +2735,18 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             <div className="portal-setup-section-heading"><span>02</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
             <p>Allow the portal to import historical records supported by your Torn key. The current event backfill integrations cover Halloween and Christmas Town. Halloween needs User → Log and User → Attacks; Christmas Town needs unrestricted User → Log access. Restricted log categories can prevent some history from being imported. Other workspaces will become available here as their historical collectors are added.</p>
             <label className="portal-setup-check">
-              <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => setHistoricalCollectionEnabled(event.target.checked)} disabled={busy || saved} />
+              <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => { setHistoricalCollectionEnabled(event.target.checked); if (!event.target.checked) setShareHalloweenHistory(false) }} disabled={busy || saved} />
               <span><strong>Allow historical collection for supported portal features.</strong><small>Eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
+            </label>
+            <label className={"portal-setup-check portal-setup-subcheck" + (!historicalCollectionEnabled ? " is-disabled" : "")}>
+              <input type="checkbox" checked={shareHalloweenHistory} onChange={event => setShareHalloweenHistory(event.target.checked)} disabled={!historicalCollectionEnabled || busy || saved} />
+              <span><strong>Share my Halloween event history and derived metrics with Naughty Souls.</strong><small>Separate opt-in from collection. When disabled, only you can view your Halloween event logs and member details; your records are excluded from faction-wide event leaderboards and comparisons.</small></span>
             </label>
           </section>
 
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>03</span><div><h2>Data sharing</h2><small>Optional · Off by default</small></div></div>
-            <p>These choices are separate from the policy acknowledgement and historical collection permission.</p>
+            <p>These choices are separate from historical collection. They can be changed independently at any time.</p>
             <label className="portal-setup-check">
               <input type="checkbox" checked={sharePrivateLive} onChange={event => { setSharePrivateLive(event.target.checked); if (!event.target.checked) setShareNetworth(false) }} disabled={busy || saved} />
               <span><strong>Share my latest bars and cooldowns with Naughty Souls.</strong><small>Uses your own API key to create a latest-only snapshot. The snapshot is visible to authorized faction members and is refreshed only through supported member-triggered flows.</small></span>
