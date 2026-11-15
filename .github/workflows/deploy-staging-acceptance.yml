@@ -238,12 +238,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
         run: node scripts/refresh-staging-load-fixture.mjs
 
-      - name: Run sustained read-only admin API load against isolated staging
+      # The admin endpoint mix includes aggregate/history reads. Keep the default
+      # acceptance load bounded to a small, repeatable D1 read budget.
+      - name: Run bounded read-only admin API load against isolated staging
         env:
           STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-          STAGING_LOAD_DURATION_SECONDS: "285"
-          STAGING_LOAD_REQUESTS_PER_SECOND: "5"
-          STAGING_LOAD_MAX_CONCURRENCY: "8"
+          STAGING_LOAD_DURATION_SECONDS: "60"
+          STAGING_LOAD_REQUESTS_PER_SECOND: "1"
+          STAGING_LOAD_MAX_CONCURRENCY: "2"
         run: node scripts/test-staging-sustained-load.mjs
 
       - name: Remove synthetic private-history fixtures from staging D1
