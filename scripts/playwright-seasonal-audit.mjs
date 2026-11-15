@@ -372,6 +372,10 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
     recordAssertion(`${pageName} ${viewportName}: Live leaderboard exposes both scroll controls`, liveAccess.controls === 2, JSON.stringify(liveAccess));
     if (viewportName !== "desktop" && liveAccess.scrollWidth > liveAccess.clientWidth) {
       await liveControls.nth(1).click();
+      await page.waitForFunction(() => {
+        const element = document.querySelector(".halloween-live-leaderboard");
+        return element instanceof HTMLElement && element.scrollLeft > 0;
+      }, null, { timeout: 2500 });
       const scrolled = await liveRegion.evaluate(element => element.scrollLeft > 0);
       recordAssertion(`${pageName} ${viewportName}: right scroll button moves the Live leaderboard`, scrolled, `scrollLeft after click: ${await liveRegion.evaluate(element => element.scrollLeft)}`);
     }
