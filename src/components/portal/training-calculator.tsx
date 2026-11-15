@@ -104,6 +104,14 @@ function normalizeBook(value: string): string {
   if (key.includes("self control is for losers")) return "self-control"
   return ""
 }
+function activeBookChoice(data: LiveData | null): string {
+  const books = data?.perks?.book || []
+  for (const book of books) {
+    const match = normalizeBook(book)
+    if (match) return match
+  }
+  return "none"
+}
 function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: number): number {
   if (!bar || waitHours <= 0) return 0
   const current = Math.max(0, safeNumber(bar.current))
@@ -348,11 +356,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     return () => controller.abort()
   }, [apiBase, sessionToken, refreshKey])
 
-  const activeEnergyBooks = (liveData?.perks?.book || []).map(normalizeBook).filter(Boolean)
-  const plannedEnergyBooks = new Set<string>(
-    bookChoice === "auto" ? activeEnergyBooks : bookChoice === "none" ? [] : [bookChoice],
-  )
-  const hasLiveUglyEnergy = activeEnergyBooks.includes("ugly-energy")
+  const activeBook = bookChoice === "auto" ? activeBookChoice(liveData) : bookChoice
+  const plannedEnergyBooks = new Set<string>(activeBook === "none" ? [] : [activeBook])
+  const hasLiveUglyEnergy = activeBookChoice(liveData) === "ugly-energy"
   const energyBar = getBar(liveData, "energy")
   const happyBar = getBar(liveData, "happy")
   const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
@@ -786,7 +792,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="higher-daddy">Higher Daddy, Higher! · +20% natural energy</option>
                 <option value="ugly-energy">Ugly Energy · 250E bar and refill capacity</option>
                 <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
-              </select><small className="tc-hint">Auto applies all active energy books returned by /user/perks. Choose one to compare a single-book scenario.</small></label>
+              </select><small className="tc-hint">Auto detects your single active book from /user/perks. Choose a different book to model a planned scenario.</small></label>
               <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
                 hint="Maximum 168 hours. Natural energy is calculated from the starting energy you set and your live bar tick." suffix="hours" testId="training-energy-wait-hours" />
               <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
