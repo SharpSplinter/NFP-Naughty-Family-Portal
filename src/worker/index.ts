@@ -60,8 +60,8 @@ const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-
 const DAY = 86400
 const ADMIN_PLAYER_ID = "351311"
 const NAUGHTY_SOULS_FACTION_ID = "8317"
-const PORTAL_CONSENT_VERSION = "portal-data-policy-v2"
-const PORTAL_POLICY_VERSION = "2026-11-14-v2"
+const PORTAL_CONSENT_VERSION = "portal-data-policy-v3"
+const PORTAL_POLICY_VERSION = "2026-11-15-v1"
 const FACTION_DIRECTOR_ADMIN_QUEUE_KIND = "faction-director-admin-refresh"
 const ADMIN_FACTION_DIRECTORY_BATCH_SIZE = 35
 const ADMIN_FACTION_DIRECTORY_MAX_BATCHES = 6
@@ -432,6 +432,23 @@ async function saveKey(env: WorkerEnv, playerId: string, apiKey: string): Promis
 async function savedKey(env: WorkerEnv, playerId: string): Promise<string | null> {
   const row = await requireDb(env).prepare("SELECT ciphertext, iv FROM api_keys WHERE player_id = ?").bind(playerId).first<{ ciphertext: string; iv: string }>()
   return row ? decryptKey(env, row.ciphertext, row.iv) : null
+}
+type PortalConsentRecord = {
+  consentVersion?: string
+  apiKeyUsageAccepted?: number
+  apiKeyConsentFingerprint?: string | null
+}
+async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent: PortalConsentRecord | null): Promise<boolean> {
+  if (
+    consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
+    Number(consent.apiKeyUsageAccepted) !== 1 ||
+    !consent.apiKeyConsentFingerprint
+  ) return false
+  const apiKey = await savedKey(env, playerId)
+  if (!apiKey) return false
+  // Bind the acknowledgement to the exact primary credential. Replacing that
+  // credential requires a fresh API-key use consent before another portal API call.
+  return consent.apiKeyConsentFingerprint === await sha256(apiKey)
 }
 
 /** Remove feature registrations tied to an older portal credential while retaining user data/history. */
@@ -6416,9 +6433,9 @@ export default {
       const consentSession = await authenticate(request, env)
       if (consentSession) {
         const portalConsent = await requireDb(env).prepare(
-          "SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?",
-        ).bind(consentSession.player_id).first<{ consentVersion: string }>()
-        if (portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION) {
+          "SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?",
+        ).bind(consentSession.player_id).first<PortalConsentRecord>()
+        if (!(await portalConsentIsCurrent(env, consentSession.player_id, portalConsent))) {
           return jsonResponse({
             error: "Complete the Naughty Family privacy and data preferences before using the portal.",
             setupRequired: true,
@@ -6476,15 +6493,15 @@ export default {
         await db.prepare("INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), player.id, expiresAt, now).run()
         const [meta, portalConsent] = await Promise.all([
           db.prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(player.id).first<{ last_four: string; updated_at: string }>(),
-          db.prepare("SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?")
-            .bind(player.id).first<{ consentVersion: string }>(),
+          db.prepare("SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
+            .bind(player.id).first<PortalConsentRecord>(),
         ])
         return jsonResponse({
           token,
           expiresAt,
           player,
           isAdmin: Boolean(adminRole),
-          setupRequired: portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION,
+          setupRequired: !(await portalConsentIsCurrent(env, player.id, portalConsent)),
           key: { saved: true, lastFour: meta?.last_four, updatedAt: meta?.updated_at },
         }, 200, origin)
       } catch (error) { return tornError(error, origin) }
@@ -6494,13 +6511,13 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const [key, portalConsent] = await Promise.all([
         requireDb(env).prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(session.player_id).first<{ last_four: string; updated_at: string }>(),
-        requireDb(env).prepare("SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?")
-          .bind(session.player_id).first<{ consentVersion: string }>(),
+        requireDb(env).prepare("SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<PortalConsentRecord>(),
       ])
       return jsonResponse({
         player: { id: session.player_id, name: session.player_name },
         isAdmin: session.is_admin === 1,
-        setupRequired: portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION,
+        setupRequired: !(await portalConsentIsCurrent(env, session.player_id, portalConsent)),
         key: key ? { saved: true, lastFour: key.last_four, updatedAt: key.updated_at } : { saved: false },
       }, 200, origin)
     }
@@ -6509,12 +6526,15 @@ export default {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const consent = await requireDb(env).prepare(
-        "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, historical_collection_enabled AS historicalCollectionEnabled, share_halloween_history AS shareHalloweenHistory, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
-      ).bind(session.player_id).first<Record<string, unknown>>()
+        "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_acknowledged_at AS apiKeyConsentAcknowledgedAt, api_key_consent_fingerprint AS apiKeyConsentFingerprint, historical_collection_enabled AS historicalCollectionEnabled, share_halloween_history AS shareHalloweenHistory, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
+      ).bind(session.player_id).first<Record<string, unknown> & PortalConsentRecord>()
+      const consentCurrent = await portalConsentIsCurrent(env, session.player_id, consent)
       return jsonResponse({
-        required: consent?.consentVersion !== PORTAL_CONSENT_VERSION,
+        required: !consentCurrent,
         consent: consent ? {
           ...consent,
+          apiKeyUsageAccepted: consentCurrent,
+          apiKeyConsentAcknowledgedAt: consent.apiKeyConsentAcknowledgedAt ?? null,
           historicalCollectionEnabled: Number(consent.historicalCollectionEnabled) === 1,
           shareHalloweenHistory: Number(consent.shareHalloweenHistory) === 1,
           sharePrivateLive: Number(consent.sharePrivateLive) === 1,
@@ -6527,9 +6547,12 @@ export default {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const body: unknown = await request.json().catch(() => null)
-      if (!isRecord(body) || body.policyAccepted !== true || body.consentVersion !== PORTAL_CONSENT_VERSION) {
-        return jsonResponse({ error: "Acknowledge the current Naughty Family data policy to complete setup." }, 400, origin)
+      if (!isRecord(body) || body.policyAccepted !== true || body.apiKeyUsageAccepted !== true || body.consentVersion !== PORTAL_CONSENT_VERSION) {
+        return jsonResponse({ error: "Acknowledge the current privacy policy and confirm authorization to use your own Custom Access or Full Access Torn API key." }, 400, origin)
       }
+      const primaryApiKey = await savedKey(env, session.player_id)
+      if (!primaryApiKey) return jsonResponse({ error: "Your primary portal API key is missing. Sign in again with your own Custom Access or Full Access key before completing consent." }, 409, origin)
+      const apiKeyConsentFingerprint = await sha256(primaryApiKey)
       const historicalCollectionEnabled = body.historicalCollectionEnabled === true
       const shareHalloweenHistory = historicalCollectionEnabled && body.shareHalloweenHistory === true
       const sharePrivateLive = body.sharePrivateLive === true
@@ -6537,9 +6560,10 @@ export default {
       const now = new Date().toISOString()
       const db = requireDb(env)
       await db.prepare(
-        "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET consent_version = excluded.consent_version, policy_version = excluded.policy_version, policy_acknowledged_at = excluded.policy_acknowledged_at, historical_collection_enabled = excluded.historical_collection_enabled, share_halloween_history = excluded.share_halloween_history, share_private_live = excluded.share_private_live, share_networth = excluded.share_networth, updated_at = excluded.updated_at",
+        "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET consent_version = excluded.consent_version, policy_version = excluded.policy_version, policy_acknowledged_at = excluded.policy_acknowledged_at, api_key_usage_accepted = excluded.api_key_usage_accepted, api_key_consent_acknowledged_at = excluded.api_key_consent_acknowledged_at, api_key_consent_fingerprint = excluded.api_key_consent_fingerprint, historical_collection_enabled = excluded.historical_collection_enabled, share_halloween_history = excluded.share_halloween_history, share_private_live = excluded.share_private_live, share_networth = excluded.share_networth, updated_at = excluded.updated_at",
       ).bind(
         session.player_id, PORTAL_CONSENT_VERSION, PORTAL_POLICY_VERSION, now,
+        1, now, apiKeyConsentFingerprint,
         historicalCollectionEnabled ? 1 : 0, shareHalloweenHistory ? 1 : 0, sharePrivateLive ? 1 : 0, shareNetworth ? 1 : 0, now, now,
       ).run()
 
@@ -6570,6 +6594,8 @@ export default {
           consentVersion: PORTAL_CONSENT_VERSION,
           policyVersion: PORTAL_POLICY_VERSION,
           acknowledgedAt: now,
+          apiKeyUsageAccepted: true,
+          apiKeyConsentAcknowledgedAt: now,
           historicalCollectionEnabled,
           shareHalloweenHistory,
           sharePrivateLive,
