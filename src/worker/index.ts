@@ -7323,10 +7323,17 @@ export default {
       const activeBooks = perks && Array.isArray(perks.book) ? perks.book.filter(value => typeof value === "string") : []
       const activeFactionPerks = perks && Array.isArray(perks.faction) ? perks.faction.filter(value => typeof value === "string") : []
       const activeEducationPerks = perks && Array.isArray(perks.education) ? perks.education.filter(value => typeof value === "string") : []
-      const gymModifierFor = (stat: string): { multiplier: number; bonuses: string[] } => {
-        let multiplier = 1
+      const gymModifierFor = (stat: string): { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] } => {
+        let bonusPercent = 0
+        let bookBonusPercent = 0
         const bonuses: string[] = []
-        const add = (label: string, percent: number) => { if (percent > 0 && Number.isFinite(percent)) { multiplier *= 1 + percent / 100; bonuses.push(label + " +" + percent + "%") } }
+        const add = (label: string, percent: number, isBook = false) => {
+          if (percent > 0 && Number.isFinite(percent)) {
+            bonusPercent += percent
+            if (isBook) bookBonusPercent += percent
+            bonuses.push(label + " +" + percent + "%")
+          }
+        }
         const educationMap: Array<[RegExp, number, string[]]> = [
           [/sports science bachelors/i, 1, ["strength", "defense", "speed", "dexterity"]],
           [/strength and conditioning/i, 1, ["strength"]],
@@ -7342,7 +7349,7 @@ export default {
           [/speed 3.*rejected script/i, 30, ["speed"]],
           [/limbo lovers 101/i, 30, ["dexterity"]],
         ]
-        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent)
+        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent, true)
         const allPerks = [
           ...activeFactionPerks.map(text => ({ group: "Faction", text })),
           ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
@@ -7355,7 +7362,20 @@ export default {
           const key = entry.group + ":" + entry.text
           if (!seen.has(key)) { seen.add(key); add(entry.group + ": " + entry.text, percent) }
         }
-        return { multiplier, bonuses }
+        return {
+          multiplier: 1 + bonusPercent / 100,
+          baseMultiplier: 1 + (bonusPercent - bookBonusPercent) / 100,
+          bookBonusPercent,
+          bonuses,
+        }
+      }
+      const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy/i.test(text)) || ""
+      const factionCooldownPerk = activeFactionPerks.find(text => /booster cooldown/i.test(text)) || ""
+      const factionEnergyPercentMatch = factionEnergyPerk.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
+      const factionCooldownHoursMatch = factionCooldownPerk.match(/(\\d+(?:\\.\\d+)?)\\s*(?:hours?|h)\\b/i)
+      const factionBonuses = {
+        energyDrinkBonusPercent: factionEnergyPercentMatch ? Number(factionEnergyPercentMatch[1]) : 0,
+        boosterCooldownBonusHours: factionCooldownHoursMatch ? Math.max(0, Math.min(24, Number(factionCooldownHoursMatch[1]))) : 0,
       }
       const modifiers = {
         strength: gymModifierFor("strength"),
@@ -7382,6 +7402,7 @@ export default {
         gym: activeGym ? { id: String(activeGym.id), name: activeGym.name, unlockedGyms: unlockedRows } : null,
         gyms: normalizedGyms,
         gymModifiers: modifiers,
+        factionBonuses,
         bars: {
           energy: energyBar ? {
             current: energyBar.current, maximum: energyBar.maximum, increment: energyBar.increment,
