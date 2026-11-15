@@ -326,7 +326,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const energyBar = getBar(liveData, "energy")
   const happyBar = getBar(liveData, "happy")
   const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
-  const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 5025
+  const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 0
   const currentEnergy = manualEnergy.trim() === "" ? currentEnergyFromApi : clamp(safeNumber(manualEnergy), 0, ENERGY_HARD_CAP)
   const startingHappy = manualHappy.trim() === "" ? currentHappyFromApi : clamp(safeNumber(manualHappy), 0, HAPPY_CAP)
   const activeGym = liveData?.gyms?.find(gym => String(gym.id) === String(liveData.gym?.id)) || null
@@ -382,24 +382,21 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const energyFromXanax = xanaxCount * 250
   const energyFromGreenEggs = greenEggCount * 500
   const usableEnergy = energyAfterNatural + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
-  const energySourceTotal = currentEnergy + naturalEnergy + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
   const cooldownUsedHours = canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6
   const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
-  const boosterBudgetDescription = fmt(Math.max(0, boosterBudgetHours)) + "h available before planned items"
   const maximumXanax = 4
   const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
   const maximumCanCount = Math.min(48, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
   const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
-  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / (6 * cooldownFactor))))
+  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / 6)))
   const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6))
-  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / (6 * cooldownFactor))))
+  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / 6)))
   const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6))
-  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / (6 * cooldownFactor))))
+  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / 6)))
   const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
   const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75)))) : 0
   const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
-  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / (6 * cooldownFactor))))
-  const maxPointRefill = pointRefillAvailable ? 1 : 0
+  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
   const canPrice = getPrice(priceOverrides["can:" + canId] || "", liveData?.items?.energyDrinks?.[canId])
@@ -575,7 +572,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </label>
               {manualModifierEnabled && <NumberField label="Manual gym-gain modifier" value={safeNumber(manualModifier)} onChange={value => setManualModifier(value === 0 ? "" : String(value))}
                 min={0} max={100} step={0.0001} hint={"Maximum 100×. Live API modifier is " + fmt(autoModifier, 4) + "×."} />}
-              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : 5025}
+              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : null}
                 onChange={setManualHappy} max={HAPPY_CAP} hint="Live from your Torn bars. A cleared field returns to your current API value." testId="training-session-happy" />
               <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={value => setManualHappyLossPercent(String(value))}
                 min={minHappyLossPercent} max={maxHappyLossPercent} step={1} suffix="%"
@@ -664,6 +661,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </label>
             </div>
             <div className="tc-inline-note"><strong>Supply order modeled:</strong> natural energy → current bar → point refill / FHC full-bar refills → Xanax and energy drinks. Full-bar refills assume you train down before each refill. Torn's 1,000E limit is the amount you can hold at once, not a limit on total energy spent after sequential refills.</div>
+            {cooldownUsedHours > boosterBudgetHours && <div className="tc-inline-warning" role="alert">
+              This combination uses {fmt(cooldownUsedHours - boosterBudgetHours, 1)} more booster-cooldown hours than your current {fmt(boosterBudgetHours, 1)}h allowance. Reduce one or more selected items before treating the plan as usable.
+            </div>}
             <div className="tc-form-grid tc-price-grid">
               <PriceField label="Xanax · live Item Market average" value={priceOverrides.xanax || ""} autoValue={marketPrice(liveData?.items?.xanax)} onChange={value => setPriceOverride("xanax", value)} hint={liveData?.items?.xanax?.name || "Live price not returned"} testId="training-xanax-price" />
               <PriceField label={drink.name + " · live Item Market average"} value={priceOverrides["can:" + canId] || ""} autoValue={marketPrice(liveData?.items?.energyDrinks?.[canId])} onChange={value => setPriceOverride("can:" + canId, value)} hint={liveData?.items?.energyDrinks?.[canId]?.name || "Live price not returned"} testId="training-can-price" />
@@ -713,7 +713,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div className="tc-happy-meter-foot"><span>0 happy</span><span>99,999 maximum</span></div>
             </div>
             <div className="tc-form-grid">
-              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : 5025}
+              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : null}
                 onChange={setManualHappy} max={HAPPY_CAP} hint="Automatically uses your live Torn happy bar." testId="training-current-happy" />
               <div className="tc-readout-field"><span>Xanax planned</span><strong>{fmt(xanaxCount)} × +75 happy</strong><small>Quantity comes from Energy Supply.</small></div>
               <div className="tc-readout-field"><span>FHC planned</span><strong>{fmt(fhcCount)} × +500 happy</strong><small>Quantity comes from Energy Supply.</small></div>
@@ -858,8 +858,4 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       <footer className="tc-footer"><span>NAUGHTY FAMILY · TRAINING CALCULATOR · TORN API-POWERED</span><span>Estimates only · never sends training actions to Torn</span></footer>
     </div>
   )
-
-  function setDailyEnergyOverrideNumber(value: number) {
-    setDailyEnergyOverride(String(value))
-  }
 }
