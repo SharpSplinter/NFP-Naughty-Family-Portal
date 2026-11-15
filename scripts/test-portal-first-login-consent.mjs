@@ -37,7 +37,7 @@ assert.ok(workspace.includes("disabled={!policyAcknowledgementRequired || busy |
 assert.ok(workspace.includes("apiKeyUsageAccepted: true"), "the setup form must persist explicit primary API-key use authorization")
 assert.ok(workspace.includes("checked={apiKeyUsageAccepted}"), "the form must display the primary API-key consent checkbox")
 assert.ok(workspace.includes("secondaryCompanyKeyConsent"), "an optional secondary company key must have its own authorization")
-assert.ok(workspace.includes("Custom Access key or a"), "the consent form must explain Custom and Full Access scope differences")
+assert.ok(workspace.includes("Custom Access</strong> key or a <strong>Full Access</strong> key"), "the consent form must explain Custom and Full Access scope differences")
 assert.ok(workspace.includes("PRIVACY, DATA & API KEY CONSENTS"), "Account Settings must display the complete consent card")
 assert.ok(workspace.includes("Primary API key use"), "Account Settings must show primary-key authorization status")
 assert.ok(worker.includes("portalConsentIsCurrent"), "the API gate must enforce the current policy and primary-key consent")
