@@ -116,6 +116,7 @@ const workspaces = [
   { path: "/company", icon: "▦", title: "Company Dashboard", description: "Company performance, employees, income, rankings, and operational intelligence.", label: "COMPANY OPERATIONS" },
   { path: "/halloween", icon: "♧", title: "Halloween Dashboard", description: "Current event standings alongside the faction's growing historical event archive.", label: "EVENT INTELLIGENCE" },
   { path: "/christmas-town", icon: "❄", title: "Christmas Town", description: "Your personal minigame, chest, ornament, currency and market-value history.", label: "EVENT INTELLIGENCE" },
+  { path: "/training-calculator", icon: "⌁", title: "Training Calculator", description: "Plan gym gains, 99K happy jumps, energy cans, Xanax, refills and Stat Enhancers.", label: "TRAINING PLANNER" },
   { path: "/settings", icon: "⚙", title: "Account Settings", description: "Your API connections, permissions, account security, and preferences.", label: "YOUR ACCOUNT" },
 ]
 
@@ -137,12 +138,12 @@ export function PortalHome(props: WorkspaceProps) {
       <section className="portal-hero">
         <div className="portal-eyebrow"><span /> NAUGHTY SOULS · MEMBER PORTAL</div>
         <h1>One faction.<br /><em>Every workspace.</em></h1>
-        <p>Your shared home for company operations, Halloween intelligence, and the tools that keep Naughty Souls connected.</p>
+        <p>Your home for company operations, seasonal intelligence, and personal training plans that keep Naughty Souls growing.</p>
         <div className="portal-session"><i /> Authenticated faction member <span>·</span> Your session is shared across workspaces</div>
       </section>
 
       <section className="portal-workspaces" aria-label="Available workspaces">
-        <div className="portal-section-heading"><div><span>YOUR WORKSPACES</span><h2>Choose where to go</h2></div><small>05 MODULES</small></div>
+        <div className="portal-section-heading"><div><span>YOUR WORKSPACES</span><h2>Choose where to go</h2></div><small>06 MODULES</small></div>
         <div className="portal-card-grid">
           {workspaces.map((workspace, index) => (
             <button type="button" key={workspace.path} className={`portal-card portal-card-${workspace.path.slice(1)}`} onClick={() => props.onNavigate(workspace.path)}>
