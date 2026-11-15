@@ -1239,7 +1239,9 @@ try {
     const primaryKeyCrypto = await crypto.subtle.importKey("raw", primaryKeyDigest, { name: "AES-GCM" }, false, ["encrypt"])
     const primaryKeyIv = crypto.getRandomValues(new Uint8Array(12))
     const primaryKeyCiphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: primaryKeyIv }, primaryKeyCrypto, new TextEncoder().encode(apiKey))
-    const state = { key: null, snapshot: null, throttleAt: null, writes: [], primaryKey: {
+    const state = { key: null, snapshot: null, throttleAt: null, writes: [], centralPreferences: {
+      consentVersion: "portal-data-policy-v1", sharePrivateLive: 0, shareNetworth: 0,
+    }, primaryKey: {
       ciphertext: Buffer.from(primaryKeyCiphertext).toString("base64"), iv: Buffer.from(primaryKeyIv).toString("base64"),
     } }
     const db = {
@@ -1253,6 +1255,15 @@ try {
               const session = sessions.get(String(values[0]))
               if (!session || session.expires_at <= Number(values[1])) return null
               return { ...player }
+            }
+            if (normalized.startsWith("select consent_version as consentversion from portal_user_consents")) {
+              return { consentVersion: state.centralPreferences.consentVersion }
+            }
+            if (normalized.startsWith("select share_private_live as shareprivatelive, share_networth as sharenetworth from portal_user_consents")) {
+              return {
+                sharePrivateLive: state.centralPreferences.sharePrivateLive,
+                shareNetworth: state.centralPreferences.shareNetworth,
+              }
             }
             if (normalized.startsWith("select disabled_at from dashboard_member_status")) return { disabled_at: null }
             if (normalized.startsWith("select ciphertext, iv from api_keys")) return state.primaryKey
@@ -1307,6 +1318,11 @@ try {
               state.key = null
               return { success: true, meta: { changes: 1 } }
             }
+            if (normalized.startsWith("update portal_user_consents set share_private_live = 0")) {
+              state.centralPreferences.sharePrivateLive = 0
+              state.centralPreferences.shareNetworth = 0
+              return { success: true, meta: { changes: 1 } }
+            }
             return { success: true, meta: { changes: 1 } }
           },
         }
@@ -1354,13 +1370,12 @@ try {
     }), env, { waitUntil() {} })
 
     try {
-      const missingConsent = await request("POST", { shareWithFaction: true, consentVersion: "faction-private-live-v1" })
-      assert.equal(missingConsent.status, 400)
-      assert.equal(calls.length, 0, "consent is checked before contacting Torn")
+      const missingCentralPreference = await request("POST", {})
+      assert.equal(missingCentralPreference.status, 409)
+      assert.equal(calls.length, 0, "central sharing preference is checked before contacting Torn")
 
-      const wrongOwner = await request("POST", {
-        consent: true, shareWithFaction: true, consentVersion: "faction-private-live-v1",
-      })
+      state.centralPreferences.sharePrivateLive = 1
+      const wrongOwner = await request("POST", {})
       assert.equal(wrongOwner.status, 403)
       assert.equal(state.key, null, "a key owned by another player must never be stored")
       assert.equal(state.snapshot, null, "a key owned by another player must never create a faction snapshot")
@@ -1370,10 +1385,7 @@ try {
       // only the request trace, not the D1 throttle state, for the next case.
       calls.length = 0
       state.throttleAt = new Date(Date.now() - 31000).toISOString()
-      const connected = await request("POST", {
-        consent: true, shareWithFaction: true,
-        consentVersion: "faction-private-live-v1", includeNetworth: false,
-      })
+      const connected = await request("POST")
       assert.equal(connected.status, 200)
       const connectedBody = await connected.json()
       assert.equal(connectedBody.connected, true)
@@ -1388,10 +1400,7 @@ try {
       assert.ok(state.writes.every(write => !write.values.includes(apiKey)), "plaintext key must never be bound to D1")
 
       const requestsBeforeThrottle = calls.length
-      const rateLimited = await request("POST", {
-        consent: true, shareWithFaction: true,
-        consentVersion: "faction-private-live-v1", includeNetworth: false,
-      })
+      const rateLimited = await request("POST")
       assert.equal(rateLimited.status, 429, "repeat private live connect attempts must share the member request budget")
       assert.equal(calls.length, requestsBeforeThrottle, "a rejected request must not contact Torn")
 
@@ -1430,10 +1439,8 @@ try {
       // server-enforced 30-second per-member request window has elapsed.
       state.throttleAt = new Date(Date.now() - 31000).toISOString()
       upstreamErrorCode = null
-      const networthConnection = await request("POST", {
-        consent: true, shareWithFaction: true,
-        consentVersion: "faction-private-live-v1", includeNetworth: true,
-      })
+      state.centralPreferences.shareNetworth = 1
+      const networthConnection = await request("POST")
       assert.equal(networthConnection.status, 200)
       assert.ok(calls.includes("/v2/user/networth"))
       assert.equal(state.key.include_networth, 1)
@@ -1443,6 +1450,8 @@ try {
       assert.equal(disconnected.status, 200)
       assert.equal(state.key, null)
       assert.equal(state.snapshot, null)
+      assert.equal(state.centralPreferences.sharePrivateLive, 0)
+      assert.equal(state.centralPreferences.shareNetworth, 0)
     } finally {
       globalThis.fetch = originalFetch
     }
