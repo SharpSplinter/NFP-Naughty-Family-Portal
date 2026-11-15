@@ -298,6 +298,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [seTargetStat, setSeTargetStat] = useState<StatKey>("strength")
   const [jobPointQuantity, setJobPointQuantity] = useState(0)
   const [pressPassQuantity, setPressPassQuantity] = useState(0)
+  const [permanentStatBooks, setPermanentStatBooks] = useState<Record<StatKey, boolean>>({
+    strength: false, defense: false, speed: false, dexterity: false,
+  })
   const [projectionDays, setProjectionDays] = useState(30)
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
   const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
@@ -485,10 +488,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
     const name = currentJobName.toLowerCase()
-    if (name.includes("fitness center") && currentJobRating >= 5) return { name: "Roid Rage", stat: "strength" as StatKey, energyEquivalent: 4.5 }
-    if (name.includes("furniture store") && currentJobRating >= 3) return { name: "Heavy Lifting", stat: "strength" as StatKey, energyEquivalent: 4.5 }
-    if (name.includes("mining corporation") && currentJobRating >= 5) return { name: "Rock Salt", stat: "defense" as StatKey, energyEquivalent: 4.5 }
-    if (name.includes("logistics management") && currentJobRating >= 1) return { name: "Efficiency", stat: "speed" as StatKey, energyEquivalent: 4.5 }
+    if (name.includes("fitness center") && currentJobRating >= 5) return { name: "Roid Rage", stat: "strength" as StatKey, energyEquivalent: 4.5, happinessIndependent: true }
+    if (name.includes("furniture store") && currentJobRating >= 3) return { name: "Heavy Lifting", stat: "strength" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
+    if (name.includes("mining corporation") && currentJobRating >= 5) return { name: "Rock Salt", stat: "defense" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
+    if (name.includes("logistics management") && currentJobRating >= 1) return { name: "Efficiency", stat: "speed" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
     return null
   })()
   const hasPressPass = currentJob?.type === "company" && currentJobName.toLowerCase().includes("television network") && currentJobRating >= 10
@@ -527,14 +530,15 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     let stat = jobPointStartingStat
     let gain = 0
     for (let index = 0; index < Math.min(jobPointQuantity, jobPointMax); index++) {
-      const next = estimateEnergyEquivalentGain(stat, startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
+      const modeledHappy = jobPointSpecial.happinessIndependent ? 0 : startingHappy
+      const next = estimateEnergyEquivalentGain(stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
       stat += next
       gain += next
     }
     return {
       gain,
       endingStat: stat,
-      perPoint: estimateEnergyEquivalentGain(jobPointStartingStat, startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
+      perPoint: estimateEnergyEquivalentGain(jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
     }
   })()
   const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
@@ -575,6 +579,57 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     return { stat, totalGain, energy: dailyEnergy * days, days }
   }, [currentStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay])
 
+  const permanentStatBookOptions: Array<{ stat: StatKey; title: string }> = [
+    { stat: "strength", title: "Brawn Over Brains" },
+    { stat: "defense", title: "Keeping Your Face Handsome" },
+    { stat: "speed", title: "Time Is In The Mind" },
+    { stat: "dexterity", title: "A Job For Your Hands" },
+  ]
+  const permanentStatBookProjections = permanentStatBookOptions.map(book => {
+    const liveStat = liveData?.battleStats?.[book.stat] ?? null
+    const override = manualStats[book.stat]
+    const startingStat = override.trim() === "" ? safeNumber(liveStat) : Math.max(0, safeNumber(override))
+    const hasStat = liveStat !== null || override.trim() !== ""
+    const dots = safeNumber(selectedGym.dots[book.stat])
+    const modifierProfile = liveData?.gymModifiers?.[book.stat]
+    const plannedBookBonus: Record<string, number> = {
+      none: 0,
+      "get-hard": 20,
+      "gym-grunting": book.stat === "strength" ? 30 : 0,
+      "self-defense": book.stat === "defense" ? 30 : 0,
+      "speed-script": book.stat === "speed" ? 30 : 0,
+      "limbo-lovers": book.stat === "dexterity" ? 30 : 0,
+    }
+    const modifier = gymBookChoice === "auto"
+      ? safeNumber(modifierProfile?.multiplier, 1)
+      : safeNumber(modifierProfile?.baseMultiplier, 1) * (1 + (plannedBookBonus[gymBookChoice] || 0) / 100)
+    let statAtCompletion = startingStat
+    let happyAtCompletion = startingHappy
+    if (hasStat && dots > 0) {
+      for (let day = 0; day < 31; day++) {
+        const dayTrain = estimateGymSession({
+          stat: statAtCompletion,
+          happy: happyAtCompletion,
+          energy: dailyEnergy,
+          dots,
+          energyPerTrain: selectedGym.energyCost,
+          modifier,
+          happyLossRate: happyLossPercent / 100,
+        })
+        statAtCompletion = dayTrain.endingStat
+        happyAtCompletion = clamp(
+          happyAtCompletion + naturalHappyPerDay - dayTrain.trains * selectedGym.energyCost * happyLossPercent / 100,
+          0,
+          HAPPY_CAP,
+        )
+      }
+    }
+    const gain = permanentStatBooks[book.stat] && hasStat && dots > 0
+      ? Math.min(statAtCompletion * 0.05, 10_000_000)
+      : 0
+    return { ...book, startingStat, statAtCompletion, gain, endingStat: statAtCompletion + gain, hasStat }
+  })
+  const totalPermanentStatBookGain = permanentStatBookProjections.reduce((total, book) => total + book.gain, 0)
   const currentStatLabel = STAT_OPTIONS.find(option => option.value === selectedStat)?.label || "Strength"
   const modifierBonuses = liveData?.gymModifiers?.[selectedStat]?.bonuses || []
   const currentMarketTimestamp = liveData?.marketUpdatedAt ? new Date(liveData.marketUpdatedAt * 1000).toLocaleString() : ""
@@ -885,6 +940,30 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-result-total"><span>Projected ending {STAT_OPTIONS.find(option => option.value === seTargetStat)?.label.toLowerCase()}</span><strong>{fmt(seCalculation.endingStat, 2)}</strong></div>
             <div className="tc-inline-note"><strong>Item mapping:</strong> Dumbbells → Strength · Boxing Gloves → Defense · Skateboard → Speed · Parachute → Dexterity.</div>
           </Panel>
+          <Panel title="Permanent stat books" eyebrow="31-DAY COMPLETION BONUS" description="Toggle the books you intend to complete. Their one-time 5% bonus is estimated from each battle stat projected at the end of the 31-day read, capped at 10,000,000 gain per book.">
+            <div className="tc-condition-list">
+              {permanentStatBookProjections.map(book => <div className="tc-stat-book-row" key={book.stat}>
+                <label className="tc-check-field">
+                  <input
+                    type="checkbox"
+                    data-testid={"training-book-" + book.stat}
+                    checked={permanentStatBooks[book.stat]}
+                    disabled={!book.hasStat || safeNumber(selectedGym.dots[book.stat]) <= 0}
+                    onChange={event => setPermanentStatBooks(current => ({ ...current, [book.stat]: event.target.checked }))}
+                  />
+                  <span>
+                    <strong>{STAT_OPTIONS.find(option => option.value === book.stat)?.label}: {book.title}</strong>
+                    <small>{book.hasStat
+                      ? "Today " + fmt(book.startingStat) + " · projected at completion " + fmt(book.statAtCompletion, 2)
+                      : "Live battle stat unavailable. Add a manual stat in Gym Trains first."}</small>
+                  </span>
+                </label>
+                <strong className="tc-stat-book-gain">{book.hasStat ? "+" + fmt(book.gain, 2) : "—"}</strong>
+              </div>)}
+            </div>
+            <div className="tc-result-total"><span>Combined one-time book gain</span><strong>+{fmt(totalPermanentStatBookGain, 2)}</strong></div>
+            <p className="tc-muted">Books are not tradeable and have no Item Market price. This estimate assumes the same daily energy, gym and perk scenario throughout the read. Recheck it when the book finishes because actual training may differ.</p>
+          </Panel>
           <Panel title="Company job-point stat gains" eyebrow="LIVE JOB + JOBPOINTS API" description="Some company specials award permanent battle-stat gains through job points. Current company, rating and saved points are read automatically.">
             <div className="tc-condition-list">
               <div><span>Current job / company</span><strong>{currentJobName || "Not returned by Torn API"}</strong></div>
@@ -902,7 +981,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 min={0} max={jobPointMax} hint={"Maximum " + fmt(jobPointMax) + " points available. Each point is approximately 4.5E worth of gains in your selected gym."}
                 testId="training-jobpoint-quantity" />
               <div className="tc-readout-field"><span>Estimated {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label} gain</span><strong>+{fmt(jobPointGain.gain, 2)}</strong>
-                <small>About +{fmt(jobPointGain.perPoint, 2)} per point · current stat, happiness and gym modifiers</small></div>
+                <small>About +{fmt(jobPointGain.perPoint, 2)} per point · {jobPointSpecial.happinessIndependent ? "happiness-independent" : "happiness-sensitive"} estimate</small></div>
               <div className="tc-readout-field"><span>Projected ending stat</span><strong>{fmt(jobPointGain.endingStat, 2)}</strong><small>{fmt(jobPointSpecial.energyEquivalent, 1)}E-equivalent gain per point</small></div>
             </div> : <p className="tc-muted">No deterministic gym-equivalent company special is available from the current job. Supported: Fitness Center Roid Rage (5★), Furniture Store Heavy Lifting (3★), Mining Corporation Rock Salt (5★) and Logistics Management Efficiency (1★).</p>}
             {hasPressPass && <div className="tc-form-grid">
