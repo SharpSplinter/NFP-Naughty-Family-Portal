@@ -98,10 +98,40 @@ try {
     sessionStorage.removeItem("ncd_active_view");
   }, sessionToken);
 
+  // Wait for the actual app-owned session and saved-company requests instead of
+  // relying on profile text that is intentionally hidden in the mobile portal header.
+  const restoredSessionPromise = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/auth/session" && response.request().method() === "GET",
+  { timeout: 25000 }).catch(() => null);
+  const companiesPromise = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/me/companies" && response.request().method() === "GET",
+  { timeout: 25000 }).catch(() => null);
+  const companyDataPromise = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/me/companies/" + companyId && response.request().method() === "GET",
+  { timeout: 25000 }).catch(() => null);
+
   const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
   assert.ok(response?.ok(), "Staging portal returned HTTP " + response?.status());
-  // Do not race the app's asynchronous session restoration and saved-company lookup.
-  await page.getByText("TORN ID " + playerId, { exact: true }).waitFor({ state: "visible", timeout: 20000 });
+
+  const restoredSessionResponse = await restoredSessionPromise;
+  assert.ok(restoredSessionResponse, "The browser did not restore the authenticated staging session.");
+  assert.equal(restoredSessionResponse.status(), 200, "The browser session restore should succeed.");
+  const restoredSession = await restoredSessionResponse.json();
+  assert.equal(String(restoredSession?.player?.id ?? ""), playerId, "The browser must restore the expected staging fixture player.");
+
+  const companiesResponse = await companiesPromise;
+  assert.ok(companiesResponse, "The browser did not load the authenticated company list.");
+  assert.equal(companiesResponse.status(), 200, "The authenticated company list should load.");
+  const companyList = await companiesResponse.json();
+  assert.ok((companyList.companies || []).some(company => String(company.company_id) === companyId),
+    "The authenticated company list must contain the private-history fixture company.");
+
+  const companyDataResponse = await companyDataPromise;
+  assert.ok(companyDataResponse, "The browser did not load the selected company's saved details.");
+  assert.equal(companyDataResponse.status(), 200, "The selected company's saved details should load.");
+  const companyData = await companyDataResponse.json();
+  assert.equal(String(companyData.companyId ?? ""), companyId, "The selected company details must belong to the expected fixture.");
+
   const companyWorkspaceCard = page.getByRole("button", { name: /Company Dashboard/ });
   await companyWorkspaceCard.waitFor({ state: "visible", timeout: 20000 });
   await companyWorkspaceCard.click();
