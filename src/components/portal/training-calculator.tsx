@@ -408,7 +408,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6))
   const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / 6)))
   const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
-  const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75)))) : 0
+  const maximumMistletoeCount = targetHappy > 1 ? Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75))) : 0
   const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
   const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
 
@@ -430,6 +430,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
   const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
 
+  const happinessBeforeOther = Math.min(HAPPY_CAP,
+    startingHappy + xanaxCount * 75 + fhcCount * 500 + dvdCount * dvdHappy + yellowEggCount * 10000
+    + (targetHappy > 0 ? targetHappy * (1 - Math.pow(0.75, mistletoeCount)) : 0))
+  const maximumOtherHappy = Math.max(0, HAPPY_CAP - happinessBeforeOther)
   const happyJump = useMemo(() => {
     let value = clamp(startingHappy, 0, HAPPY_CAP)
     value = Math.min(HAPPY_CAP, value + xanaxCount * 75)
@@ -793,8 +797,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint={"Maximum " + maximumMistletoeCount + " from the target's current happy. Each use transfers 25% of their remaining happy."} testId="training-mistletoe-count" />
               <NumberField label="Target's current happiness" value={targetHappy} onChange={setMistletoeTargetHappy} min={0} max={HAPPY_CAP}
                 hint="Required to estimate Poison Mistletoe. Each use reduces the target's remaining happy by 25%." testId="training-mistletoe-target" />
-              <NumberField label="Other flat happiness" value={otherHappy} onChange={setOtherHappy} min={0} max={HAPPY_CAP}
-                hint="Optional manual value for other confirmed happy sources. Maximum 99,999." testId="training-other-happy" />
+              <NumberField label="Other flat happiness" value={otherHappy} onChange={setOtherHappy} min={0} max={maximumOtherHappy}
+                hint={"Optional confirmed happiness. Maximum " + fmt(maximumOtherHappy) + " remaining before the 99,999 cap."} testId="training-other-happy" />
               <label className="tc-check-field"><input type="checkbox" data-testid="training-ecstasy" checked={ecstasy} onChange={event => setEcstasy(event.target.checked)} />
                 <span><strong>Use Ecstasy last</strong><small>Doubles the accumulated happiness, capped at 99,999. Wait for the Xanax drug cooldown to clear before taking Ecstasy.</small></span>
               </label>
@@ -862,10 +866,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-condition-list">
               <div><span>Current job / company</span><strong>{currentJobName || "Not returned by Torn API"}</strong></div>
               <div><span>Company rating / position</span><strong>{currentJob ? fmt(currentJobRating) + "★ · " + (currentJob.position || "Position unavailable") : "Not available"}</strong></div>
-              <div><span>Current company job points</span><strong>{fmt(currentJobPoints)}</strong></div>
+              <div><span>{currentJob?.type === "job" ? "Current starter-job points" : "Current company job points"}</span><strong>{fmt(currentJobPoints)}</strong></div>
               {jobPointSpecial && <div><span>Available stat special</span><strong>{jobPointSpecial.name} · {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label}</strong></div>}
+              {currentJob?.type === "job" && currentJobName.toLowerCase() === "army" && <div><span>Army stat-training points</span><strong>{fmt(currentJobPoints)} available</strong></div>}
               {hasPressPass && <div><span>Press Pass</span><strong>{fmt(pressPassMax)} uses available · 25 points each</strong></div>}
             </div>
+            {currentJob?.type === "job" && currentJobName.toLowerCase() === "army" && <p className="tc-muted">
+              Army exposes separate Strength Gain and Defense Gain job-point specials. Your balance is synced above, but Torn's current API and public training references do not provide a deterministic conversion rate for those awards, so they are not mixed into the gym-gain projection.
+            </p>}
             {jobPointSpecial ? <div className="tc-form-grid">
               <NumberField label={jobPointSpecial.name + " job points to spend"} value={jobPointQuantity} onChange={setJobPointQuantity}
                 min={0} max={jobPointMax} hint={"Maximum " + fmt(jobPointMax) + " points available. Each point is approximately 4.5E worth of gains in your selected gym."}
