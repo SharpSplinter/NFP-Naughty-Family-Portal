@@ -123,6 +123,7 @@ try {
       consentVersion: "portal-data-policy-v3",
       policyVersion: "2026-11-15-v1",
       apiKeyUsageAccepted: 1,
+      apiKeyAccessType: "custom",
       apiKeyConsentFingerprint: fingerprint,
     }
   }
@@ -161,7 +162,7 @@ try {
             })
             return keyStatement
           }
-          if (!normalizedSql.startsWith("select consent_version as consentversion, policy_version as policyversion, api_key_usage_accepted as apikeyusageaccepted, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
+          if (!normalizedSql.startsWith("select consent_version as consentversion, policy_version as policyversion, api_key_usage_accepted as apikeyusageaccepted, api_key_access_type as apikeyaccesstype, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
             return statement
           }
           let consentStatement
@@ -180,6 +181,7 @@ try {
                   const existing = await statementTarget.first(...args)
                   if (existing?.consentVersion === "portal-data-policy-v3" &&
                       existing?.policyVersion === "2026-11-15-v1" &&
+                      existing?.apiKeyAccessType === "custom" &&
                       Number(existing.apiKeyUsageAccepted) === 1 &&
                       typeof existing.apiKeyConsentFingerprint === "string") return existing
                   return consentFixtureForMember(target, env, String(boundValues[0] ?? ""))
@@ -4374,6 +4376,7 @@ try {
         player_id: playerId,
         consent_version: "portal-data-policy-v3",
         api_key_usage_accepted: apiKeyConsentFingerprint ? 1 : 0,
+        api_key_access_type: apiKeyConsentFingerprint ? "custom" : null,
         api_key_consent_fingerprint: apiKeyConsentFingerprint,
         historical_collection_enabled: 1,
         share_halloween_history: 0,
