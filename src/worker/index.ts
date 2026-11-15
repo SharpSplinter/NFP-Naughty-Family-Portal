@@ -7330,7 +7330,7 @@ export default {
         for (const character of value.toUpperCase().split("").reverse()) {
           const current = values[character] || 0
           total += current < prior ? -current : current
-          prior = Math.max(prior, current)
+          prior = current
         }
         return total
       }
@@ -7376,7 +7376,7 @@ export default {
           if (/sports sneakers/i.test(text) && stat === "speed") add("Enhancer: " + text, 5, false, "enhancer:" + text)
         }
         for (const text of activeFactionPerks) {
-          const steadfast = text.match(/\\b(strength|defense|speed|dexterity)\\s+(?:gym\\s+)?train(?:ing|s)?\\s+([IVXLCDM]+)\\b/i)
+          const steadfast = text.match(/\b(strength|defense|speed|dexterity)\s+(?:gym\s+)?train(?:ing|s)\s+([IVXLCDM]+)\b/i)
           if (steadfast && /steadfast/i.test(text)) {
             const targetStat = steadfast[1].toLowerCase()
             if (targetStat === stat) add("Faction: " + text, romanNumber(steadfast[2]), false, "faction:" + text)
@@ -7387,9 +7387,9 @@ export default {
           ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction", "job", "enhancer"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
         ]
         for (const entry of allPerks) {
-          const match = entry.text.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
+          const match = entry.text.match(/(\d+(?:\.\d+)?)\s*%/)
           if (!match || !/(gym|training|steadfast)/i.test(entry.text)) continue
-          const statMention = entry.text.match(/\\b(strength|defense|speed|dexterity)\\b/i)
+          const statMention = entry.text.match(/\b(strength|defense|speed|dexterity)\b/i)
           if (statMention && statMention[1].toLowerCase() !== stat) continue
           const percent = Number(match[1])
           const dedupeKey = entry.group.toLowerCase() + ":" + entry.text
