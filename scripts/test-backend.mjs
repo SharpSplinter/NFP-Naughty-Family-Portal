@@ -158,7 +158,9 @@ try {
               if (statementProperty === "first") {
                 return async (...args) => {
                   const existing = await statementTarget.first(...args)
-                  if (existing) return existing
+                  if (existing?.consentVersion === "portal-data-policy-v3" &&
+                      Number(existing.apiKeyUsageAccepted) === 1 &&
+                      typeof existing.apiKeyConsentFingerprint === "string") return existing
                   return consentFixtureForMember(target, env, String(boundValues[0] ?? ""))
                 }
               }
