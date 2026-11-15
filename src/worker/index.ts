@@ -7142,12 +7142,17 @@ export default {
       const memberKey = await savedKey(env, session.player_id)
       if (!memberKey) return jsonResponse({ error: "Your saved Torn API key is unavailable. Sign in again to refresh your connection." }, 409, origin)
 
-      const publicKey = memberKey || workerServiceTornApiKey(env) || env.TORN_API_KEY_CUSTOM?.trim() || ""
+      const publicKey = workerServiceTornApiKey(env) || env.TORN_API_KEY_CUSTOM?.trim() || memberKey
       const baseUrl = (env.TORN_API_BASE_URL || "https://api.torn.com/v2").replace(/\/+$/, "")
       const fetcher = env.TORN_API_FIXTURE?.fetch.bind(env.TORN_API_FIXTURE) || fetch
       const errors: Record<string, string> = {}
+      const publicCache = (globalThis as unknown as { __trainingPublicCache?: Map<string, { payload: Record<string, unknown>; fetchedAt: number }> }).__trainingPublicCache
+        || new Map<string, { payload: Record<string, unknown>; fetchedAt: number }>()
+      ;(globalThis as unknown as { __trainingPublicCache?: typeof publicCache }).__trainingPublicCache = publicCache
       const getJson = async (path: string, key: string, workload: string, label: string, playerScoped = true): Promise<Record<string, unknown> | null> => {
         if (!key) { errors[label] = "No public Torn API key is configured for this shared catalogue and market data."; return null }
+        const publicCacheEntry = !playerScoped ? publicCache.get(path) : null
+        if (publicCacheEntry && Date.now() - publicCacheEntry.fetchedAt < 900000) return publicCacheEntry.payload
         try {
           const response = await trackedTornFetch(workload, baseUrl + path, {
             headers: { Authorization: "ApiKey " + key, Accept: "application/json" },
@@ -7159,6 +7164,7 @@ export default {
             const message = typeof apiError?.error === "string" ? apiError.error : "Torn did not return this selection."
             throw new Error(message)
           }
+          if (!playerScoped) publicCache.set(path, { payload, fetchedAt: Date.now() })
           return payload
         } catch (error) {
           errors[label] = error instanceof Error ? error.message.slice(0, 240) : "Torn request failed."
