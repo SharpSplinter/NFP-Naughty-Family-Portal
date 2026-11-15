@@ -329,6 +329,27 @@ The next controlled sequence is: complete the feature-specific checks listed abo
 
 No production SQL writes, migrations, Worker/Pages deployments, restores, secret changes or PR merge were performed during this refresh.
 
+## 13. Production target and master service-key update (2026-11-15 00:14 UTC)
+
+This section supersedes earlier production Worker-name and Full Access-secret observations above.
+
+### Live Cloudflare configuration verified read-only
+
+- The production API Worker is now `naughtyfamily-api`, with intended endpoint `https://naughtyfamily-api.kboone801.workers.dev`. Cloudflare lists the Worker and its most recent deployment is `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093`, version `54f02948-73b3-4535-bd71-8d9683ad62c9`, receiving 100% traffic. The old Worker name `naughty-company-api` now returns Cloudflare 404 “This Worker does not exist on your account.”
+- Production Worker secret binding names include `TORN_API_KEY_SERVICE` (type `secret_text`), the newly supplied master Full Access service key. `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY` and `KEY_ENCRYPTION_SECRET` are also present. Secret values were not read. The checked-in portal source previously referenced `TORN_API_KEY_FULL_ACCESS`; deployment must use the new `TORN_API_KEY_SERVICE` binding name. The updated branch will prefer SERVICE for shared Full Access operations and retain CUSTOM only as the global-ranking fallback.
+- The production Discord bot's live `DASHBOARD_API` service binding now points to `naughtyfamily-api`. The checked-in `bot/wrangler.production.toml` was still pointing to the retired name and must be updated before a future bot deployment. Its `/link` command must direct members to the new Pages URL.
+- Cloudflare Pages project `naughtyfamily` is configured with subdomain/domain `naughtyfamily.pages.dev`, production branch `main`, and automatic Git production/preview deployments disabled. It currently has **zero production deployments**. The manual Pages release workflow must build with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and deploy to project `naughtyfamily`.
+- The legacy Pages project `naughty-company-dashboard` remains present, but the previous `naughty-company-api` Worker has been removed. Its existing compiled frontend still targets that retired API hostname, so the legacy Pages site is not currently a verified end-to-end rollback. Before relying on it as a fallback, either restore an old-host compatibility Worker or rebuild/redeploy the legacy Pages site against the new Worker and verify it. After the first successful production deployment, the new `naughtyfamily` project can use its own Pages deployment rollback history.
+- Production D1 remains `naughty-company-dashboard` / `bbbe128a-c5cc-46ec-b8ef-93860183e795`; its migration ledger still ends at `0012_company_ranking_snapshots.sql`. Renaming the Worker and Pages target does not rename or replace the production database. The pre-migration backup and immediate Time Travel bookmark gates remain mandatory.
+
+### Required repository alignment and release sequence
+
+The checked-in production configuration must be consistent with the live names before the next production deployment: set `wrangler.toml` to `naughtyfamily-api` and the canonical Pages CORS origin; change the protected Worker workflow's confirmed target and health URL; change the manual Pages workflow's project and API build URL; change the frontend fallback API URL; update the health payload service identity and tests to `naughtyfamily-api`; use `TORN_API_KEY_SERVICE` in the Worker type and Full Access call sites; and align the bot's service binding and `/link` destination. A production bot deployment may be needed to publish the updated link instructions, although the live service binding has already been changed to the new API.
+
+The master service-key binding's presence resolves the earlier “missing Full Access key” configuration blocker, but successful use by the new branch code still needs to be exercised with the updated binding name. Continue to hold production cutover until the updated branch passes quality gates and isolated staging acceptance, the remaining feature-specific Halloween/Christmas/Torn-calendar/Discord-link walkthrough is complete, explicit owner approval is recorded, the external backup is independently verified, and the fresh D1 bookmark plus exact pending migration ledger are rechecked immediately before production migration.
+
+No production D1 writes, migrations, Pages deployment, or portal Worker code deployment were performed as part of this read-only configuration discovery.
+
 ## Cloudflare references
 
 - [D1 import/export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
