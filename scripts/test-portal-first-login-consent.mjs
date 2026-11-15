@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
-const [worker, migration, keyConsentMigration, floor, workspace] = await Promise.all([
+const [worker, migration, keyConsentMigration, keyAccessTypeMigration, floor, workspace] = await Promise.all([
   readFile(new URL("../src/worker/index.ts", import.meta.url), "utf8"),
   readFile(new URL("../migrations/auth/0032_portal_first_login_consent.sql", import.meta.url), "utf8"),
   readFile(new URL("../migrations/auth/0034_portal_api_key_usage_consent.sql", import.meta.url), "utf8"),
+  readFile(new URL("../migrations/auth/0035_portal_api_key_access_type.sql", import.meta.url), "utf8"),
   readFile(new URL("../src/components/floor/floor-app.tsx", import.meta.url), "utf8"),
   readFile(new URL("../src/components/portal/workspaces.tsx", import.meta.url), "utf8"),
 ])
@@ -31,10 +32,17 @@ assert.ok(workspace.includes('consentVersion: "portal-data-policy-v3"'), "the se
 assert.match(keyConsentMigration, /api_key_usage_accepted INTEGER NOT NULL DEFAULT 0/)
 assert.match(keyConsentMigration, /api_key_consent_acknowledged_at TEXT/)
 assert.match(keyConsentMigration, /api_key_consent_fingerprint TEXT/)
+assert.match(keyAccessTypeMigration, /api_key_access_type TEXT/)
+assert.match(keyAccessTypeMigration, /'custom', 'full'/)
 assert.ok(workspace.includes("setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)") && workspace.includes("setShareHalloweenHistory(consent.shareHalloweenHistory === true)") && workspace.includes("setSharePrivateLive(consent.sharePrivateLive === true)") && workspace.includes("setShareNetworth(consent.shareNetworth === true)"), "policy upgrades must prefill existing optional choices")
 assert.ok(workspace.includes("setPolicyAccepted(!policyRequired)"), "the setup form must follow the server's policy acknowledgement requirement rather than auto-accept edit mode")
 assert.ok(workspace.includes("disabled={!policyAcknowledgementRequired || busy || saved}"), "members must explicitly acknowledge policy updates, including from Settings")
 assert.ok(workspace.includes("apiKeyUsageAccepted: true"), "the setup form must persist explicit primary API-key use authorization")
+assert.ok(workspace.includes("apiKeyAccessType"), "the setup form must store which type of primary key the member declares")
+assert.ok(workspace.includes('value="custom"'), "the setup form must let a member select Custom Access")
+assert.ok(workspace.includes('value="full"'), "the setup form must let a member select Full Access")
+assert.ok(worker.includes('body.apiKeyAccessType !== "custom" && body.apiKeyAccessType !== "full"'), "the API must reject consent without a selected key type")
+assert.ok(worker.includes("api_key_access_type AS apiKeyAccessType"), "the API must return the recorded primary key type")
 assert.ok(workspace.includes("checked={apiKeyUsageAccepted}"), "the form must display the primary API-key consent checkbox")
 assert.ok(workspace.includes("secondaryCompanyKeyConsent"), "an optional secondary company key must have its own authorization")
 assert.ok(workspace.includes("Custom Access</strong> key or a <strong>Full Access</strong> key"), "the consent form must explain Custom and Full Access scope differences")
