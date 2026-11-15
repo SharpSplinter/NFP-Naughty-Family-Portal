@@ -1853,7 +1853,7 @@ try {
     assert.match(workerSource,/source: rankingSource/)
     assert.match(workerSource, /controller\.cron\.trim\(\) === "10 18 \* \* \*"/)
     assert.match(workerSource, /controller\.cron\.trim\(\) === "10 0 \* \* \*"/)
-    assert.match(workerSource, /if \(isRankingCaptureWindow\) tasks\.push\(refreshGlobalRankingCache\(env, undefined, true\)\)/)
+    assert.match(workerSource, /if \(isRankingCaptureWindow\) tasks\.push\(refreshGlobalRankingCache\(env, true\)\)/)
     assert.match(workerSource, /if \(isOfficialVerificationWindow\) tasks\.push\(verifyGlobalRankingsAgainstOfficialSnapshot\(env, controller\.scheduledTime\)/)
     assert.match(workerSource, /const maxAgeMs = 6 \* 60 \* 60 \* 1000/)
     assert.match(workerSource, /uniqueIds\.size !== companies\.length/)
