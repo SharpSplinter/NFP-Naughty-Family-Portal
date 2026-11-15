@@ -10,7 +10,12 @@ type LiveData = {
   fetchedAt: string
   battleStats: Record<StatKey, number | null> & { total: number | null }
   perks: Record<string, string[]>
-  factionBonuses: { energyDrinkBonusPercent: number; boosterCooldownBonusHours: number }
+  factionBonuses: {
+    energyDrinkBonusPercent: number
+    boosterCooldownBonusHours: number
+    companyCooldownReductionPercent: number
+    gymHappyLossReductionPercent: number
+  }
   gym: { id: string; name: string; unlockedGyms: Array<{ id: string; name: string; available: boolean }> } | null
   gyms: GymPreset[]
   gymModifiers: Record<StatKey, { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] }>
@@ -112,8 +117,8 @@ function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: nu
   const current = Math.max(0, safeNumber(bar.current))
   const maximum = Math.max(0, safeNumber(bar.maximum))
   if (current >= maximum) return 0
-  const increment = Math.max(1, safeNumber(bar.increment, 5))
-  const interval = Math.max(1, safeNumber(bar.interval, 600)) / Math.max(0.01, regenMultiplier)
+  const increment = Math.max(1, safeNumber(bar.increment, 5)) * Math.max(0.01, regenMultiplier)
+  const interval = Math.max(1, safeNumber(bar.interval, 600))
   const untilNext = clamp(safeNumber(bar.tickTime, interval), 0, interval)
   const waitSeconds = Math.max(0, waitHours * 3600)
   const ticks = waitSeconds < untilNext ? 0 : 1 + Math.floor((waitSeconds - untilNext) / interval)
@@ -258,7 +263,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [manualModifier, setManualModifier] = useState("")
   const [manualModifierEnabled, setManualModifierEnabled] = useState(false)
   const [gymBookChoice, setGymBookChoice] = useState("auto")
-  const [happyLossPercent, setHappyLossPercent] = useState(50)
+  const [manualHappyLossPercent, setManualHappyLossPercent] = useState("")
   const [waitHours, setWaitHours] = useState(0)
   const [xanaxCount, setXanaxCount] = useState(0)
   const [fhcCount, setFhcCount] = useState(0)
@@ -346,10 +351,17 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const selectedDots = safeNumber(selectedGym.dots[selectedStat])
   const activeEnergyDrinkBonus = Math.max(0, safeNumber(liveData?.factionBonuses?.energyDrinkBonusPercent))
   const activeVoracity = activeEnergyDrinkBonus > 0
-  const voracityEnabled = factionVoracity || activeVoracity
   const energyDrinkBonusPercent = factionVoracity && !activeVoracity ? 50 : activeEnergyDrinkBonus
   const drink = ENERGY_DRINKS.find(item => item.id === canId) || ENERGY_DRINKS[3]
-  const canCooldownFactor = activeBook === "self-control" ? 0.5 : 1
+  const companyCooldownReduction = clamp(safeNumber(liveData?.factionBonuses?.companyCooldownReductionPercent), 0, 25) / 100
+  const bookCanCooldownFactor = activeBook === "self-control" ? 0.5 : 1
+  const canCooldownFactor = bookCanCooldownFactor * (1 - companyCooldownReduction)
+  const autoHappyLossReduction = clamp(safeNumber(liveData?.factionBonuses?.gymHappyLossReductionPercent), 0, 100)
+  const autoHappyLossPercent = autoHappyLossReduction > 0 ? 25 : 50
+  const minHappyLossPercent = autoHappyLossReduction > 0 ? 20 : 40
+  const maxHappyLossPercent = autoHappyLossReduction > 0 ? 30 : 60
+  const happyLossPercent = manualHappyLossPercent.trim() === "" ? autoHappyLossPercent
+    : clamp(safeNumber(manualHappyLossPercent), minHappyLossPercent, maxHappyLossPercent)
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
@@ -390,7 +402,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const maxPointRefill = pointRefillAvailable ? 1 : 0
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
-  const canPrice = getPrice(priceOverrides.can || "", liveData?.items?.energyDrinks?.[canId])
+  const canPrice = getPrice(priceOverrides["can:" + canId] || "", liveData?.items?.energyDrinks?.[canId])
   const fhcPrice = getPrice(priceOverrides.fhc || "", liveData?.items?.fhc)
   const dvdPrice = getPrice(priceOverrides.dvd || "", liveData?.items?.eroticDvd)
   const yellowEggPrice = getPrice(priceOverrides.yellowEgg || "", liveData?.items?.yellowEgg)
@@ -442,7 +454,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: 0.4,
   }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier])
 
-  const selectedSePrice = getPrice(priceOverrides.se || "", liveData?.items?.statEnhancers?.[seTargetStat])
+  const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
   const seCalculation = useMemo(() => {
     let value = currentStat
     let gain = 0
@@ -565,8 +577,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 min={0} max={100} step={0.0001} hint={"Maximum 100×. Live API modifier is " + fmt(autoModifier, 4) + "×."} />}
               <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : 5025}
                 onChange={setManualHappy} max={HAPPY_CAP} hint="Live from your Torn bars. A cleared field returns to your current API value." testId="training-session-happy" />
-              <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={setHappyLossPercent} min={40} max={60} step={1}
-                suffix="%" hint="Torn's current best-estimate range is 40–60%. Default 50%; adjust for a conservative or optimistic model." />
+              <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={value => setManualHappyLossPercent(String(value))}
+                min={minHappyLossPercent} max={maxHappyLossPercent} step={1} suffix="%"
+                hint={autoHappyLossReduction > 0
+                  ? "Your live Goal Oriented company perk halves gym happiness loss. Torn's 40–60% range becomes 20–30%; default 25%."
+                  : "Torn's current best-estimate range is 40–60%. Default 50%; adjust for a conservative or optimistic model."} />
             </div>
             {modifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {modifierBonuses.join(" · ")}</div>}
             {selectedGym.note && <div className="tc-inline-note">{selectedGym.note}</div>}
@@ -642,7 +657,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </label>
               <label className="tc-check-field"><input type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
-                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Applies the maximum +50% energy-drink branch."}</small></span>
+                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Models the maximum +50% energy-drink branch."}</small></span>
               </label>
               <label className="tc-check-field"><input type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
                 <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
@@ -651,7 +666,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-inline-note"><strong>Supply order modeled:</strong> natural energy → current bar → point refill / FHC full-bar refills → Xanax and energy drinks. Full-bar refills assume you train down before each refill. Torn's 1,000E limit is the amount you can hold at once, not a limit on total energy spent after sequential refills.</div>
             <div className="tc-form-grid tc-price-grid">
               <PriceField label="Xanax · live Item Market average" value={priceOverrides.xanax || ""} autoValue={marketPrice(liveData?.items?.xanax)} onChange={value => setPriceOverride("xanax", value)} hint={liveData?.items?.xanax?.name || "Live price not returned"} testId="training-xanax-price" />
-              <PriceField label={drink.name + " · live Item Market average"} value={priceOverrides.can || ""} autoValue={marketPrice(liveData?.items?.energyDrinks?.[canId])} onChange={value => setPriceOverride("can", value)} hint={liveData?.items?.energyDrinks?.[canId]?.name || "Live price not returned"} testId="training-can-price" />
+              <PriceField label={drink.name + " · live Item Market average"} value={priceOverrides["can:" + canId] || ""} autoValue={marketPrice(liveData?.items?.energyDrinks?.[canId])} onChange={value => setPriceOverride("can:" + canId, value)} hint={liveData?.items?.energyDrinks?.[canId]?.name || "Live price not returned"} testId="training-can-price" />
               <PriceField label="Feathery Hotel Coupon · live Item Market average" value={priceOverrides.fhc || ""} autoValue={marketPrice(liveData?.items?.fhc)} onChange={value => setPriceOverride("fhc", value)} hint={liveData?.items?.fhc?.name || "Live price not returned"} testId="training-fhc-price" />
             </div>
           </Panel>
@@ -681,6 +696,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Natural energy in selected wait</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong></div>
               <div><span>Cooldown budget remaining</span><strong>{fmt(boosterBudgetHours, 1)}h</strong></div>
               <div><span>Drug cooldown reported</span><strong>{fmt(safeNumber(liveData?.cooldowns?.drug) / 3600, 1)}h</strong></div>
+              <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {activeBook === "self-control" ? "50% book" : "No book"}</strong></div>
+              <div><span>Gym happy loss reduction</span><strong>{autoHappyLossReduction > 0 ? fmt(autoHappyLossReduction) + "% company" : "No company reduction"}</strong></div>
             </div>
             <p className="tc-muted">Energy drinks and stat boosters share the booster cooldown. The planner subtracts existing cooldown and the items selected for this plan.</p>
           </Panel>
@@ -759,8 +776,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint={"Maximum " + maxSeByCooldown + " by your remaining booster-cooldown capacity. The gain from each individual SE is capped at 5 trillion."} testId="training-se-quantity" />
               <TextNumberField label={STAT_OPTIONS.find(option => option.value === seTargetStat)?.label + " battle stat"} value={manualStats[seTargetStat]} fallbackValue={liveData?.battleStats?.[seTargetStat] ?? null}
                 onChange={value => setManualStats(current => ({ ...current, [seTargetStat]: value }))} hint="Uses the live battle stat unless you override it." />
-              <PriceField label="Selected Stat Enhancer · live Item Market average" value={priceOverrides.se || ""} autoValue={marketPrice(liveData?.items?.statEnhancers?.[seTargetStat])}
-                onChange={value => setPriceOverride("se", value)} hint={liveData?.items?.statEnhancers?.[seTargetStat]?.name || "Live market price not returned"} testId="training-se-price" />
+              <PriceField label="Selected Stat Enhancer · live Item Market average" value={priceOverrides["se:" + seTargetStat] || ""} autoValue={marketPrice(liveData?.items?.statEnhancers?.[seTargetStat])}
+                onChange={value => setPriceOverride("se:" + seTargetStat, value)} hint={liveData?.items?.statEnhancers?.[seTargetStat]?.name || "Live market price not returned"} testId="training-se-price" />
             </div>
             <div className="tc-inline-note">The model applies each 1% increase sequentially, then caps each enhancer's individual gain at 5 trillion. No legacy 50M battle-stat cap is applied.</div>
           </Panel>
