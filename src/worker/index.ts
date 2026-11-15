@@ -48,6 +48,11 @@ function serviceFullAccessApiKey(env: WorkerEnv): string {
   // alias for the isolated acceptance Worker until its secret is renamed there.
   return env.TORN_API_KEY_SERVICE?.trim() || env.TORN_API_KEY_FULL_ACCESS?.trim() || ""
 }
+function workerServiceTornApiKey(env: WorkerEnv): string {
+  // Shared market and faction collection must use the dedicated TORN_API_KEY_SERVICE secret.
+  // Do not silently fall back to a member-owned key or a legacy Worker secret.
+  return env.TORN_API_KEY_SERVICE?.trim() || ""
+}
 type Session = { player_id: string; player_name: string; is_admin: number; faction_id?: string | null; faction_verified_at?: string | null; membership_check_attempted_at?: string | null; membership_check_status?: string | null }
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }
@@ -693,7 +698,7 @@ async function enqueueOneFactionPerformanceRun(
   kind: FactionPerformanceRunRow["collectionKind"],
   intervalMs: number,
 ): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
   const bucketStart = Math.floor(scheduledTime / intervalMs) * intervalMs
   const scheduledAt = new Date(bucketStart).toISOString()
@@ -738,7 +743,7 @@ async function enqueueOneFactionPerformanceRun(
 
 
 async function enqueueFactionStatsCollection(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
   const intervalMs = 15 * 60 * 1000
   const bucketStart = Math.floor(scheduledTime / intervalMs) * intervalMs
@@ -775,7 +780,7 @@ async function runFactionStatsCollection(env: WorkerEnv, runId: string): Promise
     "SELECT run_id AS runId, faction_id AS factionId, status, scheduled_at AS scheduledAt FROM faction_stats_collection_runs WHERE run_id = ?"
   ).bind(runId).first<{ runId: string; factionId: string; status: string; scheduledAt: string }>()
   if (!run || ["completed", "failed"].includes(run.status)) return
-  const apiKey = serviceFullAccessApiKey(env)
+  const apiKey = workerServiceTornApiKey(env)
   if (!apiKey) throw new Error("Worker service Torn API key is not configured.")
   const startedAt = new Date().toISOString()
   await db.prepare(
@@ -799,7 +804,7 @@ async function runFactionStatsCollection(env: WorkerEnv, runId: string): Promise
 
 async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTime: number): Promise<number> {
   // Dedicated Cloudflare Worker secret. Never substitute a member login key.
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return 0
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return 0
   let enqueued = 0
   if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", 5 * 60 * 1000)) enqueued += 1
   const fiveMinuteBucket = Math.floor(scheduledTime / (5 * 60 * 1000))
@@ -812,7 +817,7 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
 }
 
 async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
   const boundaryMs = utcSundayStart(scheduledTime)
   const boundaryAt = new Date(boundaryMs).toISOString()
@@ -1171,7 +1176,7 @@ async function runFactionPerformanceCollection(env: WorkerEnv, runId: string): P
     "SELECT run_id AS runId, faction_id AS factionId, collection_kind AS collectionKind, status, scheduled_at AS scheduledAt, target_user_ids_json AS targetUserIdsJson, next_index AS nextIndex, last_enqueued_at AS lastEnqueuedAt FROM faction_performance_collection_runs WHERE run_id = ?"
   ).bind(runId).first<FactionPerformanceRunRow>()
   if (!run || run.status === "completed" || run.status === "partial" || run.status === "failed") return
-  const apiKey = serviceFullAccessApiKey(env)
+  const apiKey = workerServiceTornApiKey(env)
   if (!apiKey) throw new Error("Worker service Torn API key is not configured.")
   const now = new Date().toISOString()
   await db.prepare(
@@ -2044,7 +2049,7 @@ async function loadHalloweenExchangeMarketValue(
 
   const cached = await readCache()
   const cacheById = new Map((cached.results ?? []).map(row => [String(row.itemId), row]))
-  const apiKey = serviceFullAccessApiKey(env)
+  const apiKey = workerServiceTornApiKey(env)
   const refreshIds = apiKey
     ? itemIds
       .filter(itemId => {
