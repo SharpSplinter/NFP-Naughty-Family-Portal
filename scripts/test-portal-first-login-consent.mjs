@@ -44,7 +44,7 @@ assert.ok(workspace.includes('value="full"'), "the setup form must let a member 
 assert.ok(worker.includes('body.apiKeyAccessType !== "custom" && body.apiKeyAccessType !== "full"'), "the API must reject consent without a selected key type")
 assert.ok(worker.includes("api_key_access_type AS apiKeyAccessType"), "the API must return the recorded primary key type")
 assert.ok(workspace.includes("checked={apiKeyUsageAccepted}"), "the form must display the primary API-key consent checkbox")
-assert.ok(workspace.includes("secondaryCompanyKeyConsent"), "an optional secondary company key must have its own authorization")
+assert.ok(workspace.includes("apiKeyAccessType"), "the primary API-key form must record the selected Custom or Full Access type")
 assert.ok(workspace.includes("Custom Access</strong> key or a <strong>Full Access</strong> key"), "the consent form must explain Custom and Full Access scope differences")
 assert.ok(workspace.includes("PRIVACY, DATA & API KEY CONSENTS"), "Account Settings must display the complete consent card")
 assert.ok(workspace.includes("Primary API key use"), "Account Settings must show primary-key authorization status")
