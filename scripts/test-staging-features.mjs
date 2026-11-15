@@ -249,7 +249,7 @@ try {
   assert.ok(halloweenText.includes("Staging Partial Archive Member"), "Partial member should remain visible in the archive.");
   assert.ok(/Partial/i.test(halloweenText), "The archive UI should label incomplete coverage as Partial.");
 
-  await page.locator("#halloween-historical-year").selectOption("2026");
+  await page.locator("#halloween-year-scope").selectOption("2026");
   await page.getByText("Event year 2026", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
   assert.ok((await page.locator("main").innerText()).includes("Historical event records"));
 
