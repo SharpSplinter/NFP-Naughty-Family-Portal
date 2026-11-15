@@ -53,6 +53,21 @@ const otherHistory = await loadPrivateHistory(otherSessionToken, "other member",
 assert.notDeepEqual(primaryHistory.history.map(point => point.dailyIncome), otherHistory.history.map(point => point.dailyIncome));
 assert.ok(!primaryHistory.history.some(point => otherSeries.includes(point.dailyIncome)), "Primary member response leaked the other member's income series.");
 assert.ok(!otherHistory.history.some(point => primarySeries.includes(point.dailyIncome)), "Other member response leaked the primary member's income series.");
+
+// Gym training history is available only after the central historical-collection opt-in.
+// These synthetic members have current policy acknowledgement but collection defaults off.
+const gymHistoryResponse = await authenticatedGet(sessionToken, apiBase + "/api/me/gym-training/history");
+assert.equal(gymHistoryResponse.status, 200, "Gym training history status should be available to an authenticated member.");
+const gymHistory = await gymHistoryResponse.json();
+assert.equal(gymHistory.collectionEnabled, false, "Staging fixture should begin with central historical collection disabled.");
+assert.equal(gymHistory.connected, false, "Gym training must not create a member-key connection before opt-in.");
+assert.equal(gymHistory.totalLogs, 0, "A new staging member must not expose any gym training history.");
+const blockedGymQueue = await fetch(apiBase + "/api/me/gym-training/collect", {
+  method: "POST",
+  headers: { authorization: "Bearer " + sessionToken, accept: "application/json" },
+});
+assert.equal(blockedGymQueue.status, 409, "Gym training backfill must refuse to queue while central historical collection is off.");
+console.log("PASS gym training history: private status readable; queue blocked until central historical collection is explicitly enabled.");
 console.log("PASS authenticated history API: 7 private points per owner; anonymous requests rejected; same-company cross-member data remains isolated.");
 
 const browser = await chromium.launch({ headless: true });
