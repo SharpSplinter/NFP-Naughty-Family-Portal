@@ -7173,6 +7173,8 @@ export default {
         getJson("/user/bars", memberKey, "training-calculator-bars", "bars"),
         getJson("/user/refills", memberKey, "training-calculator-refills", "refills"),
         getJson("/user/cooldowns", memberKey, "training-calculator-cooldowns", "cooldowns"),
+        getJson("/user/job", memberKey, "training-calculator-current-job", "job"),
+        getJson("/user/jobpoints", memberKey, "training-calculator-jobpoints", "jobPoints"),
       ]
       const publicRequests = [
         getJson("/torn/gyms", publicKey, "training-calculator-gym-catalogue", "gymCatalogue", false),
@@ -7183,7 +7185,7 @@ export default {
         getJson("/torn/items?cat=Special", publicKey, "training-calculator-item-catalogue", "specialItems", false),
         getJson("/torn/items?cat=Enhancer", publicKey, "training-calculator-item-catalogue", "enhancerItems", false),
       ]
-      const [battleStatsPayload, perksPayload, gymPayload, barsPayload, refillsPayload, cooldownsPayload,
+      const [battleStatsPayload, perksPayload, gymPayload, barsPayload, refillsPayload, cooldownsPayload, jobPayload, jobPointsPayload,
         gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
         await Promise.all([...userRequests, ...publicRequests])
 
@@ -7399,13 +7401,15 @@ export default {
           bonuses,
         }
       }
-      const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy|voracity/i.test(text)) || ""
+      const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy/i.test(text)) || ""
       const factionCooldownPerk = activeFactionPerks.find(text => /booster cooldown/i.test(text)) || ""
       const factionEnergyPercentMatch = factionEnergyPerk.match(/(\d+(?:\.\d+)?)\s*%/)
+      const factionEnergyRomanMatch = factionEnergyPerk.match(/energy drink(?:s)?(?: effect)?\s+([IVXLCDM]+)\b/i)
       const factionCooldownHoursMatch = factionCooldownPerk.match(/(\d+(?:\.\d+)?)\s*(?:hours?|h)\b/i)
       const factionCooldownRomanMatch = factionCooldownPerk.match(/booster cooldown\s+([IVXLCDM]+)\b/i)
       const factionBonuses = {
-        energyDrinkBonusPercent: factionEnergyPercentMatch ? Number(factionEnergyPercentMatch[1]) : 0,
+        energyDrinkBonusPercent: factionEnergyPercentMatch ? Number(factionEnergyPercentMatch[1])
+          : factionEnergyRomanMatch ? Math.min(50, romanNumber(factionEnergyRomanMatch[1]) * 5) : 0,
         boosterCooldownBonusHours: factionCooldownHoursMatch ? Math.max(0, Math.min(24, Number(factionCooldownHoursMatch[1])))
           : factionCooldownRomanMatch ? Math.max(0, Math.min(24, romanNumber(factionCooldownRomanMatch[1]))) : 0,
         companyCooldownReductionPercent,
@@ -7419,6 +7423,26 @@ export default {
       }
       const pointsAverageCost = currency && typeof currency.points_average_cost === "number" && currency.points_average_cost > 0
         ? currency.points_average_cost : null
+      const currentJob = root(jobPayload, "job")
+      const jobPointsRoot = root(jobPointsPayload, "jobpoints")
+      const companyJobPoints = jobPointsRoot && Array.isArray(jobPointsRoot.companies) ? jobPointsRoot.companies.filter(isRecord) : []
+      const activeCompanyPoints = currentJob && currentJob.type === "company"
+        ? companyJobPoints.find(row => {
+            const company = isRecord(row.company) ? row.company : {}
+            return String(company.id) === String(currentJob.type_id) || String(company.name).toLowerCase() === String(currentJob.name).toLowerCase()
+          })
+        : null
+      const jobPoints = activeCompanyPoints && typeof activeCompanyPoints.points === "number" ? activeCompanyPoints.points : 0
+      const activeJob = currentJob ? {
+        type: currentJob.type,
+        name: currentJob.name,
+        position: currentJob.position,
+        companyId: currentJob.id,
+        companyTypeId: currentJob.type_id,
+        rating: currentJob.rating,
+        daysInCompany: currentJob.days_in_company,
+        points: jobPoints,
+      } : null
       const battleStats = {
         strength: battleValue("strength"),
         defense: battleValue("defense"),
@@ -7437,6 +7461,14 @@ export default {
         gyms: normalizedGyms,
         gymModifiers: modifiers,
         factionBonuses,
+        job: activeJob,
+        jobPoints: jobPointsRoot ? {
+          jobs: isRecord(jobPointsRoot.jobs) ? jobPointsRoot.jobs : {},
+          companies: companyJobPoints.map(row => ({
+            company: isRecord(row.company) ? row.company : {},
+            points: typeof row.points === "number" ? row.points : 0,
+          })),
+        } : null,
         bars: {
           energy: energyBar ? {
             current: energyBar.current, maximum: energyBar.maximum, increment: energyBar.increment,
