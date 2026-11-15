@@ -2243,13 +2243,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
   const [accountError, setAccountError] = useState("")
   const [accountNotice, setAccountNotice] = useState("")
   const [privateLiveStatus, setPrivateLiveStatus] = useState<PrivateLiveConnectionStatus | null>(null)
-  const [privateLiveConsent, setPrivateLiveConsent] = useState(false)
-  const [privateLiveIncludeNetworth, setPrivateLiveIncludeNetworth] = useState(false)
   const [privateLiveBusy, setPrivateLiveBusy] = useState(false)
   const [halloweenHistoryStatus, setHalloweenHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
   const [christmasTownHistoryStatus, setChristmasTownHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
-  const [halloweenHistoryConsent, setHalloweenHistoryConsent] = useState(false)
-  const [christmasTownHistoryConsent, setChristmasTownHistoryConsent] = useState(false)
   const [eventHistoryBusy, setEventHistoryBusy] = useState(false)
 
   const loadHalloweenHistoryStatus = async () => {
@@ -2270,34 +2266,6 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     if (!response.ok) throw new Error(payload.error || "Could not load Christmas Town history settings.")
     setChristmasTownHistoryStatus(payload)
     return payload
-  }
-
-  const updateEventHistoryConsent = async (kind: "halloween" | "christmas-town") => {
-    if (eventHistoryBusy) return
-    const accepted = kind === "halloween" ? halloweenHistoryConsent : christmasTownHistoryConsent
-    if (!accepted) return
-    setEventHistoryBusy(true); setAccountError(""); setAccountNotice("")
-    try {
-      const version = kind === "halloween" ? "halloween-history-v2" : "christmas-town-history-v1"
-      const endpoint = props.apiBase + "/api/me/" + kind + "/key"
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { Authorization: "Bearer " + props.sessionToken, "Content-Type": "application/json" },
-        body: JSON.stringify({ consent: true, consentVersion: version }),
-      })
-      const payload = await response.json() as { error?: string }
-      if (!response.ok) throw new Error(payload.error || "Could not enable " + kind + " history.")
-      if (kind === "halloween") {
-        setHalloweenHistoryConsent(false)
-        await loadHalloweenHistoryStatus()
-        setAccountNotice("Halloween historical logs and detailed attack collection are enabled.")
-      } else {
-        setChristmasTownHistoryConsent(false)
-        await loadChristmasTownHistoryStatus()
-        setAccountNotice("Christmas Town personal history collection is enabled.")
-      }
-    } catch (caught) { setAccountError(caught instanceof Error ? caught.message : "Could not update event-history consent.") }
-    finally { setEventHistoryBusy(false) }
   }
 
   const disconnectEventHistory = async (kind: "halloween" | "christmas-town") => {
@@ -2327,7 +2295,6 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     const payload = await response.json() as { error?: string } & Partial<PrivateLiveConnectionStatus>
     if (!response.ok) throw new Error(payload.error || "Could not load your private live connection status.")
     setPrivateLiveStatus(payload as PrivateLiveConnectionStatus)
-    if (payload.key) setPrivateLiveIncludeNetworth(payload.key.includeNetworth)
     return payload as PrivateLiveConnectionStatus
   }
 
@@ -2339,30 +2306,6 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
       setAccountError(caught instanceof Error ? caught.message : "Could not load event-history settings.")
     })
   }, [props.apiBase, props.sessionToken])
-
-  const connectPrivateLiveKey = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!privateLiveConsent || privateLiveBusy) return
-    setPrivateLiveBusy(true); setAccountError(""); setAccountNotice("")
-    try {
-      const response = await fetch(props.apiBase + "/api/me/private-live/key", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + props.sessionToken, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consent: true,
-          shareWithFaction: true,
-          includeNetworth: privateLiveIncludeNetworth,
-          consentVersion: "faction-private-live-v1",
-        }),
-      })
-      const payload = await response.json() as { error?: string; lastFour?: string; includeNetworth?: boolean; warning?: string | null }
-      if (!response.ok) throw new Error(payload.error || "Could not connect your private live Torn key.")
-      setPrivateLiveConsent(false)
-      await loadPrivateLiveStatus()
-      setAccountNotice(payload.warning || "Your saved portal key was owner-verified and used to share your latest snapshot with Naughty Souls members.")
-    } catch (caught) { setAccountError(caught instanceof Error ? caught.message : "Could not connect your private live Torn key.") }
-    finally { setPrivateLiveBusy(false) }
-  }
 
   const refreshPrivateLive = async () => {
     if (privateLiveBusy || !privateLiveStatus?.connected) return
@@ -2507,7 +2450,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
       <section className="settings-grid">
         <article className="settings-card settings-card-wide">
           <div className="settings-card-icon">⌘</div><small>IDENTITY & MEMBERSHIP</small><h2>Portal API key</h2>
-          <p>Your single Torn key verifies your identity and Naughty Souls membership, and is reused across company data, private live status and optional Halloween collection. Use the recommended Custom Access key or a Full Access key. Replacements must belong to this same Torn player.</p>
+          <p>Your single Torn key verifies your identity and is used for member-specific data only where your own Torn permissions are required. Shared faction and market requests use the Worker service key. Replacements must belong to this same Torn player.</p>
           <span className={props.loginKeySaved ? "settings-connection good" : "settings-connection"}><i /> {props.loginKeySaved ? "Saved securely" : "Not saved"}</span>
           <form className="settings-inline-form" onSubmit={replaceLoginKey}>
             <label htmlFor="settings-login-key">Replace portal API key</label>
@@ -2539,6 +2482,11 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           </div>
           <button type="button" className="settings-link-button" onClick={() => props.onNavigate("/company")}>Open Company Dashboard →</button>
         </article>
+        <article className="settings-card settings-card-wide">
+          <div className="settings-card-icon">◈</div><small>PRIVACY & COLLECTION</small><h2>Central data preferences</h2>
+          <p>Your initial policy acknowledgement, historical collection permission, and optional faction-sharing choices are managed in one place. Supported history backfills begin automatically when enabled.</p>
+          <button type="button" onClick={() => props.onNavigate("/setup")}>Review privacy & data preferences →</button>
+        </article>
         <article className="settings-card settings-card-wide settings-private-live-card">
           <div className="settings-card-icon">◉</div><small>FACTION LIVE MEMBER STATUS</small><h2>Private live Torn connection</h2>
           <p>Use your saved portal API key to read your own bars and cooldowns. Its owner is verified against your signed-in Torn ID. The key itself is never shared; only your latest live snapshot is shared with authenticated Naughty Souls members.</p>
@@ -2552,18 +2500,15 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
             <table><tbody>
               <tr><th>Data storage</th><td>Only the latest bars, cooldowns and optionally networth snapshot are retained while connected. No historical live-data archive is created.</td></tr>
               <tr><th>Data sharing</th><td>Latest snapshot is visible to authenticated current Naughty Souls faction members. Your API key is not shared.</td></tr>
-              <tr><th>Purpose</th><td>Faction live-status display and member coordination. Optional detailed networth is a separate opt-in.</td></tr>
+              <tr><th>Purpose</th><td>Faction live-status display and member coordination. Detailed networth is a separate central preference.</td></tr>
               <tr><th>Key storage & sharing</th><td>Encrypted at rest; used by the API Worker only to request data belonging to your own Torn account.</td></tr>
-              <tr><th>Key access level</th><td>The key must successfully return your own bars and cooldowns. Only those selections are requested. Detailed networth is requested only when you separately enable it and Torn confirms access.</td></tr>
+              <tr><th>Key access level</th><td>The key must successfully return your own bars and cooldowns. Detailed networth is requested only when centrally enabled and Torn confirms access.</td></tr>
             </tbody></table>
           </div>
-          <form className="settings-inline-form" onSubmit={connectPrivateLiveKey}>
-            <p>Your saved portal API key will be used for this connection. No second key is required.</p>
-            <label className="settings-private-live-check"><input type="checkbox" checked={privateLiveIncludeNetworth} onChange={event => setPrivateLiveIncludeNetworth(event.target.checked)} disabled={privateLiveBusy} /><span>Also share my detailed networth breakdown with the faction. This is optional and is not requested unless checked.</span></label>
-            <label className="settings-private-live-check"><input type="checkbox" checked={privateLiveConsent} onChange={event => setPrivateLiveConsent(event.target.checked)} disabled={privateLiveBusy} /><span>I consent to encrypted storage of my own key and sharing my latest bars/cooldowns with authenticated Naughty Souls members. I understand disconnecting deletes the key and current shared snapshot. I have reviewed the data-use terms above.</span></label>
-            <button type="submit" disabled={privateLiveBusy || !privateLiveConsent}>{privateLiveBusy ? "Connecting…" : privateLiveStatus?.connected ? "Reconnect using portal key" : "Connect using portal key"}</button>
-            <span className="settings-form-hint">These sharing choices apply when you connect or reconnect using your saved portal key. The Worker verifies the key owner and requests only the selected private endpoints. Custom Access keys must include Bars and Cooldowns; detailed Networth is requested only when separately enabled. Connect and refresh attempts share a 30-second server-side request limit.</span>
-          </form>
+          {!privateLiveStatus?.connected && <div className="settings-inline-form">
+            <p>Connection and sharing permissions are managed through your central privacy preferences. Enabling them there will validate your saved member key and create the latest eligible snapshot.</p>
+            <button type="button" onClick={() => props.onNavigate("/setup")}>Review privacy & data preferences →</button>
+          </div>}
           {privateLiveStatus?.connected && <div className="settings-private-live-actions">
             <button type="button" disabled={privateLiveBusy} onClick={() => void refreshPrivateLive()}>{privateLiveBusy ? "Working…" : "Refresh my live data ↻"}</button>
             <button type="button" disabled={privateLiveBusy} onClick={() => void disconnectPrivateLive()}>Disconnect & delete snapshot</button>
@@ -2573,42 +2518,20 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           <div className="settings-card-icon">♧</div><small>HALLOWEEN ARCHIVE</small><h2>Halloween historical collection</h2>
           <p>Manage your consent for personal event logs and detailed attack outcomes. Your key is encrypted, used only for your own Torn account, and event metrics are shared with authenticated Naughty Souls members.</p>
           <span className={halloweenHistoryStatus?.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? "settings-connection good" : "settings-connection"}><i /> {!halloweenHistoryStatus ? "Checking consent…" : halloweenHistoryStatus.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? "Enabled securely · •••• " + (halloweenHistoryStatus.key.lastFour || "••••") : halloweenHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled or updated consent required" : "Initial consent not yet given"}</span>
-          {!halloweenHistoryStatus ? <p className="settings-form-hint">Loading your Halloween collection settings…</p> : !halloweenHistoryStatus.previouslyConsented ? (
-            <div className="settings-inline-form"><p className="settings-form-hint">Give the one-time initial consent from the Halloween event page. After that, enable/disable controls will remain here.</p><button type="button" onClick={() => props.onNavigate("/halloween")}>Open Halloween Dashboard →</button></div>
-          ) : halloweenHistoryStatus.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? (
-            <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {halloweenHistoryStatus.key.lastValidatedAt ? new Date(halloweenHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains archived records.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("halloween")}>Disable historical collection</button></div>
+          {!halloweenHistoryStatus ? <p className="settings-form-hint">Loading your Halloween collection settings…</p> : halloweenHistoryStatus.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? (
+            <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {halloweenHistoryStatus.key.lastValidatedAt ? new Date(halloweenHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains archived records.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("halloween")}>Disable Halloween collection</button></div>
           ) : (
-            <form className="settings-inline-form" onSubmit={event => { event.preventDefault(); void updateEventHistoryConsent("halloween") }}>
-              <div className="settings-private-live-disclosure"><strong>Halloween historical data use</strong><table><tbody>
-                <tr><th>Data storage</th><td>Event logs and detailed attack metrics remain in the shared historical archive. Disabling removes the encrypted key and stops active collection; saved records are retained.</td></tr>
-                <tr><th>Data sharing</th><td>Historical event metrics are available to authenticated Naughty Souls faction members.</td></tr>
-                <tr><th>Purpose</th><td>Personal event history, faction leaderboard/archive, attack outcomes, and Revitalize finishing-hit proc analysis.</td></tr>
-                <tr><th>Key access</th><td>Full Access, or Custom Access with User → Log and User → Attacks enabled and no exclusions of Halloween records.</td></tr>
-              </tbody></table></div>
-              <label className="settings-private-live-check"><input type="checkbox" checked={halloweenHistoryConsent} onChange={event => setHalloweenHistoryConsent(event.target.checked)} disabled={eventHistoryBusy} /><span>I consent to using my saved portal API key for Halloween event-log and detailed attack collection and sharing these event metrics with authenticated Naughty Souls faction members.</span></label>
-              <button type="submit" disabled={eventHistoryBusy || !halloweenHistoryConsent}>{eventHistoryBusy ? "Working…" : "Enable historical collection with portal key"}</button>
-            </form>
+            <div className="settings-inline-form"><p className="settings-form-hint">Historical collection permission is managed centrally. After opting in, the portal validates your key and automatically queues eligible Halloween years. Some years may still need your personal Trick-or-Treat start time.</p><button type="button" onClick={() => props.onNavigate("/setup")}>Review central data preferences →</button></div>
           )}
         </article>
         <article className="settings-card settings-card-wide">
           <div className="settings-card-icon">❄</div><small>CHRISTMAS TOWN ARCHIVE</small><h2>Christmas Town personal history</h2>
           <p>Manage your consent for your own Christmas Town User → Log history. Records remain private to your account and are not shared in faction reports.</p>
           <span className={christmasTownHistoryStatus?.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? "settings-connection good" : "settings-connection"}><i /> {!christmasTownHistoryStatus ? "Checking consent…" : christmasTownHistoryStatus.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? "Enabled securely · •••• " + (christmasTownHistoryStatus.key.lastFour || "••••") : christmasTownHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled" : "Initial consent not yet given"}</span>
-          {!christmasTownHistoryStatus ? <p className="settings-form-hint">Loading your Christmas Town collection settings…</p> : !christmasTownHistoryStatus.previouslyConsented ? (
-            <div className="settings-inline-form"><p className="settings-form-hint">Give the one-time initial consent from the Christmas Town event page. After that, enable/disable controls will remain here.</p><button type="button" onClick={() => props.onNavigate("/christmas-town")}>Open Christmas Town →</button></div>
-          ) : christmasTownHistoryStatus.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? (
-            <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {christmasTownHistoryStatus.key.lastValidatedAt ? new Date(christmasTownHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains your archive.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("christmas-town")}>Disable Christmas Town history</button></div>
+          {!christmasTownHistoryStatus ? <p className="settings-form-hint">Loading your Christmas Town collection settings…</p> : christmasTownHistoryStatus.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? (
+            <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {christmasTownHistoryStatus.key.lastValidatedAt ? new Date(christmasTownHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains your archive.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("christmas-town")}>Disable Christmas Town collection</button></div>
           ) : (
-            <form className="settings-inline-form" onSubmit={event => { event.preventDefault(); void updateEventHistoryConsent("christmas-town") }}>
-              <div className="settings-private-live-disclosure"><strong>Christmas Town personal data use</strong><table><tbody>
-                <tr><th>Data storage</th><td>Christmas Town event logs are stored in your personal archive. Disabling removes the encrypted key and stops active collection; saved records are retained.</td></tr>
-                <tr><th>Data sharing</th><td>Your Christmas Town records remain private to your portal account and are not included in faction reports.</td></tr>
-                <tr><th>Purpose</th><td>Personal event statistics, minigame/chest/reward history and item-value analysis.</td></tr>
-                <tr><th>Key access</th><td>Full Access or unrestricted Custom User → Log access. Restricted log categories or IDs may omit event records.</td></tr>
-              </tbody></table></div>
-              <label className="settings-private-live-check"><input type="checkbox" checked={christmasTownHistoryConsent} onChange={event => setChristmasTownHistoryConsent(event.target.checked)} disabled={eventHistoryBusy} /><span>I consent to using my saved portal API key to collect and store my personal Christmas Town event logs for this dashboard.</span></label>
-              <button type="submit" disabled={eventHistoryBusy || !christmasTownHistoryConsent}>{eventHistoryBusy ? "Working…" : "Enable Christmas Town history"}</button>
-            </form>
+            <div className="settings-inline-form"><p className="settings-form-hint">Historical collection permission is managed centrally. When enabled, the portal automatically queues eligible Christmas Town event-year archives using your own member key.</p><button type="button" onClick={() => props.onNavigate("/setup")}>Review central data preferences →</button></div>
           )}
         </article>
         <article className="settings-card">
@@ -2630,12 +2553,13 @@ type PortalSetupWorkspaceProps = {
   sessionToken: string
   onComplete: () => void
   onSignOut: () => void
+  isEdit?: boolean
 }
 
 type PortalSetupResponse = Record<string, unknown> & { error?: string }
 
 export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
-  const [policyAccepted, setPolicyAccepted] = useState(false)
+  const [policyAccepted, setPolicyAccepted] = useState(props.isEdit === true)
   const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
   const [sharePrivateLive, setSharePrivateLive] = useState(false)
   const [shareNetworth, setShareNetworth] = useState(false)
@@ -2645,6 +2569,28 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [error, setError] = useState("")
   const [notices, setNotices] = useState<string[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!props.isEdit) return
+    let cancelled = false
+    void fetch(props.apiBase + "/api/me/portal-consent", {
+      headers: { Authorization: "Bearer " + props.sessionToken },
+    }).then(async response => {
+      const payload = await response.json() as PortalSetupResponse
+      if (!response.ok) throw new Error(payload.error || "Could not load your data preferences.")
+      if (cancelled) return
+      const consent = payload.consent && typeof payload.consent === "object"
+        ? payload.consent as Record<string, unknown>
+        : {}
+      setPolicyAccepted(true)
+      setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
+      setSharePrivateLive(consent.sharePrivateLive === true)
+      setShareNetworth(consent.shareNetworth === true)
+    }).catch(caught => {
+      if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load your data preferences.")
+    })
+    return () => { cancelled = true }
+  }, [props.apiBase, props.sessionToken, props.isEdit])
 
   const request = async (
     path: string,
@@ -2813,13 +2759,13 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
       <section className="portal-setup-shell">
         <div className="portal-setup-heading">
           <div className="portal-eyebrow"><span /> YOUR ACCOUNT · PRIVACY & DATA</div>
-          <h1>Welcome to the <em>Naughty Family.</em></h1>
-          <p>Before entering the portal, review how your data is used and choose which optional collections and sharing features to enable. You can change these preferences later in Account Settings.</p>
+          <h1>{props.isEdit ? <>Your data, <em>your preferences.</em></> : <>Welcome to the <em>Naughty Family.</em></>}</h1>
+          <p>{props.isEdit ? "Review and update your central collection and sharing permissions. Changes take effect when you save." : "Before entering the portal, review how your data is used and choose which optional collections and sharing features to enable. You can change these preferences later in Account Settings."}</p>
         </div>
 
         <form className="portal-setup-card" onSubmit={completeSetup}>
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>01</span><div><h2>Data policy & privacy</h2><small>Required acknowledgement</small></div></div>
+            <div className="portal-setup-section-heading"><span>01</span><div><h2>Data policy & privacy</h2><small>{props.isEdit ? "Previously acknowledged" : "Required acknowledgement"}</small></div></div>
             <div className="portal-setup-policy-grid">
               <article><strong>Your member API key</strong><p>Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions. The encrypted key is stored by the portal API, not in this browser's local storage.</p></article>
               <article><strong>Shared faction and market data</strong><p>Shared faction information and public market prices are requested by the portal Worker using its own server-side Torn service key. Your personal API key is not used for these shared requests.</p></article>
@@ -2827,7 +2773,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
               <article><strong>Retention & revocation</strong><p>You can turn off collection and sharing later. Revocation stops future collection and removes the stored collection credential or shared live snapshot. Previously collected historical event records are retained under the portal's data-retention policy.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
-              <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={busy || saved} />
+              <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={props.isEdit || busy || saved} />
               <span><strong>I have read and acknowledge the Naughty Family data policy and privacy notice.</strong><small>This acknowledgement is required to enter the portal. It does not enable optional historical collection or data sharing by itself.</small></span>
             </label>
           </section>
@@ -2869,13 +2815,13 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           {!saved ? (
             <div className="portal-setup-actions">
               <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || busy}>
-                {busy ? "Saving preferences & starting eligible collections…" : "Save preferences & finish setup"}
+                {busy ? "Saving preferences & starting eligible collections…" : props.isEdit ? "Save data preferences" : "Save preferences & finish setup"}
               </button>
               <small>Optional choices can remain off. You can update them later in Account Settings.</small>
             </div>
           ) : (
             <div className="portal-setup-actions">
-              <button type="button" className="portal-setup-primary" onClick={props.onComplete}>Enter Naughty Family Portal <span>→</span></button>
+              <button type="button" className="portal-setup-primary" onClick={props.onComplete}>{props.isEdit ? "Return to Account Settings" : "Enter Naughty Family Portal"} <span>→</span></button>
               <small>Your central preferences are saved. Eligible historical jobs have been submitted and will continue in the background.</small>
             </div>
           )}
