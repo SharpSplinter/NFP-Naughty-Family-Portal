@@ -263,6 +263,15 @@ try {
       "Tab from Members should reach Private Live in the administration navigation.");
     await keyboardPage.keyboard.press("Enter");
     await keyboardPage.getByRole("heading", { name: "Private-live diagnostics", exact: true }).waitFor({ state: "visible" });
+    await keyboardPage.getByRole("navigation", { name: "Administration sections" })
+      .getByRole("button", { name: "Data & Consent", exact: true }).click();
+    await keyboardPage.getByRole("heading", { name: "Data & consent governance", exact: true }).waitFor({ state: "visible" });
+    const governanceTableRegion = keyboardPage.getByRole("region", { name: "Scrollable member data governance table" });
+    assert.ok(await governanceTableRegion.count() === 1, "Data governance member table should be exposed as a named scroll region.");
+    assert.ok(await governanceTableRegion.getAttribute("tabindex") === "0", "Data governance table should be keyboard-scrollable.");
+    const governanceHeadingVisible = await keyboardPage.getByRole("heading", { name: "Data & consent governance", exact: true }).isVisible();
+    assert.ok(governanceHeadingVisible, "Data governance must remain navigable at the mobile viewport.");
+
 
     const semantics = await keyboardPage.evaluate(() => {
       const visible = element => {
