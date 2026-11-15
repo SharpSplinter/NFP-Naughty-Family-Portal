@@ -388,7 +388,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const refillBarMaximum = activeBook === "ugly-energy" && !activeHasBook(liveData, "ugly-energy")
     ? barMaximumBase + 100
     : Math.max(0, safeNumber(energyBar?.maximum, 150))
-  const regenMultiplier = activeBook === "higher-daddy" && !activeHasBook(liveData, "higher-daddy") ? 1.2 : 1
+  const regenMultiplier = activeBook === "higher-daddy" ? 1.2 : 1
   const naturalEnergyBar = energyBar ? { ...energyBar, current: currentEnergy } : null
   const naturalEnergy = getNaturalEnergy(naturalEnergyBar, waitHours, regenMultiplier)
   const energyAfterNatural = currentEnergy + naturalEnergy
@@ -408,7 +408,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const maximumXanax = waitHours < currentDrugCooldownHours ? 0
     : Math.max(0, Math.floor(timeAvailableForDrugs / 6) + (ecstasy ? 0 : 1))
   const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
-  const maximumCanCount = Math.min(48, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
+  const maximumCanCount = Math.min(64, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
   const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
   const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / 6)))
   const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6))
