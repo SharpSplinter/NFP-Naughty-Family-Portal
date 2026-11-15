@@ -2635,7 +2635,6 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [sharePrivateLive, setSharePrivateLive] = useState(false)
   const [shareNetworth, setShareNetworth] = useState(false)
   const [secondaryCompanyKey, setSecondaryCompanyKey] = useState("")
-  const [secondaryCompanyKeyConsent, setSecondaryCompanyKeyConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
@@ -2699,7 +2698,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
   const completeSetup = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!policyAccepted || !apiKeyUsageAccepted || (secondaryCompanyKey.trim() && !secondaryCompanyKeyConsent) || busy || saved) return
+    if (!policyAccepted || !apiKeyUsageAccepted || busy || saved) return
     setBusy(true)
     setError("")
     setNotices([])
@@ -2894,7 +2893,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           </section>
 
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>03</span><div><h2>Data sharing</h2><small>Optional · Off by default</small></div></div>
+            <div className="portal-setup-section-heading"><span>04</span><div><h2>Data sharing</h2><small>Optional · Off by default</small></div></div>
             <p>These choices are separate from historical collection. They can be changed independently at any time.</p>
             <label className="portal-setup-check">
               <input type="checkbox" checked={sharePrivateLive} onChange={event => { setSharePrivateLive(event.target.checked); if (!event.target.checked) setShareNetworth(false) }} disabled={busy || saved} />
@@ -2910,11 +2909,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             <div className="portal-setup-section-heading"><span>05</span><div><h2>Secondary company API key</h2><small>Optional · Can be added later</small></div></div>
             <p>You may add a separate key for another company connection. It is used only for the company returned by Torn and is not used for portal login, member identity, faction collection or market requests.</p>
             <label className="portal-setup-input-label" htmlFor="portal-setup-company-key">Additional company API key</label>
-            <input id="portal-setup-company-key" className="portal-setup-input" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => { setSecondaryCompanyKey(event.target.value); if (!event.target.value) setSecondaryCompanyKeyConsent(false) }} placeholder="Leave blank to skip" disabled={busy || saved} />
-            {secondaryCompanyKey.trim() && <label className="portal-setup-check portal-setup-subcheck">
-              <input type="checkbox" checked={secondaryCompanyKeyConsent} onChange={event => setSecondaryCompanyKeyConsent(event.target.checked)} disabled={busy || saved} />
-              <span><strong>I am authorized to connect this secondary company key and consent to its use for that company only.</strong><small>The key is validated and stored separately from your primary portal key.</small></span>
-            </label>}
+            <input id="portal-setup-company-key" className="portal-setup-input" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => setSecondaryCompanyKey(event.target.value)} placeholder="Leave blank to skip" disabled={busy || saved} />
             <small className="portal-setup-field-hint">Your primary portal key remains your member identity key. No secondary company key is required to finish setup.</small>
           </section>
 
@@ -2924,7 +2919,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           {!saved ? (
             <div className="portal-setup-actions">
-              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || !apiKeyUsageAccepted || (secondaryCompanyKey.trim().length > 0 && !secondaryCompanyKeyConsent) || busy || !preferencesLoaded}>
+              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || !apiKeyUsageAccepted || busy || !preferencesLoaded}>
                 {busy ? "Saving preferences & starting eligible collections…" : props.isEdit ? "Save data preferences" : "Save preferences & finish setup"}
               </button>
               <small>Optional choices can remain off. You can update them later in Account Settings.</small>
