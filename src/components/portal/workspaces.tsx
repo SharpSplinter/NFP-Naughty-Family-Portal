@@ -1565,7 +1565,6 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   const [eventWindowBusy, setEventWindowBusy] = useState(false)
   const [eventWindowError, setEventWindowError] = useState("")
   const [eventWindowNotice, setEventWindowNotice] = useState("")
-  const [historicalConsent, setHistoricalConsent] = useState(false)
   const [historicalKeyStatus, setHistoricalKeyStatus] = useState<{ connected: boolean; previouslyConsented: boolean; key: { lastFour: string; accessLevel: string; consentVersion: string; consentedAt: string; lastValidatedAt: string } | null } | null>(null)
   const [historicalKeyBusy, setHistoricalKeyBusy] = useState(false)
   const [historicalKeyMessage, setHistoricalKeyMessage] = useState("")
@@ -1703,27 +1702,8 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   useEffect(() => { if (tab === "historical") void loadArchive(historicalYear) }, [tab, historicalYear, apiBase, sessionToken])
   useEffect(() => { setSelectedComparePlayerId("") }, [tab, historicalYear, eventYear])
 
-  const saveHistoricalKey = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!historicalConsent || historicalKeyBusy) return
-    setHistoricalKeyBusy(true); setHistoricalKeyError(""); setHistoricalKeyMessage("")
-    try {
-      const response = await fetch(apiBase + "/api/me/halloween/key", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + sessionToken, "Content-Type": "application/json" },
-        body: JSON.stringify({ consent: true, consentVersion: "halloween-history-v2" }),
-      })
-      const payload = await response.json() as { error?: string; saved?: boolean }
-      if (!response.ok) throw new Error(payload.error || "Could not enable historical collection with your portal key.")
-      setHistoricalConsent(false)
-      setHistoricalKeyMessage("Updated historical logs and Revitalize attack collection are enabled using your saved portal API key.")
-      await Promise.all([loadHistoricalKeyStatus(), loadArchive()])
-    } catch (caught) { setHistoricalKeyError(caught instanceof Error ? caught.message : "Could not enable historical collection with your portal key.") }
-    finally { setHistoricalKeyBusy(false) }
-  }
-
   const removeHistoricalKey = async () => {
-    if (historicalKeyBusy || !window.confirm("Disconnect your Full Access key? Previously collected Halloween records remain in the shared faction archive.")) return
+    if (historicalKeyBusy || !window.confirm("Disconnect your saved member key from Halloween historical collection? Previously collected Halloween records remain in the shared faction archive.")) return
     setHistoricalKeyBusy(true); setHistoricalKeyError(""); setHistoricalKeyMessage("")
     try {
       const response = await fetch(apiBase + "/api/me/halloween/key", { method: "DELETE", headers: { Authorization: "Bearer " + sessionToken } })
@@ -2126,29 +2106,11 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
               </select>
             </label>
           </div>
-          {historicalKeyStatus && !historicalKeyStatus.previouslyConsented && (
-            <>
-              <div className="historical-key-notice"><strong>Your own key. Your own records. Shared faction history.</strong><span>Your sign-in key is already encrypted and associated with your Torn player ID. This is the one-time initial authorization for your own event logs and detailed attack collection. After you consent, manage this connection from Account Settings. Other members can browse the shared faction archive without connecting a key. If you leave Naughty Souls, your saved key and contributed Halloween records are purged.</span></div>
-              <section className="historical-key-card">
-                <div className="historical-key-heading"><div><small>INITIAL HISTORICAL COLLECTION CONSENT</small><strong>{historicalKeyStatus.connected ? "Updated consent required · •••• " + (historicalKeyStatus.key?.lastFour || "••••") : "Initial consent required"}</strong></div><span className="key-status"><i /> ONE-TIME OPT-IN</span></div>
-                <form className="historical-key-form" onSubmit={saveHistoricalKey}>
-                  <p>Your saved portal API key will be used. No second API key is required.</p>
-                  <div className="historical-tos"><strong>Historical Halloween data use</strong><table><tbody>
-                    <tr><th>Data Storage</th><td>Persistent, until account deletion or faction change. Disabling collection in Account Settings removes the encrypted event key but retains records already contributed.</td></tr>
-                    <tr><th>Data Sharing</th><td>All authenticated Naughty Souls faction members.</td></tr>
-                    <tr><th>Purpose of Use</th><td>Halloween event analytics, personal event history, faction-wide leaderboard/archive, and Revitalize finishing-hit proc counts and weapon chance.</td></tr>
-                    <tr><th>Key Storage & Sharing</th><td>Stored remotely encrypted; used only by this service's historical collection workflows. The raw key is not shared with faction members.</td></tr>
-                    <tr><th>Key Access Level</th><td>Full Access, or Custom Access with both User → Log and User → Attacks selections. Log category restrictions must include Halloween records.</td></tr>
-                  </tbody></table></div>
-                  <label className="historical-consent"><input type="checkbox" checked={historicalConsent} onChange={event => setHistoricalConsent(event.target.checked)} disabled={historicalKeyBusy} /><span>I have reviewed the data-use terms and consent to using my saved portal API key for Halloween event-log and detailed attack collection, including Revitalize finishing-hit proc counts and weapon chance, and sharing these event metrics with authenticated Naughty Souls faction members. Ongoing controls will live in Account Settings.</span></label>
-                  <button className="historical-connect-button" type="submit" disabled={historicalKeyBusy || !historicalConsent}>{historicalKeyBusy ? "Enabling…" : "Enable historical collection with portal key"}</button>
-                </form>
-                {historicalKeyError && <p className="historical-key-error" role="alert">{historicalKeyError}</p>}
-              </section>
-            </>
-          )}
-          {historicalKeyStatus?.previouslyConsented && !historicalConsentCurrent && (
-            <p className="historical-key-muted" role="status">Halloween history collection is currently disabled or needs updated consent. Manage its connection in <button type="button" className="settings-link-button" onClick={() => onNavigate("/settings")}>Account Settings →</button></p>
+          {historicalKeyStatus && !historicalConsentCurrent && (
+            <div className="historical-key-muted" role="status">
+              Halloween historical collection is not connected. Your optional historical collection permission is managed centrally, and the portal automatically validates your member key and queues eligible event years when enabled.
+              <button type="button" className="settings-link-button" onClick={() => onNavigate("/setup")}>Review privacy & data preferences →</button>
+            </div>
           )}
           <div className="historical-collection-toolbar"><div><small>FACTION HISTORICAL LEADERBOARD</small><strong>{archive?.leaderboard.length ?? 0} member accounts in the archive</strong></div><button type="button" onClick={() => { void loadArchive(); void loadHistoricalKeyStatus() }} disabled={archiveBusy}>{archiveBusy ? "Refreshing…" : "Refresh archive ↻"}</button></div>
           {archiveError && <p className="historical-key-error" role="alert">{archiveError}</p>}
