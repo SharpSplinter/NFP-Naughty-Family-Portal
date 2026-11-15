@@ -10,9 +10,10 @@ type LiveData = {
   fetchedAt: string
   battleStats: Record<StatKey, number | null> & { total: number | null }
   perks: Record<string, string[]>
+  factionBonuses: { energyDrinkBonusPercent: number; boosterCooldownBonusHours: number }
   gym: { id: string; name: string; unlockedGyms: Array<{ id: string; name: string; available: boolean }> } | null
   gyms: GymPreset[]
-  gymModifiers: Record<StatKey, { multiplier: number; bonuses: string[] }>
+  gymModifiers: Record<StatKey, { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] }>
   bars: { energy: EnergyBar; happy: EnergyBar }
   refills: { energy?: boolean; special_count?: number }
   cooldowns: { booster?: number; drug?: number }
@@ -256,6 +257,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [manualEnergy, setManualEnergy] = useState("")
   const [manualModifier, setManualModifier] = useState("")
   const [manualModifierEnabled, setManualModifierEnabled] = useState(false)
+  const [gymBookChoice, setGymBookChoice] = useState("auto")
   const [happyLossPercent, setHappyLossPercent] = useState(50)
   const [waitHours, setWaitHours] = useState(0)
   const [xanaxCount, setXanaxCount] = useState(0)
@@ -329,15 +331,26 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const liveStatValue = liveData?.battleStats?.[selectedStat] ?? null
   const statOverride = manualStats[selectedStat]
   const currentStat = statOverride.trim() === "" ? safeNumber(liveStatValue) : Math.max(0, safeNumber(statOverride))
-  const autoModifier = liveData?.gymModifiers?.[selectedStat]?.multiplier || 1
-  const effectiveModifier = manualModifierEnabled && manualModifier.trim() !== "" ? clamp(safeNumber(manualModifier), 0, 100) : autoModifier
+  const modifierProfile = liveData?.gymModifiers?.[selectedStat]
+  const autoModifier = modifierProfile?.multiplier || 1
+  const baseModifier = modifierProfile?.baseMultiplier ?? autoModifier
+  const plannedGymBookPercent: Record<string, number> = {
+    none: 0, "get-hard": 20, "gym-grunting": selectedStat === "strength" ? 30 : 0,
+    "self-defense": selectedStat === "defense" ? 30 : 0,
+    "speed-script": selectedStat === "speed" ? 30 : 0,
+    "limbo-lovers": selectedStat === "dexterity" ? 30 : 0,
+  }
+  const plannedModifier = gymBookChoice === "auto" ? autoModifier : baseModifier + (plannedGymBookPercent[gymBookChoice] || 0) / 100
+  const effectiveModifier = manualModifierEnabled && manualModifier.trim() !== "" ? clamp(safeNumber(manualModifier), 0, 100) : plannedModifier
   const liveStatSource = statOverride.trim() === "" && liveStatValue !== null ? "Live Torn API" : "Manual scenario"
   const selectedDots = safeNumber(selectedGym.dots[selectedStat])
-  const activeVoracity = (liveData?.perks?.faction || []).some(value => /voracity/i.test(value))
+  const activeEnergyDrinkBonus = Math.max(0, safeNumber(liveData?.factionBonuses?.energyDrinkBonusPercent))
+  const activeVoracity = activeEnergyDrinkBonus > 0
   const voracityEnabled = factionVoracity || activeVoracity
+  const energyDrinkBonusPercent = factionVoracity && !activeVoracity ? 50 : activeEnergyDrinkBonus
   const drink = ENERGY_DRINKS.find(item => item.id === canId) || ENERGY_DRINKS[3]
-  const cooldownFactor = activeBook === "self-control" ? 0.5 : 1
-  const cooldownCapHours = voracityEnabled ? 48 : 24
+  const canCooldownFactor = activeBook === "self-control" ? 0.5 : 1
+  const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
   const barMaximumBase = Math.max(0, safeNumber(energyBar?.maximum, 150) - (activeHasBook(liveData, "ugly-energy") ? 100 : 0))
@@ -347,7 +360,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const regenMultiplier = activeBook === "higher-daddy" && !activeHasBook(liveData, "higher-daddy") ? 1.2 : 1
   const naturalEnergy = getNaturalEnergy(energyBar, waitHours, regenMultiplier)
   const energyAfterNatural = currentEnergy + naturalEnergy
-  const drinkMultiplier = (voracityEnabled ? 1.5 : 1) * (activeBook === "fuelling" ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
+  const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (activeBook === "fuelling" ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
   const pointRefillAvailable = liveData?.refills?.energy === true
   const pointRefillCount = pointRefillIncluded && pointRefillAvailable ? 1 : 0
@@ -357,22 +370,22 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const energyFromGreenEggs = greenEggCount * 500
   const usableEnergy = energyAfterNatural + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
   const energySourceTotal = currentEnergy + naturalEnergy + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
-  const cooldownUsedHours = cooldownFactor * (canCount * 2 + (fhcCount + greenEggCount) * 6 + (dvdCount + yellowEggCount + seQuantity) * 6)
+  const cooldownUsedHours = canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6
   const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
   const boosterBudgetDescription = fmt(Math.max(0, boosterBudgetHours)) + "h available before planned items"
   const maximumXanax = 4
-  const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6 * cooldownFactor)
-  const maximumCanCount = Math.min(24, Math.max(0, Math.floor(cooldownExceptCans / (2 * cooldownFactor))))
-  const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 + greenEggCount * 6 + dvdCount * 6 + yellowEggCount * 6 + seQuantity * 6) * cooldownFactor)
-  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / (6 * cooldownFactor))))
-  const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6) * cooldownFactor)
-  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / (6 * cooldownFactor))))
-  const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6) * cooldownFactor)
-  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / (6 * cooldownFactor))))
+  const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
+  const maximumCanCount = Math.min(48, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
+  const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
+  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / 6)))
+  const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6))
+  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / 6)))
+  const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6))
+  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / 6)))
   const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
   const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75)))) : 0
-  const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6) * cooldownFactor)
-  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / (6 * cooldownFactor))))
+  const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
+  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
   const maxPointRefill = pointRefillAvailable ? 1 : 0
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
@@ -534,6 +547,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
                 hint={liveStatSource + ". Clear the field to restore the live API value."} testId="training-stat-value" />
               <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small>{fmt(selectedGym.energyCost)} energy per individual train</small></div>
+              <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
+                <option value="auto">Use active book from API</option><option value="none">No gym-gain book</option>
+                <option value="get-hard">Get Hard Or Go Home · +20% all stats</option>
+                <option value="gym-grunting">Gym Grunting · +30% Strength</option>
+                <option value="self-defense">Self Defense in the Workplace · +30% Defense</option>
+                <option value="speed-script">Speed 3: The Rejected Script · +30% Speed</option>
+                <option value="limbo-lovers">Limbo Lovers 101 · +30% Dexterity</option>
+              </select><small className="tc-hint">Auto uses the live /user/perks book. Choose a planned book to replace the active book bonus for this scenario.</small></label>
               <div className="tc-readout-field"><span>Automatic gym-gain modifier</span><strong>{fmt(autoModifier, 4)}×</strong><small>Calculated from current /user/perks bonuses for {currentStatLabel.toLowerCase()}</small></div>
               <label className="tc-check-field"><input type="checkbox" checked={manualModifierEnabled} onChange={event => setManualModifierEnabled(event.target.checked)} />
                 <span><strong>Override API gym modifier</strong><small>Leave off to use the live modifier calculated from Torn perks.</small></span>
@@ -593,7 +614,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="fuelling">Fuelling Your Way to Failure · 2× drink energy</option>
                 <option value="higher-daddy">Higher Daddy, Higher! · +20% natural energy</option>
                 <option value="ugly-energy">Ugly Energy · +100 refill/bar capacity</option>
-                <option value="self-control">Self Control Is for Losers · ½ booster cooldown</option>
+                <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
               </select><small className="tc-hint">Auto detects your active book from /user/perks. Pick a future book to model a planned jump.</small></label>
               <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
                 hint="Maximum 168 hours. Natural energy is calculated from your live bar tick and remaining time to its next tick." suffix="hours" />
@@ -608,7 +629,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
               </select></label>
               <NumberField label="Energy drinks" value={canCount} onChange={setCanCount} min={0} max={maximumCanCount}
-                hint={"Maximum " + maximumCanCount + " before using other booster items. Voracity ×1.5 and Fuelling ×2 apply to base energy."} testId="training-can-count" />
+                hint={"Maximum " + maximumCanCount + " before using other booster items. Voracity's live energy-drink percentage and Fuelling ×2 apply to base energy. Self Control halves only can cooldown."} testId="training-can-count" />
               <NumberField label="Green Easter Eggs" value={greenEggCount} onChange={setGreenEggCount} min={0} max={maximumYellowEggCount}
                 hint={"Each gives +500E and adds 6 hours of booster cooldown. Maximum " + maximumYellowEggCount + " at the current cooldown budget."} testId="training-green-egg-count" />
               <NumberField label="Other energy sources" value={otherEnergy} onChange={setOtherEnergy} min={0} max={100000}
@@ -617,11 +638,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
                 <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
               </label>
-              <label className="tc-check-field"><input type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
+              <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
-                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks." : "Scenario toggle. Increases energy drinks by 50%."}</small></span>
+                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Applies the maximum +50% energy-drink branch."}</small></span>
               </label>
-              <label className="tc-check-field"><input type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
+              <label className="tc-check-field"><input data-testid="training-event-drink-bonus" type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
                 <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
               </label>
             </div>
