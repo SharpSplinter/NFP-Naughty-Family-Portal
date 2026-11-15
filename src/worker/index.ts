@@ -7181,9 +7181,10 @@ export default {
         getJson("/torn/items?cat=Energy%20Drink", publicKey, "training-calculator-item-catalogue", "drinkItems", false),
         getJson("/torn/items?cat=Booster", publicKey, "training-calculator-item-catalogue", "boosterItems", false),
         getJson("/torn/items?cat=Special", publicKey, "training-calculator-item-catalogue", "specialItems", false),
+        getJson("/torn/items?cat=Enhancer", publicKey, "training-calculator-item-catalogue", "enhancerItems", false),
       ]
       const [battleStatsPayload, perksPayload, gymPayload, barsPayload, refillsPayload, cooldownsPayload,
-        gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload] =
+        gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
         await Promise.all([...userRequests, ...publicRequests])
 
       const list = (payload: Record<string, unknown> | null, key: string): Record<string, unknown>[] => {
@@ -7195,6 +7196,7 @@ export default {
         ...list(drinkItemsPayload, "items"),
         ...list(boosterItemsPayload, "items"),
         ...list(specialItemsPayload, "items"),
+        ...list(enhancerItemsPayload, "items"),
       ]
       const normalizeItemName = (value: unknown): string => typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]/g, "") : ""
       const findItem = (...names: string[]): Record<string, unknown> | null => {
