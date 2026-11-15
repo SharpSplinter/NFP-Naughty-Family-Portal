@@ -2265,6 +2265,7 @@ type PortalConsentSnapshot = {
     apiKeyAccessType?: "custom" | "full" | null
     apiKeyConsentAcknowledgedAt?: string | null
     historicalCollectionEnabled?: boolean
+    privateDataVisibility?: "self" | "faction_access" | "faction_members"
     shareHalloweenHistory?: boolean
     sharePrivateLive?: boolean
     shareNetworth?: boolean
@@ -2579,10 +2580,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
             <table><tbody>
               <tr><th>Privacy policy</th><td>{portalConsentStatus?.consent?.policyVersion ? "Acknowledged · " + portalConsentStatus.consent.policyVersion : portalConsentStatus ? "Acknowledgement required" : "Checking…"}</td></tr>
               <tr><th>Primary API key use</th><td>{portalConsentStatus?.consent?.apiKeyUsageAccepted ? (portalConsentStatus.consent.apiKeyAccessType === "full" ? "Full Access key authorized for the current saved key" : "Custom Access key authorized for the current saved key") : "Choose Custom Access or Full Access and authorize the current saved key"}</td></tr>
-              <tr><th>Historical collection</th><td>{portalConsentStatus?.consent?.historicalCollectionEnabled ? "Enabled for supported private history collectors" : "Off"}</td></tr>
-              <tr><th>Halloween sharing</th><td>{portalConsentStatus?.consent?.shareHalloweenHistory ? "Opted in · faction-visible" : "Off · private to you"}</td></tr>
-              <tr><th>Bars & cooldown sharing</th><td>{portalConsentStatus?.consent?.sharePrivateLive ? "Opted in · latest snapshot only" : "Off"}</td></tr>
-              <tr><th>Detailed networth</th><td>{portalConsentStatus?.consent?.shareNetworth ? "Opted in, subject to Torn key permissions" : "Off"}</td></tr>
+              <tr><th>Historical collection</th><td>{portalConsentStatus?.consent?.historicalCollectionEnabled ? "Automatic after current policy and key authorization" : "Pending initial setup"}</td></tr>
+              <tr><th>Private-data visibility</th><td>{portalConsentStatus?.consent?.privateDataVisibility === "faction_members" ? "All Naughty Souls members" : portalConsentStatus?.consent?.privateDataVisibility === "faction_access" ? "Faction Leaders / Staff / Council · Torn faction API access" : portalConsentStatus ? "Self only" : "Checking…"}</td></tr>
+              <tr><th>Detailed networth</th><td>{portalConsentStatus?.consent?.shareNetworth ? "Visible within selected faction scope, subject to Torn key permissions" : "Off · private to you"}</td></tr>
               <tr><th>Key access model</th><td>Custom Access is limited to the scopes selected in Torn. Full Access is broader. The portal checks required permissions before enabling each optional dataset.</td></tr>
             </tbody></table>
           </div>
@@ -2618,7 +2618,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
         </article>
         <article className="settings-card settings-card-wide">
           <div className="settings-card-icon">♧</div><small>HALLOWEEN ARCHIVE</small><h2>Halloween historical collection</h2>
-          <p>Manage the member-key connection used for personal event logs and detailed attack outcomes. Collection permission is controlled in central data preferences. Your key is encrypted, used only for your own Torn account, and event metrics are shared with authenticated Naughty Souls members.</p>
+          <p>Manage the member-key connection used for personal event logs and detailed attack outcomes. Collection starts automatically after policy and key authorization. Halloween history visibility follows your central Self / Faction Leaders-Staff-Council / All Members setting; your key is encrypted and used only for your own Torn account.</p>
           <span className={halloweenHistoryStatus?.connected && halloweenHistoryStatus.key ? "settings-connection good" : "settings-connection"}><i /> {!halloweenHistoryStatus ? "Checking key connection…" : halloweenHistoryStatus.connected && halloweenHistoryStatus.key ? "Enabled securely · •••• " + (halloweenHistoryStatus.key.lastFour || "••••") : halloweenHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled or updated consent required" : "Initial consent not yet given"}</span>
           {!halloweenHistoryStatus ? <p className="settings-form-hint">Loading your Halloween collection settings…</p> : halloweenHistoryStatus.connected && halloweenHistoryStatus.key ? (
             <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {halloweenHistoryStatus.key.lastValidatedAt ? new Date(halloweenHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains archived records.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("halloween")}>Disable Halloween collection</button></div>
@@ -2690,9 +2690,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [apiKeyUsageAccepted, setApiKeyUsageAccepted] = useState(false)
   const [apiKeyAccessType, setApiKeyAccessType] = useState<"custom" | "full" | "">("")
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
-  const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
-  const [shareHalloweenHistory, setShareHalloweenHistory] = useState(false)
-  const [sharePrivateLive, setSharePrivateLive] = useState(false)
+  const [privateDataVisibility, setPrivateDataVisibility] = useState<"self" | "faction_access" | "faction_members">("self")
   const [shareNetworth, setShareNetworth] = useState(false)
   const [secondaryCompanyKey, setSecondaryCompanyKey] = useState("")
   const [busy, setBusy] = useState(false)
@@ -2719,9 +2717,9 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
       // authorization must be acknowledged in the form before the gate opens.
       const policyRequired = payload.policyAcknowledgementRequired === true
       if (consent) {
-        setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
-        setShareHalloweenHistory(consent.shareHalloweenHistory === true)
-        setSharePrivateLive(consent.sharePrivateLive === true)
+        setPrivateDataVisibility(consent.privateDataVisibility === "faction_access" || consent.privateDataVisibility === "faction_members"
+          ? consent.privateDataVisibility
+          : "self")
         setShareNetworth(consent.shareNetworth === true)
         const keyConsentCurrent = consent.apiKeyUsageAccepted === true
         setApiKeyUsageAccepted(keyConsentCurrent)
@@ -2777,26 +2775,29 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         apiKeyUsageAccepted: true,
         apiKeyAccessType,
         consentVersion: "portal-data-policy-v3",
-        historicalCollectionEnabled,
-        shareHalloweenHistory: historicalCollectionEnabled && shareHalloweenHistory,
-        sharePrivateLive,
-        shareNetworth: sharePrivateLive && shareNetworth,
+        historicalCollectionEnabled: true,
+        privateDataVisibility,
+        shareHalloweenHistory: privateDataVisibility !== "self",
+        sharePrivateLive: privateDataVisibility !== "self",
+        shareNetworth: privateDataVisibility !== "self" && shareNetworth,
       })
       nextNotices.push("Your privacy acknowledgement and data preferences were saved.")
 
-      if (sharePrivateLive) {
+      if (privateDataVisibility !== "self") {
         try {
           const live = await request("/api/me/private-live/key", "POST")
           nextNotices.push(typeof live.warning === "string"
             ? live.warning
-            : "Your member-owned live bars and cooldown snapshot was connected for faction sharing.")
+            : "Your latest member-owned bars and cooldown snapshot was connected for the selected faction visibility.")
         } catch (caught) {
-          nextWarnings.push("Private live sharing was selected, but could not be enabled: " +
+          nextWarnings.push("The selected faction visibility was saved, but live bars/cooldowns could not be connected: " +
             (caught instanceof Error ? caught.message : "Torn did not accept the required member-key permissions."))
         }
+      } else {
+        try { await request("/api/me/private-live/key", "DELETE") } catch { /* no prior live connection to remove */ }
       }
 
-      if (historicalCollectionEnabled) {
+      {
         let halloweenReady = false
         try {
           await request("/api/me/halloween/key", "POST")
@@ -2921,8 +2922,8 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             <div className="portal-setup-policy-grid">
               <article><strong>Your member API key</strong><p>Your primary key verifies your Torn identity and is used only for data tied to your account or features that require your personal Torn permissions. It is encrypted at rest by the portal API and is never stored in this browser's local storage.</p></article>
               <article><strong>Shared faction and market data</strong><p>Shared faction rosters/statistics and public market prices are requested with the portal Worker's own server-side service key. Your member key is not used for those shared requests.</p></article>
-              <article><strong>Personal and historical data</strong><p>When you opt in, supported private archives include gym-training User → Log entries and Christmas Town activity. Halloween event activity requires User → Log and User → Attacks. Gym training and Christmas Town stay private; Halloween history is faction-visible only with the separate sharing choice below.</p></article>
-              <article><strong>Retention & revocation</strong><p>You can turn off collection or sharing later. Revocation stops future collection and removes collection credentials or the current shared live snapshot. Previously collected history is retained under the portal retention policy.</p></article>
+              <article><strong>Personal and historical data</strong><p>After you acknowledge this policy and authorize your primary key, supported history imports start automatically when Torn grants the required selections. Gym-training and Christmas Town history stay private to you. Halloween event history follows the single private-data visibility setting below.</p></article>
+              <article><strong>Retention & revocation</strong><p>Historical collection starts after setup and continues while your portal key remains authorized. You can limit faction visibility to yourself at any time. Disconnecting a feature or replacing your key stops its future collection; previously collected history is retained under the portal retention policy.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
               <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={!policyAcknowledgementRequired || busy || saved} />
@@ -2957,28 +2958,31 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           </section>
 
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>03</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
-            <p>Allow the portal to import historical records supported by your Torn key. Supported backfills include private gym-training logs, Halloween event activity, and Christmas Town activity. Gym training and Christmas Town need unrestricted User → Log access; Halloween needs User → Log and User → Attacks. An unrestricted User → Log selection avoids silently incomplete imports. Other historical datasets will be listed here as their collectors become available.</p>
-            <label className="portal-setup-check">
-              <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => { setHistoricalCollectionEnabled(event.target.checked); if (!event.target.checked) setShareHalloweenHistory(false) }} disabled={busy || saved} />
-              <span><strong>Allow historical collection for supported portal features.</strong><small>Gym training and eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
-            </label>
-            <label className={"portal-setup-check portal-setup-subcheck" + (!historicalCollectionEnabled ? " is-disabled" : "")}>
-              <input type="checkbox" checked={shareHalloweenHistory} onChange={event => setShareHalloweenHistory(event.target.checked)} disabled={!historicalCollectionEnabled || busy || saved} />
-              <span><strong>Share my Halloween event history and derived metrics with Naughty Souls.</strong><small>Separate opt-in from collection. When disabled, only you can view your Halloween event logs and member details; your records are excluded from faction-wide event leaderboards and comparisons.</small></span>
-            </label>
+            <div className="portal-setup-section-heading"><span>03</span><div><h2>Historical data collection</h2><small>Automatic after setup · No additional collection opt-in</small></div></div>
+            <p>Once you acknowledge this policy and authorize your primary key, the portal automatically validates the permissions it needs and queues supported history imports. Gym training and Christmas Town require unrestricted User → Log access. Halloween requires User → Log and User → Attacks. Missing scopes are reported as pending and are never silently treated as successful imports. Gym-training and Christmas Town records remain private to your account.</p>
+            <div className="portal-setup-info-note"><strong>What happens after saving?</strong><small>The portal checks your key, starts eligible historical backfills, and continues processing them in the background. Collection is not a separate sharing permission: the visibility choice below controls who may view supported faction-facing private data.</small></div>
           </section>
 
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>04</span><div><h2>Data sharing</h2><small>Optional · Off by default</small></div></div>
-            <p>These choices are separate from historical collection. They can be changed independently at any time.</p>
-            <label className="portal-setup-check">
-              <input type="checkbox" checked={sharePrivateLive} onChange={event => { setSharePrivateLive(event.target.checked); if (!event.target.checked) setShareNetworth(false) }} disabled={busy || saved} />
-              <span><strong>Share my latest bars and cooldowns with Naughty Souls.</strong><small>Uses your own API key to create a latest-only snapshot. The snapshot is visible to authorized faction members and is refreshed only through supported member-triggered flows.</small></span>
-            </label>
-            <label className={"portal-setup-check portal-setup-subcheck" + (!sharePrivateLive ? " is-disabled" : "")}>
-              <input type="checkbox" checked={shareNetworth} onChange={event => setShareNetworth(event.target.checked)} disabled={!sharePrivateLive || busy || saved} />
-              <span><strong>Also share my detailed networth breakdown.</strong><small>Separate opt-in. Only available if Torn grants the member key access to detailed networth.</small></span>
+            <div className="portal-setup-section-heading"><span>04</span><div><h2>Private-data visibility</h2><small>One setting · Applies to Halloween history and faction live snapshots</small></div></div>
+            <p>Choose who can view your Halloween event history and latest bars/cooldowns. Your gym-training and Christmas Town history always remain private to you. You can change this setting later in Account Settings.</p>
+            <div className="portal-setup-key-choice">
+              <label className="portal-setup-check">
+                <input type="radio" name="private-data-visibility" value="self" checked={privateDataVisibility === "self"} onChange={() => setPrivateDataVisibility("self")} disabled={busy || saved} />
+                <span><strong>Self only · Default</strong><small>Only you can view your private event history and live snapshot.</small></span>
+              </label>
+              <label className="portal-setup-check">
+                <input type="radio" name="private-data-visibility" value="faction_access" checked={privateDataVisibility === "faction_access"} onChange={() => setPrivateDataVisibility("faction_access")} disabled={busy || saved} />
+                <span><strong>Faction Leaders / Staff / Council</strong><small>Visible to you and members whose own Torn /key/info response confirms <code>faction: true</code>.</small></span>
+              </label>
+              <label className="portal-setup-check">
+                <input type="radio" name="private-data-visibility" value="faction_members" checked={privateDataVisibility === "faction_members"} onChange={() => setPrivateDataVisibility("faction_members")} disabled={busy || saved} />
+                <span><strong>All Naughty Souls members</strong><small>Visible to you and all currently verified members of Naughty Souls.</small></span>
+              </label>
+            </div>
+            <label className={"portal-setup-check portal-setup-subcheck" + (privateDataVisibility === "self" ? " is-disabled" : "")}>
+              <input type="checkbox" checked={shareNetworth} onChange={event => setShareNetworth(event.target.checked)} disabled={privateDataVisibility === "self" || busy || saved} />
+              <span><strong>Also share my detailed networth breakdown.</strong><small>Separate, optional permission. Available only when faction visibility is enabled and Torn grants the key access to detailed networth.</small></span>
             </label>
           </section>
 
