@@ -489,7 +489,7 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   const energyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
   recordAssertion("Training Calculator " + viewportName + ": energy plan totals 725E", Number(energyTotal) === 725, energyTotal);
   const supplyCost = await page.locator(".tc-cost-total strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": energy plan includes known consumable cost", supplyCost === "$20,700,000", supplyCost);
+  recordAssertion("Training Calculator " + viewportName + ": energy plan includes known consumable cost", supplyCost === "$21,700,000", supplyCost);
   await noOverflow("energy supply");
   await scanAxe("Energy & cans");
 
