@@ -6,6 +6,41 @@ type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
 type GymPreset = { id: string; name: string; energyCost: number; dots: Record<StatKey, number | null>; note?: string; available?: boolean }
 type MarketPrice = { itemId: string; name: string; averagePrice: number | null; cacheTimestamp: number | null; fetchedAt: number }
 type EnergyBar = { current: number; maximum: number; increment: number; interval: number; tickTime: number; fullTime: number } | null
+type DonatorStatus = { state: "active" | "inactive" | "unknown"; label: string; detail: string }
+
+function evaluateDonatorStatus(energyBar: EnergyBar, uglyEnergyActive: boolean): DonatorStatus {
+  if (!energyBar) {
+    return { state: "unknown", label: "Awaiting live bar", detail: "Torn has not returned your Energy bar yet." }
+  }
+
+  const maximum = Math.max(0, safeNumber(energyBar.maximum))
+  const interval = Math.max(0, safeNumber(energyBar.interval))
+  const increment = Math.max(0, safeNumber(energyBar.increment))
+  const intervalState = interval === 600 ? "active" : interval === 900 ? "inactive" : null
+  const capacityState = !uglyEnergyActive
+    ? maximum === 150 ? "active" : maximum === 100 ? "inactive" : null
+    : null
+
+  if (intervalState && capacityState && intervalState !== capacityState) {
+    return {
+      state: "unknown",
+      label: "Unconfirmed",
+      detail: "The live Energy bar's maximum and regeneration interval disagree; no Donator assumption was applied.",
+    }
+  }
+
+  const state = intervalState || capacityState
+  const detail = interval > 0
+    ? increment + "E every " + Math.round(interval / 60) + " min · " + maximum + "E bar"
+    : maximum + "E bar · regeneration interval unavailable"
+  if (state === "active") return { state, label: "Active", detail }
+  if (state === "inactive") return { state, label: "Inactive", detail }
+  return {
+    state: "unknown",
+    label: "Unconfirmed",
+    detail: detail + (uglyEnergyActive ? " · Ugly Energy changes the normal bar maximum." : ""),
+  }
+}
 type LiveData = {
   fetchedAt: string
   battleStats: Record<StatKey, number | null> & { total: number | null }
@@ -324,7 +359,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
   useEffect(() => {
     const controller = new AbortController()
-    const base = apiBase.replace(/\/+$/, "")
+    const historyController = new AbortController()
+    const base = apiBase.replace(/\\/+$/, "")
+    let syncTimedOut = false
+    const syncTimeout = window.setTimeout(() => {
+      syncTimedOut = true
+      controller.abort()
+    }, 28_000)
+
     setLoading(true)
     setApiError("")
     fetch(base + "/api/me/training-calculator", { headers: { Authorization: "Bearer " + sessionToken }, signal: controller.signal })
@@ -342,18 +384,32 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           setApiError("Torn could not return your battle stats. Check that your saved API key includes User → Battlestats.")
         }
       })
-      .catch(error => { if (!controller.signal.aborted) setApiError(error instanceof Error ? error.message : "Live Torn data could not be loaded.") })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    fetch(base + "/api/me/gym-training/history", { headers: { Authorization: "Bearer " + sessionToken }, signal: controller.signal })
+      .catch(error => {
+        if (syncTimedOut) {
+          setApiError("Live Torn sync timed out while loading your profile and Item Market data. Manual planning is still available; use Refresh live data to retry.")
+        } else if (!controller.signal.aborted) {
+          setApiError(error instanceof Error ? error.message : "Live Torn data could not be loaded.")
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(syncTimeout)
+        if (!controller.signal.aborted || syncTimedOut) setLoading(false)
+      })
+
+    fetch(base + "/api/me/gym-training/history", { headers: { Authorization: "Bearer " + sessionToken }, signal: historyController.signal })
       .then(async response => {
         const payload = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Training history is unavailable.")
         return payload as HistoryData
       })
-      .then(payload => { if (!controller.signal.aborted) setHistory(payload) })
-      .catch(error => { if (!controller.signal.aborted) setHistory({ error: error instanceof Error ? error.message : "Training history is unavailable." }) })
-      .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false) })
-    return () => controller.abort()
+      .then(payload => { if (!historyController.signal.aborted) setHistory(payload) })
+      .catch(error => { if (!historyController.signal.aborted) setHistory({ error: error instanceof Error ? error.message : "Training history is unavailable." }) })
+      .finally(() => { if (!historyController.signal.aborted) setHistoryLoading(false) })
+    return () => {
+      window.clearTimeout(syncTimeout)
+      controller.abort()
+      historyController.abort()
+    }
   }, [apiBase, sessionToken, refreshKey])
 
   const activeBook = bookChoice === "auto" ? activeBookChoice(liveData) : bookChoice
@@ -361,6 +417,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const hasLiveUglyEnergy = activeBookChoice(liveData) === "ugly-energy"
   const energyBar = getBar(liveData, "energy")
   const happyBar = getBar(liveData, "happy")
+  const donatorStatus = evaluateDonatorStatus(energyBar, hasLiveUglyEnergy)
   const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
   const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 0
   const currentEnergy = manualEnergy.trim() === "" ? currentEnergyFromApi : clamp(safeNumber(manualEnergy), 0, ENERGY_HARD_CAP)
@@ -688,7 +745,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <small>{liveData ? "Live Torn stat" : "Awaiting API"}</small>
           </button>
         })}
-        <div className="tc-profile-stat tc-profile-gym"><span>Active gym</span><strong>{liveData?.gym?.name || "Not synced"}</strong><small>{selectedGym.name} selected for this plan</small></div>
+        <div className="tc-profile-stat tc-profile-gym" data-testid="training-donator-status">
+          <span>Donator status · live Energy bar</span>
+          <strong>{donatorStatus.label}</strong>
+          <small>{donatorStatus.detail}{liveData?.gym?.name ? " · Active gym: " + liveData.gym.name : ""}</small>
+        </div>
       </section>
       {apiError && <div className="tc-inline-warning" role="status">{apiError} Manual values remain editable while the connection is repaired.</div>}
 
