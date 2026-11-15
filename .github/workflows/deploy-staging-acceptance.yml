@@ -24,6 +24,7 @@ on:
       - "scripts/seed-staging-private-history.mjs"
       - "scripts/cleanup-staging-private-history.mjs"
       - "scripts/test-staging-responsive.mjs"
+      - "scripts/test-staging-features.mjs"
       - "migrations/auth/0033_gym_training_history.sql"
       - "src/lib/gym-training/logs.ts"
       - "scripts/test-gym-training-history.mjs"
@@ -75,6 +76,7 @@ jobs:
           node --check scripts/seed-staging-private-history.mjs
           node --check scripts/cleanup-staging-private-history.mjs
           node --check scripts/test-staging-responsive.mjs
+          node --check scripts/test-staging-features.mjs
           node --check scripts/test-staging-admin-acceptance.mjs
 
       - name: Verify every deployment target is isolated staging
@@ -214,6 +216,12 @@ jobs:
           STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
           STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
         run: node scripts/test-staging-responsive.mjs
+
+      - name: Run synthetic Halloween, Christmas Town, calendar, Gym Training, and Discord feature walkthrough
+        env:
+          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
+          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
+        run: node scripts/test-staging-features.mjs
 
       - name: Run authenticated admin/non-admin, accessibility, and request-budget checks on staging
         env:
