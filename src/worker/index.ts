@@ -2343,10 +2343,13 @@ async function throttleHalloweenRequest(env: WorkerEnv, playerId: string): Promi
 
 async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: string, requireUpdatedConsent = false): Promise<string | null> {
   const db = requireDb(env)
-  const existingKey = await db.prepare(
-    "SELECT player_id FROM halloween_historical_keys WHERE player_id = ?"
-  ).bind(playerId).first<{ player_id: string }>()
-  if (!existingKey) return null
+  const [existingKey, portalConsent] = await Promise.all([
+    db.prepare("SELECT player_id FROM halloween_historical_keys WHERE player_id = ?")
+      .bind(playerId).first<{ player_id: string }>(),
+    db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+      .bind(playerId).first<{ enabled: number }>(),
+  ])
+  if (!existingKey || Number(portalConsent?.enabled) !== 1) return null
 
   // The service-owned Full Access secret is used only for its verified owner,
   // and only after the owner has accepted the current Halloween data-sharing terms.
@@ -2931,6 +2934,14 @@ async function runChristmasTownLogCollectionPage(env: WorkerEnv, jobId: string):
     window_end_at: string
   }>()
   if (!job || ["complete", "failed", "cancelled"].includes(job.status)) return
+
+  const portalConsent = await db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+    .bind(job.player_id).first<{ enabled: number }>()
+  if (Number(portalConsent?.enabled) !== 1) {
+    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE job_id = ?")
+      .bind("Historical collection is disabled in the member's central portal data preferences.", new Date().toISOString(), jobId).run()
+    return
+  }
 
   const memberStatus = await db.prepare("SELECT disabled_at FROM dashboard_member_status WHERE player_id = ?")
     .bind(job.player_id).first<{ disabled_at: string | null }>()
@@ -6376,9 +6387,16 @@ export default {
         const shareWithFaction = isRecord(body) && body.shareWithFaction === true
         const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
         let includeNetworth = isRecord(body) && body.includeNetworth === true
+        const centralPreferences = await requireDb(env).prepare(
+          "SELECT share_private_live AS sharePrivateLive, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?",
+        ).bind(session.player_id).first<{ sharePrivateLive: number; shareNetworth: number }>()
+        if (Number(centralPreferences?.sharePrivateLive) !== 1) {
+          return jsonResponse({ error: "Enable private live faction sharing in your central portal data preferences first." }, 409, origin)
+        }
+        includeNetworth = includeNetworth && Number(centralPreferences?.shareNetworth) === 1
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling private live data." }, 409, origin)
         if (!consent || !shareWithFaction || consentVersion !== "faction-private-live-v1") {
-          return jsonResponse({ error: "Review and accept the private live data-sharing terms before connecting your key." }, 400, origin)
+          return jsonResponse({ error: "The central private live sharing preference must be enabled before connecting your key." }, 400, origin)
         }
         if (!await claimPrivateLiveRequest(env, session.player_id)) {
           return jsonResponse({ error: "A private live Torn request was made recently. Please wait 30 seconds before connecting or refreshing again." }, 429, origin, { "retry-after": "30" })
@@ -6486,9 +6504,12 @@ export default {
     if (url.pathname === "/api/me/private-live/key" && request.method === "DELETE") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
-      await requireDb(env).prepare("DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?").bind(session.player_id).run()
-      await requireDb(env).prepare("DELETE FROM member_private_live_keys WHERE player_id = ?").bind(session.player_id).run()
-      return jsonResponse({ disconnected: true, factionSnapshotRemoved: true }, 200, origin)
+      const db = requireDb(env)
+      await db.prepare("DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?").bind(session.player_id).run()
+      await db.prepare("DELETE FROM member_private_live_keys WHERE player_id = ?").bind(session.player_id).run()
+      await db.prepare("UPDATE portal_user_consents SET share_private_live = 0, share_networth = 0, updated_at = ? WHERE player_id = ?")
+        .bind(new Date().toISOString(), session.player_id).run()
+      return jsonResponse({ disconnected: true, factionSnapshotRemoved: true, centralSharingPreferenceDisabled: true }, 200, origin)
     }
 
 
@@ -6527,7 +6548,10 @@ export default {
         const body: unknown = await request.json().catch(() => null)
         const consent = isRecord(body) && body.consent === true
         const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
+        const centralConsent = await requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ enabled: number }>()
         const apiKey = await savedKey(env, session.player_id) ?? ""
+        if (Number(centralConsent?.enabled) !== 1) return jsonResponse({ error: "Enable historical collection in your central portal data preferences first." }, 409, origin)
         if (!apiKey) return jsonResponse({ error: "Sign in with your Naughty Family Portal Torn API key before enabling Christmas Town history." }, 409, origin)
         if (!consent || consentVersion !== "christmas-town-history-v1") {
           return jsonResponse({ error: "Please review and accept the Christmas Town personal event-history terms before enabling collection." }, 400, origin)
@@ -6654,11 +6678,14 @@ export default {
           fromMs > toMs || fromDate < "2021-12-01" || toDate > today) {
         return jsonResponse({ error: "Choose a valid date range from 1 December 2021 through today." }, 400, origin)
       }
-      const key = await requireDb(env).prepare(
-        "SELECT consent_version FROM christmas_town_historical_keys WHERE player_id = ?",
-      ).bind(session.player_id).first<{ consent_version: string }>()
-      if (key?.consent_version !== "christmas-town-history-v1") {
-        return jsonResponse({ error: "Enable Christmas Town history and accept its data-sharing terms before collecting." }, 409, origin)
+      const [key, centralConsent] = await Promise.all([
+        requireDb(env).prepare("SELECT consent_version FROM christmas_town_historical_keys WHERE player_id = ?")
+          .bind(session.player_id).first<{ consent_version: string }>(),
+        requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ enabled: number }>(),
+      ])
+      if (Number(centralConsent?.enabled) !== 1 || key?.consent_version !== "christmas-town-history-v1") {
+        return jsonResponse({ error: "Enable historical collection in your central portal data preferences and ensure your member key is connected." }, 409, origin)
       }
 
       const toExclusive = toMs + 86400 * 1000
@@ -6820,6 +6847,9 @@ export default {
         const apiKey = await savedKey(env, session.player_id) ?? ""
         const consent = isRecord(body) && body.consent === true
         const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
+        const centralConsent = await requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ enabled: number }>()
+        if (Number(centralConsent?.enabled) !== 1) return jsonResponse({ error: "Enable historical collection in your central portal data preferences first." }, 409, origin)
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling historical collection." }, 409, origin)
         if (!consent || consentVersion !== "halloween-history-v2") return jsonResponse({ error: "Please review and accept the updated Halloween log and detailed attack data-sharing terms before enabling collection." }, 400, origin)
         const controller = new AbortController()
@@ -7175,9 +7205,15 @@ export default {
       const yearValue = isRecord(body) ? Number(body.year) : new Date().getUTCFullYear()
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
       const db = requireDb(env)
-      const key = await db.prepare("SELECT player_id, consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?")
-        .bind(session.player_id).first<{ player_id: string; consentVersion: string }>()
-      const portalKey = await getHalloweenHistoricalCollectionKey(env, session.player_id)
+      const [key, centralConsent] = await Promise.all([
+        db.prepare("SELECT player_id, consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?")
+          .bind(session.player_id).first<{ player_id: string; consentVersion: string }>(),
+        db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ enabled: number }>(),
+      ])
+      const portalKey = Number(centralConsent?.enabled) === 1
+        ? await getHalloweenHistoricalCollectionKey(env, session.player_id)
+        : null
       if (!key || !portalKey) return jsonResponse({ error: "Enable Halloween historical collection with your saved portal API key before collecting logs." }, 409, origin)
       if (key.consentVersion !== "halloween-history-v2") {
         return jsonResponse({ error: "Review the updated Halloween collection terms and enable User → Attacks access before collecting Revitalize data." }, 409, origin)
