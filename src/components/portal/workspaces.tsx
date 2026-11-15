@@ -2774,7 +2774,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         policyAccepted: true,
         apiKeyUsageAccepted: true,
         apiKeyAccessType,
-        consentVersion: "portal-data-policy-v3",
+        consentVersion: "portal-data-policy-v4",
         historicalCollectionEnabled: true,
         privateDataVisibility,
         shareHalloweenHistory: privateDataVisibility !== "self",
