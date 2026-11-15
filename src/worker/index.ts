@@ -435,6 +435,7 @@ async function savedKey(env: WorkerEnv, playerId: string): Promise<string | null
 }
 type PortalConsentRecord = {
   consentVersion?: string
+  policyVersion?: string
   apiKeyUsageAccepted?: number
   apiKeyConsentFingerprint?: string | null
 }
@@ -444,7 +445,7 @@ async function currentPortalApiKeyFingerprint(env: WorkerEnv, playerId: string):
   // Keep this metadata lookup distinct from savedKey(), which decrypts the
   // credential only for routes that actually need to make a member Torn call.
   const row = await requireDb(env).prepare(
-    "SELECT ciphertext, iv FROM api_keys WHERE player_id = ? AND last_four IS NOT NULL",
+    "SELECT ciphertext, iv FROM api_keys WHERE player_id = ? AND ciphertext IS NOT NULL AND iv IS NOT NULL",
   ).bind(playerId).first<{ ciphertext: string; iv: string }>()
   if (!row?.ciphertext || !row?.iv) return null
   return sha256(playerId + ":" + row.ciphertext + ":" + row.iv)
@@ -452,6 +453,7 @@ async function currentPortalApiKeyFingerprint(env: WorkerEnv, playerId: string):
 async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent: PortalConsentRecord | null): Promise<boolean> {
   if (
     consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
+    consent?.policyVersion !== PORTAL_POLICY_VERSION ||
     Number(consent.apiKeyUsageAccepted) !== 1 ||
     !consent.apiKeyConsentFingerprint
   ) return false
@@ -6443,7 +6445,7 @@ export default {
       const consentSession = await authenticate(request, env)
       if (consentSession) {
         const portalConsent = await requireDb(env).prepare(
-          "SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?",
+          "SELECT consent_version AS consentVersion, policy_version AS policyVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?",
         ).bind(consentSession.player_id).first<PortalConsentRecord>()
         if (!(await portalConsentIsCurrent(env, consentSession.player_id, portalConsent))) {
           return jsonResponse({
@@ -6505,7 +6507,7 @@ export default {
         await db.prepare("INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), player.id, expiresAt, now).run()
         const [meta, portalConsent] = await Promise.all([
           db.prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(player.id).first<{ last_four: string; updated_at: string }>(),
-          db.prepare("SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
+          db.prepare("SELECT consent_version AS consentVersion, policy_version AS policyVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
             .bind(player.id).first<PortalConsentRecord>(),
         ])
         return jsonResponse({
@@ -6523,7 +6525,7 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const [key, portalConsent] = await Promise.all([
         requireDb(env).prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(session.player_id).first<{ last_four: string; updated_at: string }>(),
-        requireDb(env).prepare("SELECT consent_version AS consentVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
+        requireDb(env).prepare("SELECT consent_version AS consentVersion, policy_version AS policyVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?")
           .bind(session.player_id).first<PortalConsentRecord>(),
       ])
       return jsonResponse({
