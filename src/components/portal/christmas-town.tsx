@@ -178,9 +178,7 @@ export function ChristmasTownWorkspace({
   const [archiveLoadedRange, setArchiveLoadedRange] = useState("")
   const automaticCollectionKeyRef = useRef("")
   const [busy, setBusy] = useState(false)
-  const [keyBusy, setKeyBusy] = useState(false)
   const [collectBusy, setCollectBusy] = useState(false)
-  const [consent, setConsent] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
@@ -239,29 +237,6 @@ export function ChristmasTownWorkspace({
     void loadArchive(appliedFromDate, appliedToDate)
   }, [apiBase, sessionToken, appliedFromDate, appliedToDate])
 
-  const enableHistory = async () => {
-    if (!consent || keyBusy) return
-    setKeyBusy(true)
-    setError("")
-    setMessage("")
-    try {
-      const response = await fetch(apiBase + "/api/me/christmas-town/key", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + sessionToken, "Content-Type": "application/json" },
-        body: JSON.stringify({ consent: true, consentVersion: "christmas-town-history-v1" }),
-      })
-      const payload = await response.json() as { error?: string; saved?: boolean; lastFour?: string; accessLevel?: string }
-      if (!response.ok) throw new Error(payload.error || "Could not enable Christmas Town history.")
-      setConsent(false)
-      setMessage("Christmas Town history is enabled with your saved portal API key ending in " + (payload.lastFour ?? "••••") + ".")
-      await Promise.all([loadKeyStatus(), loadArchive()])
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not enable Christmas Town history.")
-    } finally {
-      setKeyBusy(false)
-    }
-  }
-
   const collectHistory = async (from = appliedFromDate, to = appliedToDate, automatic = false) => {
     if (collectBusy) return
     setCollectBusy(true)
@@ -300,7 +275,7 @@ export function ChristmasTownWorkspace({
   }
 
   useEffect(() => {
-    if (selectedYear === "all" || !keyStatus?.connected || busy || collectBusy || keyBusy ||
+    if (selectedYear === "all" || !keyStatus?.connected || busy || collectBusy ||
         archiveLoadedRange !== appliedFromDate + "|" + appliedToDate || !archive) return
     const year = Number(selectedYear)
     if (!Number.isInteger(year)) return
@@ -320,7 +295,7 @@ export function ChristmasTownWorkspace({
     // incomplete or failed season. All-time remains opt-in to avoid bulk collection.
     void collectHistory(appliedFromDate, appliedToDate, true)
   }, [selectedYear, keyStatus?.connected, keyStatus?.key?.consentedAt,
-    archive, busy, collectBusy, keyBusy, archiveLoadedRange, appliedFromDate, appliedToDate, calendarEvent])
+    archive, busy, collectBusy, archiveLoadedRange, appliedFromDate, appliedToDate, calendarEvent])
 
   const metrics = archive?.metrics ?? null
   const itemNames = useMemo(() => new Map([
@@ -377,27 +352,13 @@ export function ChristmasTownWorkspace({
       {error && <p className="settings-feedback error" role="alert">{error}</p>}
       {message && <p className="settings-feedback success" role="status">{message}</p>}
 
-      {keyStatus && !keyStatus.previouslyConsented && (
-        <section className="christmas-town-permission christmas-town-consent">
-          <div>
-            <small>INITIAL CHRISTMAS TOWN HISTORY CONSENT</small>
-            <h2>Connect your personal event history</h2>
-            <p>With your one-time initial permission, the portal will use your saved Torn API key to read the Christmas Town part of your User → Log history for the selected seasons. The key remains encrypted, logs are stored in your personal archive, and this data is not shared in faction reports. No second API key is needed. After initial consent, manage this connection from Account Settings.</p>
-            <label className="christmas-town-consent-check">
-              <input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />
-              <span>I consent to collecting and storing my personal Christmas Town event logs for this dashboard.</span>
-            </label>
-          </div>
-          <button type="button" onClick={() => void enableHistory()} disabled={!consent || keyBusy}>{keyBusy ? "Enabling…" : "Enable Christmas Town history"}</button>
-        </section>
-      )}
-      {keyStatus?.previouslyConsented && !keyStatus.connected && (
+      {keyStatus && !keyStatus.connected && (
         <section className="christmas-town-permission">
           <div>
             <small>PERSONAL HISTORY COLLECTION</small>
-            <span>Christmas Town collection is currently disabled. Manage or re-enable it in Account Settings.</span>
+            <span>Personal history collection is controlled by your central portal data preferences. When enabled, the portal validates your member key and automatically queues eligible seasons.</span>
           </div>
-          <button type="button" onClick={() => onNavigate("/settings")}>Open Account Settings</button>
+          <button type="button" onClick={() => onNavigate("/setup")}>Review data preferences</button>
         </section>
       )}
 
