@@ -622,7 +622,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint="Maximum 168 hours. Natural energy is calculated from the starting energy you set and your live bar tick." suffix="hours" testId="training-energy-wait-hours" />
               <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
                 onChange={setManualEnergy} max={ENERGY_HARD_CAP} hint="Live Torn bar value. Maximum energy held at once is 1,000." testId="training-current-energy" />
-              <div className="tc-readout-field"><span>Natural energy by training time</span><strong>+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
+              <div className="tc-readout-field"><span>Natural energy by training time</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
               <NumberField label="Xanax per full train cycle" value={xanaxCount} onChange={setXanaxCount} min={0} max={maximumXanax}
                 hint={"Maximum " + maximumXanax + " doses in a 1,000E Xanax stack. Each gives +250E and +75 happy; overdose risk is not modeled."} testId="training-xanax-count" />
               <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={maximumFhcCount}
@@ -636,7 +636,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint={"Each gives +500E and adds 6 hours of booster cooldown. Maximum " + maximumYellowEggCount + " at the current cooldown budget."} testId="training-green-egg-count" />
               <NumberField label="Other energy sources" value={otherEnergy} onChange={setOtherEnergy} min={0} max={100000}
                 hint="Manual addition for energy not listed above. Maximum 100,000E per plan." />
-              <label className="tc-check-field"><input type="checkbox" checked={pointRefillIncluded} disabled={!pointRefillAvailable}
+              <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded} disabled={!pointRefillAvailable}
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
                 <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
               </label>
@@ -678,7 +678,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-condition-list">
               <div><span>Energy held hard cap</span><strong>1,000E</strong></div>
               <div><span>Current bar maximum</span><strong>{fmt(refillBarMaximum)}E</strong></div>
-              <div><span>Natural energy in selected wait</span><strong>+{fmt(naturalEnergy)}E</strong></div>
+              <div><span>Natural energy in selected wait</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong></div>
               <div><span>Cooldown budget remaining</span><strong>{fmt(boosterBudgetHours, 1)}h</strong></div>
               <div><span>Drug cooldown reported</span><strong>{fmt(safeNumber(liveData?.cooldowns?.drug) / 3600, 1)}h</strong></div>
             </div>
