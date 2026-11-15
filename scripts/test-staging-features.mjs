@@ -38,7 +38,8 @@ ok(christmasCalendar, "Christmas Town calendar");
 assert.equal(christmasCalendar.payload?.event?.title, "Christmas Town");
 assert.equal(christmasCalendar.payload?.event?.fixedStartTime, true);
 assert.equal(christmasCalendar.payload?.event?.startAt, "2026-12-01T00:00:00.000Z");
-assert.equal(christmasCalendar.payload?.event?.endAt, "2027-01-01T00:00:00.000Z");
+assert.equal(christmasCalendar.payload?.event?.nominalEndAt, "2027-01-01T00:00:00.000Z");
+assert.equal(christmasCalendar.payload?.event?.endAt, "2027-01-01T00:00:01.000Z", "The normalized calendar window uses an exclusive end boundary.");
 assert.equal(christmasCalendar.payload?.event?.personalStartTimeDetected, false);
 
 const halloweenWindow = await api("/api/me/halloween/event-window?year=2026");
