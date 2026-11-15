@@ -139,7 +139,7 @@ assert.ok(worker.includes("allTimeDetail"), "member detail must accept all-time 
 assert.ok(worker.includes("eventYear: Number(row.eventYear)"), "all-time member details must retain the source event year on each log")
 assert.ok(workspace.includes('useState("all")'), "Historical must default to all time")
 assert.ok(workspace.includes('value="all">All time'), "Historical must offer an All time option")
-assert.ok(workspace.includes('(archive?.eventYears ?? []).map(year =>'), "Historical must offer each recorded event year")
+assert.ok(workspace.includes("availableEventYears.map(year =>"), "The top-level year selector must offer every recorded event year")
 assert.ok(workspace.includes('void loadArchive(String(eventYear))'), "Live / Current Year must load the current event-year metrics")
 assert.ok(workspace.includes('tab === "historical" ? historicalYear : String(eventYear)'), "member detail must follow the active year scope")
 assert.ok(workspace.includes("LIVE HALLOWEEN STATS"), "Live and Historical must share personal current-year event metrics")
