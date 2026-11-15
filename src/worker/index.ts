@@ -463,7 +463,15 @@ async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent:
       currentFingerprintPresent: currentFingerprint !== null,
       fingerprintMatches: currentFingerprint !== null && consent?.apiKeyConsentFingerprint === currentFingerprint,
     }
-    console.info(JSON.stringify({ event: "test_portal_consent_diagnostic", playerId, checks }))
+    console.info(JSON.stringify({
+      event: "test_portal_consent_diagnostic",
+      playerId,
+      consentVersion: consent?.consentVersion ?? null,
+      expectedConsentVersion: PORTAL_CONSENT_VERSION,
+      policyVersion: consent?.policyVersion ?? null,
+      expectedPolicyVersion: PORTAL_POLICY_VERSION,
+      checks,
+    }))
     return Object.values(checks).every(Boolean)
   }
   if (
