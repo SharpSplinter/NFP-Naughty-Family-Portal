@@ -65,7 +65,7 @@ const transferPages: { key: TransferPageKey; title: string; description: string 
   { key: "settings", title: "Settings", description: "Dashboard connection and saved settings." },
 ]
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "")
-  || "https://naughty-company-api.kboone801.workers.dev"
+  || "https://naughtyfamily-api.kboone801.workers.dev"
 
 type IncomeSnapshot = { fetchedAt: string; dailyIncome: number | null }
 type ApiResult = { model: CompanyDashboardModel; profile: unknown; employees: unknown; stock?: unknown; incomeHistory?: IncomeSnapshot[] }
