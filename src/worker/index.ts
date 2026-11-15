@@ -7432,7 +7432,16 @@ export default {
             return String(company.id) === String(currentJob.type_id) || String(company.name).toLowerCase() === String(currentJob.name).toLowerCase()
           })
         : null
-      const jobPoints = activeCompanyPoints && typeof activeCompanyPoints.points === "number" ? activeCompanyPoints.points : 0
+      const starterJobPoints = jobPointsRoot && isRecord(jobPointsRoot.jobs) ? jobPointsRoot.jobs : {}
+      const starterJobKey = typeof currentJob?.name === "string"
+        ? currentJob.name.toLowerCase().replace(/[^a-z]/g, "")
+        : ""
+      const starterJobPointValue = starterJobKey && typeof starterJobPoints[starterJobKey] === "number"
+        ? starterJobPoints[starterJobKey] as number
+        : 0
+      const jobPoints = currentJob?.type === "company"
+        ? activeCompanyPoints && typeof activeCompanyPoints.points === "number" ? activeCompanyPoints.points : 0
+        : currentJob?.type === "job" ? starterJobPointValue : 0
       const activeJob = currentJob ? {
         type: currentJob.type,
         name: currentJob.name,
@@ -7476,7 +7485,7 @@ export default {
         factionBonuses,
         job: activeJob,
         jobPoints: jobPointsRoot ? {
-          jobs: isRecord(jobPointsRoot.jobs) ? jobPointsRoot.jobs : {},
+          jobs: starterJobPoints,
           companies: companyJobPoints.map(row => ({
             company: isRecord(row.company) ? row.company : {},
             points: typeof row.points === "number" ? row.points : 0,
