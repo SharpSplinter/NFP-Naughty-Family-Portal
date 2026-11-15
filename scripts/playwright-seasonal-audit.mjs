@@ -253,6 +253,96 @@ function halloweenLive(year, empty = false) {
   return { event, myWindow: halloweenWindow(year), leaderboard: empty ? [] : [member], mySnapshot: empty ? null : member };
 }
 
+
+function trainingMarketPrice(itemId, name, averagePrice) {
+  return { itemId, name, averagePrice, cacheTimestamp: timestamp, fetchedAt: Date.now() };
+}
+
+function trainingCalculatorData() {
+  const price = trainingMarketPrice;
+  return {
+    fetchedAt: generatedAt,
+    battleStats: { strength: 1000000, defense: 250000, speed: 300000, dexterity: 400000, total: 1950000 },
+    perks: {
+      education: ["Sports Science Bachelors"],
+      book: [],
+      faction: ["Steadfast: Strength training VII", "Voracity: Booster cooldown XII"],
+      job: ["Fitness Center: Training Regime", "Fitness Center: Goal Oriented"],
+      enhancer: ["Sports Sneakers"],
+    },
+    factionBonuses: {
+      energyDrinkBonusPercent: 0,
+      boosterCooldownBonusHours: 12,
+      companyCooldownReductionPercent: 0,
+      gymHappyLossReductionPercent: 50,
+    },
+    battleStatModifiers: {
+      strength: { percent: 10, modifiers: [{ effect: "Merit", value: 10, type: "merit" }] },
+      defense: { percent: 0, modifiers: [] },
+      speed: { percent: 0, modifiers: [] },
+      dexterity: { percent: 0, modifiers: [] },
+    },
+    job: {
+      type: "company", name: "Fitness Center", position: "Personal Trainer",
+      companyId: 101, companyTypeId: 5, rating: 5, daysInCompany: 60, points: 3,
+    },
+    jobPoints: {
+      jobs: { army: 12, casino: 0, education: 0, grocer: 0, law: 0, medical: 0 },
+      companies: [{ company: { id: 5, name: "Fitness Center" }, points: 3 }],
+    },
+    gym: {
+      id: "gun-shop", name: "Gun Shop",
+      unlockedGyms: [
+        { id: "premier", name: "Premier Fitness", available: true },
+        { id: "gun-shop", name: "Gun Shop", available: true },
+      ],
+    },
+    gyms: [
+      { id: "premier", name: "Premier Fitness", energyCost: 5, dots: { strength: 2, defense: 2, speed: 2, dexterity: 2 }, note: "", available: true },
+      { id: "gun-shop", name: "Gun Shop", energyCost: 10, dots: { strength: 6.6, defense: 6.2, speed: 6.4, dexterity: 6.2 }, note: "", available: true },
+    ],
+    gymModifiers: {
+      strength: { multiplier: 1.113121, baseMultiplier: 1.113121, bookBonusPercent: 0, bonuses: ["Education +1%", "Steadfast Strength VII +7%", "Training Regime +3%"] },
+      defense: { multiplier: 1.0403, baseMultiplier: 1.0403, bookBonusPercent: 0, bonuses: ["Education +1%", "Training Regime +3%"] },
+      speed: { multiplier: 1.092315, baseMultiplier: 1.092315, bookBonusPercent: 0, bonuses: ["Education +1%", "Training Regime +3%", "Sports Sneakers +5%"] },
+      dexterity: { multiplier: 1.0403, baseMultiplier: 1.0403, bookBonusPercent: 0, bonuses: ["Education +1%", "Training Regime +3%"] },
+    },
+    bars: {
+      energy: { current: 100, maximum: 150, increment: 5, interval: 600, tickTime: 600, fullTime: 6000 },
+      happy: { current: 5025, maximum: 5025, increment: 5, interval: 900, tickTime: 900, fullTime: 0 },
+    },
+    refills: { energy: true, special_count: 0 },
+    cooldowns: { booster: 0, drug: 0 },
+    pointsAverageCost: 69000,
+    items: {
+      xanax: price("1", "Xanax", 850000),
+      energyDrinks: {
+        goose: price("101", "Can of Goose Juice", 500000),
+        damp: price("102", "Can of Damp Valley", 800000),
+        croco: price("103", "Can of Crocozade", 1200000),
+        munster: price("104", "Can of Munster", 1800000),
+        santa: price("105", "Can of Santa Shooters", 1900000),
+        "red-cow": price("106", "Can of Red Cow", 2500000),
+        rudolph: price("107", "Can of Rockstar Rudolph", 3000000),
+        taurine: price("108", "Can of Taurine Elite", 3500000),
+        "x-mass": price("109", "Can of X-MASS", 3500000),
+      },
+      fhc: price("367", "Feathery Hotel Coupon", 15000000),
+      eroticDvd: price("3670", "Erotic DVD", 1500000),
+      yellowEgg: null,
+      poisonMistletoe: price("8999", "Poison Mistletoe", 2000000),
+      statEnhancers: {
+        strength: price("2001", "Dumbbells", 400000000),
+        defense: price("2002", "Boxing Gloves", 410000000),
+        speed: price("2003", "Skateboard", 420000000),
+        dexterity: price("2004", "Parachute", 430000000),
+      },
+    },
+    marketUpdatedAt: timestamp,
+    errors: {},
+  };
+}
+
 async function installApiFixtures(page, state) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -282,6 +372,21 @@ async function installApiFixtures(page, state) {
       payload = { player: { id: "123456", name: "Playwright Auditor" }, isAdmin: false, setupRequired: false, key: { saved: true, lastFour: "1234" } };
     } else if (url.pathname === "/api/me/portal-consent") {
       payload = { required: false };
+    } else if (url.pathname === "/api/me/training-calculator") {
+      payload = trainingCalculatorData();
+    } else if (url.pathname === "/api/me/gym-training/history") {
+      payload = {
+        collectionEnabled: true,
+        connected: true,
+        totalLogs: 1,
+        logs: [{
+          logId: "fixture-gym-log-1",
+          timestamp,
+          title: "Gym Training",
+          category: "Gym",
+          record: { details: { title: "Gym Training" }, data: { strength: 1234, energy_used: 100 } },
+        }],
+      };
     } else if (url.pathname === "/api/me/companies") {
       payload = { companies: [] };
     } else if (url.pathname === "/api/faction/directors") {
@@ -463,53 +568,146 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   };
 
   await tab("session").click();
+  await page.getByTestId("training-stat-value").waitFor({ state: "visible" });
+  const liveStrength = await page.getByTestId("training-stat-value").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": battle stat autofills from /user/battlestats", liveStrength === "1000000", liveStrength);
+  const activeGymDefault = await page.getByTestId("training-gym-select").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": gym defaults to the live active gym", activeGymDefault === "gun-shop", activeGymDefault);
+  const historyRows = await page.locator(".tc-log-row").count();
+  recordAssertion("Training Calculator " + viewportName + ": saved gym training logs auto-load", historyRows === 1, String(historyRows));
+
   await page.getByTestId("training-stat-select").selectOption("defense");
   const changedStat = await page.locator(".tc-hero-stats strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": changing battle stat updates the model", changedStat === "Defense", changedStat);
-  await page.getByTestId("training-gym-select").selectOption("core");
-  const changedGym = await page.locator(".tc-hero-stats small").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": changing gym updates energy cost", changedGym.includes("10E / train"), changedGym);
-  await page.getByTestId("training-gym-select").selectOption("gun-shop");
+  recordAssertion("Training Calculator " + viewportName + ": changing battle stat updates the live model", changedStat.includes("Defense"), changedStat);
+  const liveDefense = await page.getByTestId("training-stat-value").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": selected stat swaps to its own live battle stat", liveDefense === "250000", liveDefense);
+  await page.getByTestId("training-stat-value").fill("500000");
+  const manualDefense = await page.getByTestId("training-stat-value").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": different manual battle stat is accepted", manualDefense === "500000", manualDefense);
   await page.getByTestId("training-stat-select").selectOption("strength");
   await page.getByTestId("training-stat-value").fill("1000000");
+
+  await page.getByTestId("training-gym-select").selectOption("premier");
+  const premierEnergy = await page.getByTestId("training-gym-energy").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": selecting a gym changes its individual train cost", premierEnergy.includes("5 energy"), premierEnergy);
+  await page.getByTestId("training-gym-select").selectOption("gun-shop");
+  const gunShopEnergy = await page.getByTestId("training-gym-energy").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": live gym catalogue provides current per-train energy", gunShopEnergy.includes("10 energy"), gunShopEnergy);
+
+  const autoModifier = await page.getByTestId("training-effective-modifier").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": live /user/perks modifier is applied", autoModifier.includes("1.1131"), autoModifier);
+  await page.getByTestId("training-gym-book-choice").selectOption("get-hard");
+  const plannedBookModifier = await page.getByTestId("training-effective-modifier").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": planned Get Hard book applies its 20% gym gain", plannedBookModifier.includes("1.3357"), plannedBookModifier);
+  await page.getByTestId("training-gym-book-choice").selectOption("auto");
+
   const sessionGain = await page.locator(".tc-metric").first().locator("strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": current gym session produces positive training gain", sessionGain.startsWith("+"), sessionGain);
+  const oneTrainGain = await page.locator(".tc-metric").nth(1).locator("strong").innerText();
+  const happyLossInput = page.locator(".tc-field").filter({ hasText: "Happy lost per energy" }).locator("input");
+  recordAssertion("Training Calculator " + viewportName + ": live Goal Oriented special halves estimated happiness loss", 
+    await happyLossInput.inputValue() === "25" && await happyLossInput.getAttribute("min") === "20" && await happyLossInput.getAttribute("max") === "30",
+    "value=" + await happyLossInput.inputValue() + "; min=" + await happyLossInput.getAttribute("min") + "; max=" + await happyLossInput.getAttribute("max"));
+  recordAssertion("Training Calculator " + viewportName + ": current gym session produces positive total gain", sessionGain.startsWith("+"), sessionGain);
+  recordAssertion("Training Calculator " + viewportName + ": one individual 1× train has its own gain estimate", oneTrainGain.startsWith("+"), oneTrainGain);
   await noOverflow("session");
 
   await tab("energy").click();
+  await page.getByTestId("training-book-choice").selectOption("self-control");
   await page.getByTestId("training-current-energy").fill("0");
+  await page.getByTestId("training-energy-wait-hours").fill("1");
+  const naturalEnergy = await page.getByTestId("training-natural-energy").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": natural regeneration follows live bar timing and the next tick phase", naturalEnergy === "+25E", naturalEnergy);
+  await page.getByTestId("training-energy-wait-hours").fill("0");
+  const currentEnergyMax = await page.getByTestId("training-current-energy").getAttribute("max");
+  const xanaxMax = await page.getByTestId("training-xanax-count").getAttribute("max");
+  recordAssertion("Training Calculator " + viewportName + ": current energy and Xanax show their live timing limits", currentEnergyMax === "1000" && xanaxMax === "1", currentEnergyMax + "E; " + xanaxMax + " Xanax at zero wait");
+  const blankOtherEnergy = await page.getByTestId("training-other-energy").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": empty numeric fields do not inject a zero", blankOtherEnergy === "", JSON.stringify(blankOtherEnergy));
+
+  await page.getByTestId("training-energy-wait-hours").fill("18");
+  const xanaxFor18Hours = await page.getByTestId("training-xanax-count").getAttribute("max");
+  recordAssertion("Training Calculator " + viewportName + ": Xanax maximum respects the 6h drug cooldown", xanaxFor18Hours === "4", xanaxFor18Hours);
   await page.getByTestId("training-xanax-count").fill("2");
   await page.getByTestId("training-can-type").selectOption("red-cow");
   await page.getByTestId("training-can-count").fill("2");
   await page.getByTestId("training-fhc-count").fill("1");
+  const xanaxMarketAuto = await page.getByTestId("training-xanax-price").inputValue();
+  const canMarketAuto = await page.getByTestId("training-can-price").inputValue();
+  await page.getByTestId("training-can-type").selectOption("munster");
+  const munsterMarketAuto = await page.getByTestId("training-can-price").inputValue();
+  await page.getByTestId("training-can-type").selectOption("red-cow");
+  const redCowMarketAuto = await page.getByTestId("training-can-price").inputValue();
+  const fhcMarketAuto = await page.getByTestId("training-fhc-price").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": Xanax, can and FHC fields auto-fill from Item Market", 
+    xanaxMarketAuto === "850000" && canMarketAuto === "2500000" && munsterMarketAuto === "1800000" && redCowMarketAuto === "2500000" && fhcMarketAuto === "15000000",
+    [xanaxMarketAuto, canMarketAuto, munsterMarketAuto, redCowMarketAuto, fhcMarketAuto].join(" / "));
+
   await page.getByTestId("training-faction-voracity").check();
-  await page.getByTestId("training-xanax-price").fill("850000");
-  await page.getByTestId("training-can-price").fill("2500000");
-  await page.getByTestId("training-fhc-price").fill("15000000");
   const energyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
-  recordAssertion("Training Calculator " + viewportName + ": energy plan totals 725E", Number(energyTotal) === 725, energyTotal);
+  recordAssertion("Training Calculator " + viewportName + ": energy plan totals 875E with capped natural regen and sequential refills", Number(energyTotal) === 875, energyTotal);
   const supplyCost = await page.locator(".tc-cost-total strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": energy plan includes known consumable cost", supplyCost === "$21,700,000", supplyCost);
+  recordAssertion("Training Calculator " + viewportName + ": energy plan uses live consumable market prices", supplyCost === "$21,700,000", supplyCost);
+
+  await page.getByTestId("training-point-refill").check();
+  const refillEnergyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
+  const refillCost = await page.locator(".tc-cost-total strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": point refill adds one live bar and prices 25 points from /torn/stats",
+    Number(refillEnergyTotal) === 1025 && refillCost === "$23,425,000",
+    refillEnergyTotal + "E / " + refillCost);
+  await page.getByTestId("training-point-refill").uncheck();
+
+  await page.getByTestId("training-event-drink-bonus").check();
+  const eventEnergyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
+  recordAssertion("Training Calculator " + viewportName + ": event drink bonus is modeled independently", Number(eventEnergyTotal) === 950, eventEnergyTotal);
+  await page.getByTestId("training-event-drink-bonus").uncheck();
   await noOverflow("energy supply");
   await scanAxe("Energy & cans");
 
   await tab("happy").click();
   await page.getByTestId("training-current-happy").fill("5025");
-  await page.getByTestId("training-ecstasy").check();
-  await page.getByTestId("training-dvd-count").fill("40");
+  await page.getByTestId("training-dvd-count").fill("1");
   await page.getByTestId("training-dvd-happy").selectOption("2500");
-  await page.getByTestId("training-other-happy").fill("0");
+  await page.getByTestId("training-yellow-egg-count").fill("1");
+  await page.getByTestId("training-mistletoe-target").fill("20000");
+  await page.getByTestId("training-mistletoe-count").fill("1");
+  await page.getByTestId("training-other-happy").fill("60000");
+  const dvdMarketAuto = await page.getByTestId("training-dvd-price").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": E-DVD auto-fills from live Item Market", dvdMarketAuto === "1500000", dvdMarketAuto);
+  const yellowEggMarketAuto = await page.getByTestId("training-yellow-egg-price").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": untradeable Yellow Egg does not invent a market price", yellowEggMarketAuto === "", JSON.stringify(yellowEggMarketAuto));
+  await page.getByTestId("training-ecstasy").check();
+  const xanaxWithEcstasyMax = await page.getByTestId("training-xanax-count").getAttribute("max");
+  recordAssertion("Training Calculator " + viewportName + ": Ecstasy reserves six hours after Xanax", xanaxWithEcstasyMax === "3", xanaxWithEcstasyMax);
   const happyTotal = await page.locator(".tc-happy-meter-top strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": happy jump correctly caps at 99,999", happyTotal === "99,999", happyTotal);
-  const jumpGain = await page.locator(".tc-metric").nth(1).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": happiness items apply before Ecstasy and cap at 99,999", happyTotal === "99,999", happyTotal);
+  const jumpGain = await page.locator(".tc-metric").nth(3).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": happy jump forecasts additional stat gain", jumpGain.startsWith("+"), jumpGain);
+  const sequence = await page.locator(".tc-inline-note").filter({ hasText: "Sequence:" }).innerText();
+  recordAssertion("Training Calculator " + viewportName + ": Ecstasy is the final item before training", sequence.includes("Ecstasy → train"), sequence);
   await noOverflow("happy jump");
   await scanAxe("99K Happy Jump");
 
   await tab("enhancers").click();
+  const strengthSeAuto = await page.getByTestId("training-se-price").inputValue();
+  await page.locator(".tc-field").filter({ hasText: "Stat to enhance" }).locator("select").selectOption("defense");
+  const defenseSeAuto = await page.getByTestId("training-se-price").inputValue();
+  await page.locator(".tc-field").filter({ hasText: "Stat to enhance" }).locator("select").selectOption("strength");
   await page.getByTestId("training-se-quantity").fill("2");
-  await page.getByTestId("training-se-price").fill("400000000");
   const seGain = await page.locator(".tc-metric").first().locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": SE market price auto-fills by selected stat", strengthSeAuto === "400000000" && defenseSeAuto === "410000000", strengthSeAuto + " / " + defenseSeAuto);
+  const jobPointPanel = page.locator(".tc-panel").filter({ hasText: "Company job-point stat gains" });
+  const jobPointInput = jobPointPanel.getByTestId("training-jobpoint-quantity");
+  recordAssertion("Training Calculator " + viewportName + ": current company and point balance auto-fill", 
+    (await jobPointPanel.innerText()).includes("Fitness Center") && (await jobPointPanel.innerText()).includes("3"),
+    (await jobPointPanel.innerText()).slice(0, 450));
+  recordAssertion("Training Calculator " + viewportName + ": company stat special is constrained by live job points",
+    await jobPointInput.getAttribute("max") === "3", await jobPointInput.getAttribute("max"));
+  await jobPointInput.fill("1");
+  const jobPointGain = await jobPointPanel.locator(".tc-readout-field").filter({ hasText: "Estimated Strength gain" }).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": Roid Rage job point estimates gym-equivalent stat growth",
+    jobPointGain.startsWith("+"), jobPointGain);
+  recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness remains in live auto mode",
+    await page.getByTestId("training-dvd-happy").inputValue() === "auto", await page.getByTestId("training-dvd-happy").inputValue());
   recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
   const seCost = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": SE market price is included", seCost === "$800,000,000", seCost);
