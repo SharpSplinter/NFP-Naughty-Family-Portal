@@ -17,6 +17,8 @@ on:
     paths:
       - ".github/workflows/deploy-staging-acceptance.yml"
       - "scripts/test-staging-admin-acceptance.mjs"
+      - "scripts/test-admin-role-registry.mjs"
+      - "src/components/floor/admin-panel.tsx"
       - "scripts/test-staging-sustained-load.mjs"
       - "scripts/refresh-staging-load-fixture.mjs"
       - "scripts/seed-staging-private-history.mjs"
