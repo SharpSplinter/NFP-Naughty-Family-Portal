@@ -615,7 +615,7 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   await page.getByTestId("training-book-choice").selectOption("self-control");
   await page.getByTestId("training-current-energy").fill("0");
   await page.getByTestId("training-energy-wait-hours").fill("1");
-  const naturalEnergy = await page.getByTestId("training-natural-energy").first().innerText();
+  const naturalEnergy = await page.getByTestId("training-natural-energy").innerText();
   recordAssertion("Training Calculator " + viewportName + ": natural regeneration follows live bar timing and the next tick phase", naturalEnergy === "+25E", naturalEnergy);
   await page.getByTestId("training-energy-wait-hours").fill("0");
   const currentEnergyMax = await page.getByTestId("training-current-energy").getAttribute("max");
@@ -706,6 +706,24 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   const jobPointGain = await jobPointPanel.locator(".tc-readout-field").filter({ hasText: "Estimated Strength gain" }).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": Roid Rage job point estimates gym-equivalent stat growth",
     jobPointGain.startsWith("+"), jobPointGain);
+  await tab("session").click();
+  await page.getByTestId("training-session-happy").fill("99999");
+  await tab("enhancers").click();
+  const jobPointGainAtHighHappy = await jobPointPanel.locator(".tc-readout-field").filter({ hasText: "Estimated Strength gain" }).locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": Roid Rage gain is independent of current happiness",
+    jobPointGainAtHighHappy === jobPointGain, jobPointGain + " / " + jobPointGainAtHighHappy);
+  await tab("session").click();
+  await page.getByTestId("training-session-happy").fill("5025");
+  await tab("enhancers").click();
+
+  const statBookInputs = ["strength", "defense", "speed", "dexterity"].map(stat => page.getByTestId("training-book-" + stat));
+  const allStatBooksEnabled = (await Promise.all(statBookInputs.map(input => input.isEnabled()))).every(Boolean);
+  recordAssertion("Training Calculator " + viewportName + ": all four permanent stat books use live battle stats", allStatBooksEnabled);
+  await page.getByTestId("training-se-stat-value").fill("9007199254740991");
+  await page.getByTestId("training-book-strength").check();
+  const permanentBookGain = await page.locator(".tc-stat-book-row").filter({ hasText: "Brawn Over Brains" }).locator(".tc-stat-book-gain").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": permanent stat book applies the 10M completion cap",
+    permanentBookGain.includes("10,000,000"), permanentBookGain);
   recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness remains in live auto mode",
     await page.getByTestId("training-dvd-happy").inputValue() === "auto", await page.getByTestId("training-dvd-happy").inputValue());
   recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
