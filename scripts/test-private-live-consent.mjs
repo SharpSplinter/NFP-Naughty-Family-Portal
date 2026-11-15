@@ -33,6 +33,7 @@ assert.ok(worker.includes("Number(centralPreferences?.sharePrivateLive) !== 1"),
 assert.ok(worker.includes("Number(centralPreferences?.shareNetworth) === 1"), "detailed networth must be authorized by the separate central preference")
 assert.ok(worker.includes('fetchPrivateLiveSelection(env, apiKey, "bars")') && worker.includes('fetchPrivateLiveSelection(env, apiKey, "cooldowns")'))
 assert.ok(worker.includes('fetchPrivateLiveSelection(env, apiKey, "networth")') && worker.includes('if (includeNetworth)'), "detailed networth must remain opt-in and use the fixture-aware transport")
+assert.ok(worker.includes("let includeNetworth = Number(centralPreferences?.shareNetworth) === 1"), "networth sharing may be gracefully disabled when Torn denies that optional selection")
 assert.ok(worker.includes("encryptKey(env, apiKey)"), "the owner key must be encrypted before persistence")
 assert.ok(worker.includes('DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?'))
 assert.ok(worker.includes('DELETE FROM member_private_live_keys WHERE player_id = ?'))
