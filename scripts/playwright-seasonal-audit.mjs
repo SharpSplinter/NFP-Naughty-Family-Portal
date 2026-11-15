@@ -265,7 +265,7 @@ function trainingCalculatorData() {
     battleStats: { strength: 1000000, defense: 250000, speed: 300000, dexterity: 400000, total: 1950000 },
     perks: {
       education: ["Sports Science Bachelors"],
-      book: [],
+      book: ["Self Control Is for Losers"],
       faction: ["Steadfast: Strength training VII", "Voracity: Booster cooldown XII"],
       job: ["Fitness Center: Training Regime", "Fitness Center: Goal Oriented"],
       enhancer: ["Sports Sneakers"],
@@ -612,6 +612,9 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   await noOverflow("session");
 
   await tab("energy").click();
+  const autoBookCanMaximum = await page.getByTestId("training-can-count").getAttribute("max");
+  recordAssertion("Training Calculator " + viewportName + ": Auto detects the single active Self Control book",
+    autoBookCanMaximum === "36", autoBookCanMaximum);
   await page.getByTestId("training-book-choice").selectOption("self-control");
   await page.getByTestId("training-current-energy").fill("0");
   await page.getByTestId("training-energy-wait-hours").fill("1");
