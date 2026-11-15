@@ -2595,12 +2595,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
       if (sharePrivateLive) {
         try {
-          const live = await request("/api/me/private-live/key", "POST", {
-            consent: true,
-            shareWithFaction: true,
-            includeNetworth: shareNetworth,
-            consentVersion: "faction-private-live-v1",
-          })
+          const live = await request("/api/me/private-live/key", "POST")
           nextNotices.push(typeof live.warning === "string"
             ? live.warning
             : "Your member-owned live bars and cooldown snapshot was connected for faction sharing.")
@@ -2613,10 +2608,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
       if (historicalCollectionEnabled) {
         let halloweenReady = false
         try {
-          await request("/api/me/halloween/key", "POST", {
-            consent: true,
-            consentVersion: "halloween-history-v2",
-          })
+          await request("/api/me/halloween/key", "POST")
           halloweenReady = true
           nextNotices.push("Your Halloween historical collection authorization was validated.")
         } catch (caught) {
@@ -2653,10 +2645,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
         let christmasReady = false
         try {
-          await request("/api/me/christmas-town/key", "POST", {
-            consent: true,
-            consentVersion: "christmas-town-history-v1",
-          })
+          await request("/api/me/christmas-town/key", "POST")
           christmasReady = true
           nextNotices.push("Your Christmas Town historical collection authorization was validated.")
         } catch (caught) {
