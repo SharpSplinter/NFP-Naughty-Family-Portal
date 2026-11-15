@@ -34,6 +34,50 @@ jobs:
           fi
           echo "TORN_API_KEY_SERVICE is configured; its value is withheld."
 
+      - name: Inspect key permissions using Torn API v2 key info
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const key = process.env.TORN_API_KEY_SERVICE;
+          const response = await fetch("https://api.torn.com/v2/key/info", {
+            method: "GET",
+            headers: { authorization: "ApiKey " + key, accept: "application/json" },
+            signal: AbortSignal.timeout(20000)
+          });
+          const payload = await response.json().catch(() => null);
+          const error = payload?.error && typeof payload.error === "object"
+            ? { code: payload.error.code ?? null, message: payload.error.error ?? null }
+            : null;
+          const info = payload?.info ?? {};
+          const access = info.access ?? {};
+          const customLog = access.log ?? {};
+          const available = Array.isArray(customLog.available) ? customLog.available : [];
+          const requestedIds = [8932, 8937, 8933];
+          const allowed = id => customLog.custom_permissions === true
+            ? available.some(group => Array.isArray(group.log_ids) && group.log_ids.map(Number).includes(id))
+            : customLog.custom_permissions === false ? true : null;
+          const levelNames = { 1: "Public Only", 2: "Minimal Access", 3: "Limited Access", 4: "Full Access" };
+          const report = {
+            apiVersion: "v2",
+            endpoint: "/key/info",
+            httpStatus: response.status,
+            httpOk: response.ok,
+            apiError: error,
+            accessType: access.type ?? null,
+            accessLevel: levelNames[Number(access.level)] ?? access.level ?? null,
+            userLogSelectionEnabled: Array.isArray(info.selections?.user)
+              ? info.selections.user.includes("log")
+              : null,
+            customLogPermissions: typeof customLog.custom_permissions === "boolean"
+              ? customLog.custom_permissions
+              : null,
+            legacyPermissions: access.legacy_permissions ?? null,
+            targetLogIds: requestedIds.map(id => ({ id, allowedByKeyInfo: allowed(id) }))
+          };
+          console.log("TORN_KEY_INFO " + JSON.stringify(report));
+          if (!response.ok || error || !payload?.info) process.exitCode = 1;
+          NODE
+
       - name: Call each Torn API v1 log selection independently
         shell: bash
         run: |
@@ -52,7 +96,7 @@ jobs:
             console.error("Missing TORN_API_KEY_SERVICE.");
             process.exit(1);
           }
-          if ((from && !/^\\d+$/.test(from)) || (to && !/^\\d+$/.test(to))) {
+          if ((from && !/^\d+$/.test(from)) || (to && !/^\d+$/.test(to))) {
             console.error("Optional from/to values must be Unix timestamps in seconds.");
             process.exit(1);
           }
