@@ -11,7 +11,13 @@ const [worker, migration, floor, workspace] = await Promise.all([
 assert.match(migration, /CREATE TABLE IF NOT EXISTS portal_user_consents/)
 assert.match(migration, /policy_acknowledged_at TEXT NOT NULL/)
 assert.match(migration, /historical_collection_enabled INTEGER NOT NULL DEFAULT 0/)
+assert.match(migration, /share_halloween_history INTEGER NOT NULL DEFAULT 0/, "Halloween sharing is a separate opt-in and defaults off")
 assert.match(migration, /share_private_live INTEGER NOT NULL DEFAULT 0/)
+assert.ok(worker.includes("share_halloween_history AS shareHalloweenHistory"), "member preferences expose separate Halloween sharing")
+assert.ok(worker.includes("const shareHalloweenHistory = historicalCollectionEnabled && body.shareHalloweenHistory === true"), "Halloween sharing must be separately and explicitly selected")
+assert.ok(worker.includes("COALESCE(pc.share_halloween_history, 0) = 1 OR p.player_id = ?"), "faction Halloween views must show only self or members who opted to share")
+assert.ok(worker.includes("This member has not opted to share their Halloween event history with the faction."), "member detail views must protect non-sharing members")
+assert.ok(workspace.includes("Share my Halloween event history and derived metrics with Naughty Souls."), "onboarding must provide a separate Halloween-sharing toggle")
 assert.match(migration, /share_networth INTEGER NOT NULL DEFAULT 0/)
 
 assert.ok(worker.includes('url.pathname === "/api/me/portal-consent" && request.method === "GET"'))
