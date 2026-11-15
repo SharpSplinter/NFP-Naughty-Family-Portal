@@ -25,6 +25,7 @@ const adminEndpoints = [
   "/api/admin/automation/runs?limit=5&days=7",
   "/api/admin/member-activity?days=7",
   "/api/admin/private-live",
+  "/api/admin/data-governance?limit=10",
 ];
 
 async function apiRequest(path, token, method = "GET", body = undefined) {
@@ -58,6 +59,7 @@ assert.equal(anonymous.response.status, 401, "Anonymous administration requests 
 const deniedChecks = [
   ["/api/admin/overview", "GET"],
   ["/api/admin/private-live", "GET"],
+  ["/api/admin/data-governance?limit=5", "GET"],
   ["/api/admin/members?limit=5", "GET"],
   ["/api/admin/settings", "GET"],
   ["/api/admin/administrators", "GET"],
@@ -84,6 +86,15 @@ for (let round = 0; round < 2; round += 1) {
       const entry = { round: round + 1, path: batch[index], status: results[index].response.status, durationMs: results[index].durationMs };
       timing.push(entry);
       assert.equal(entry.status, 200, "Administrator read endpoint failed: " + batch[index] + " returned " + entry.status);
+      if (batch[index].startsWith("/api/admin/data-governance")) {
+        const governance = results[index].payload;
+        assert.equal(typeof governance?.currentPolicyVersion, "string", "Governance view should identify the active policy version.");
+        assert.equal(typeof governance?.sharedServiceKeyConfigured, "boolean", "Governance view should expose only service-key readiness.");
+        assert.ok(Array.isArray(governance?.members), "Governance view should return member metadata rows.");
+        assert.equal(typeof governance?.summary?.historicalCollectionOptIns, "number", "Governance summary should report centralized historical opt-ins.");
+        assert.equal(typeof governance?.summary?.gymTrainingKeyConnections, "number", "Governance summary should report Gym Training connection readiness.");
+        assert.doesNotMatch(JSON.stringify(governance), /ciphertext|last_four|log_json|apiKey/i, "Governance response must not expose credentials or raw event records.");
+      }
     }
   }
 }
@@ -153,6 +164,7 @@ try {
     ["Overview", "System overview"],
     ["Members", "Member management"],
     ["Private Live", "Private-live diagnostics"],
+    ["Data & Consent", "Data & consent governance"],
     ["Administrators", "Administrator management"],
     ["Operations", "Refresh and maintenance jobs"],
     ["History & Backups", "History and backups"],
@@ -366,7 +378,7 @@ try {
   assert.ok(browserRequests.length <= 15, "Admin tab walkthrough exceeded the 15-request UI read budget: " + browserRequests.length);
   assert.ok((counts["/api/admin/members?limit=50"] || 0) <= 2, "Member list was fetched more than twice.");
   assert.ok((counts["/api/admin/history/summary"] || 0) <= 1, "History summary should only be loaded once during the walkthrough.");
-  console.log("PASS admin UI: all nine sections opened; active nav is announced; grants and refresh actions stay disabled; " + browserRequests.length + " GETs, zero mutations.");
+  console.log("PASS admin UI: all ten sections opened; active nav is announced; grants and refresh actions stay disabled; " + browserRequests.length + " GETs, zero mutations.");
 
   const allViolations = accessibility.flatMap(result => result.violations.map(violation => ({
     view: result.view,
