@@ -2,28 +2,17 @@ name: Probe legacy Christmas Town v1 log arrays
 
 on:
   workflow_dispatch:
-    inputs:
-      from:
-        description: Optional historical start timestamp (Unix seconds)
-        required: false
-        type: string
-      to:
-        description: Optional historical end timestamp (Unix seconds)
-        required: false
-        type: string
 
 permissions:
   contents: read
 
 jobs:
   probe-legacy-logs:
-    name: Probe each legacy log selection separately
+    name: Probe each legacy log selection for every event year
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       TORN_API_KEY_SERVICE: ${{ secrets.TORN_API_KEY_SERVICE }}
-      LOG_FROM: ${{ inputs.from }}
-      LOG_TO: ${{ inputs.to }}
     steps:
       - name: Verify service key is available
         shell: bash
@@ -78,7 +67,7 @@ jobs:
           if (!response.ok || error || !payload?.info) process.exitCode = 1;
           NODE
 
-      - name: Call each Torn API v1 log selection independently
+      - name: Query each legacy v1 log ID across every Christmas Town event year
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -87,21 +76,11 @@ jobs:
             { id: 8937, label: "Christmas town ornament (deprecated)" },
             { id: 8933, label: "Christmas town reward (legacy)" },
           ];
-
+          const years = Array.from({ length: 9 }, (_, index) => 2017 + index);
           const key = process.env.TORN_API_KEY_SERVICE;
-          const from = process.env.LOG_FROM?.trim();
-          const to = process.env.LOG_TO?.trim();
 
           if (!key) {
             console.error("Missing TORN_API_KEY_SERVICE.");
-            process.exit(1);
-          }
-          if ((from && !/^\d+$/.test(from)) || (to && !/^\d+$/.test(to))) {
-            console.error("Optional from/to values must be Unix timestamps in seconds.");
-            process.exit(1);
-          }
-          if (from && to && Number(from) > Number(to)) {
-            console.error("The from timestamp must not be later than the to timestamp.");
             process.exit(1);
           }
 
@@ -119,93 +98,132 @@ jobs:
               };
             }
             if (isRecord(value)) {
-              const fields = Object.entries(value).slice(0, 60).map(([name, child]) => ({
-                name,
-                ...describeShape(child, depth + 1)
-              }));
-              return { type: "object", fields };
+              return {
+                type: "object",
+                fields: Object.entries(value).slice(0, 60).map(([name, child]) => ({
+                  name,
+                  ...describeShape(child, depth + 1)
+                }))
+              };
             }
             return { type: value === null ? "null" : typeof value };
           }
 
-          function getRecords(collection) {
-            if (Array.isArray(collection)) return collection;
-            if (isRecord(collection)) return Object.values(collection);
-            return [];
+          function countRecords(collection) {
+            if (Array.isArray(collection)) return collection.length;
+            if (isRecord(collection)) return Object.keys(collection).length;
+            return null;
           }
 
+          const results = [];
           let failed = false;
-          for (let index = 0; index < selections.length; index++) {
-            const selection = selections[index];
-            const url = new URL("https://api.torn.com/user/");
-            url.searchParams.set("selections", "log");
-            url.searchParams.set("log", String(selection.id));
-            url.searchParams.set("key", key);
-            if (from) url.searchParams.set("from", from);
-            if (to) url.searchParams.set("to", to);
+          for (const year of years) {
+            const from = Math.floor(Date.UTC(year, 11, 1, 0, 0, 0) / 1000);
+            const to = Math.floor(Date.UTC(year + 1, 0, 16, 0, 0, 0) / 1000) - 1;
 
-            let report;
-            try {
-              const response = await fetch(url, {
-                method: "GET",
-                headers: { accept: "application/json" },
-                signal: AbortSignal.timeout(20000)
-              });
-              const body = await response.text();
-              let payload = null;
-              let parseError = null;
+            for (const selection of selections) {
+              const url = new URL("https://api.torn.com/user/");
+              url.searchParams.set("selections", "log");
+              url.searchParams.set("log", String(selection.id));
+              url.searchParams.set("from", String(from));
+              url.searchParams.set("to", String(to));
+              url.searchParams.set("key", key);
+
+              let report;
               try {
-                payload = JSON.parse(body);
-              } catch {
-                parseError = "Response body was not valid JSON.";
+                const response = await fetch(url, {
+                  method: "GET",
+                  headers: { accept: "application/json" },
+                  signal: AbortSignal.timeout(20000)
+                });
+                const body = await response.text();
+                let payload = null;
+                let parseError = null;
+                try {
+                  payload = JSON.parse(body);
+                } catch {
+                  parseError = "Response body was not valid JSON.";
+                }
+
+                const apiError = isRecord(payload?.error)
+                  ? { code: payload.error.code ?? null, message: payload.error.error ?? null }
+                  : null;
+                const collectionKey = isRecord(payload) && Object.hasOwn(payload, "log")
+                  ? "log"
+                  : isRecord(payload) && Object.hasOwn(payload, "logs")
+                    ? "logs"
+                    : null;
+                const collection = collectionKey ? payload[collectionKey] : null;
+                const count = countRecords(collection);
+                const firstRecord = Array.isArray(collection)
+                  ? collection[0]
+                  : isRecord(collection) ? Object.values(collection)[0] : undefined;
+
+                report = {
+                  eventYear: year,
+                  windowStartUtc: new Date(from * 1000).toISOString(),
+                  windowEndUtc: new Date(to * 1000).toISOString(),
+                  selectionId: selection.id,
+                  selection: selection.label,
+                  apiVersion: "v1",
+                  httpStatus: response.status,
+                  httpOk: response.ok,
+                  apiError,
+                  parseError,
+                  topLevelFields: isRecord(payload) ? Object.keys(payload) : [],
+                  logCollectionField: collectionKey,
+                  collectionType: collection === null
+                    ? "missing-or-null"
+                    : Array.isArray(collection) ? "array" : typeof collection,
+                  recordCount: count,
+                  firstRecordSchema: firstRecord === undefined
+                    ? null
+                    : describeShape(firstRecord)
+                };
+                if (!response.ok || apiError || parseError || count === null) failed = true;
+              } catch (error) {
+                failed = true;
+                report = {
+                  eventYear: year,
+                  selectionId: selection.id,
+                  selection: selection.label,
+                  apiVersion: "v1",
+                  requestError: error instanceof Error
+                    ? error.name + ": " + error.message
+                    : "Unknown request error"
+                };
               }
 
-              const apiError = isRecord(payload?.error)
-                ? { code: payload.error.code ?? null, message: payload.error.error ?? null }
-                : null;
-              const collectionKey = isRecord(payload) && Object.hasOwn(payload, "log")
-                ? "log"
-                : isRecord(payload) && Object.hasOwn(payload, "logs")
-                  ? "logs"
-                  : null;
-              const collection = collectionKey ? payload[collectionKey] : null;
-              const records = getRecords(collection);
-
-              report = {
-                selectionId: selection.id,
-                selection: selection.label,
-                apiVersion: "v1",
-                httpStatus: response.status,
-                httpOk: response.ok,
-                apiError,
-                parseError,
-                topLevelFields: isRecord(payload) ? Object.keys(payload) : [],
-                logCollectionField: collectionKey,
-                collectionType: collection === null
-                  ? "missing-or-null"
-                  : Array.isArray(collection) ? "array" : typeof collection,
-                recordCount: collection === null ? null : records.length,
-                sampleRecordShapes: records.slice(0, 2).map((record, sampleIndex) => ({
-                  sample: sampleIndex + 1,
-                  shape: describeShape(record)
-                }))
-              };
-              if (!response.ok || apiError || parseError) failed = true;
-            } catch (error) {
-              failed = true;
-              report = {
-                selectionId: selection.id,
-                selection: selection.label,
-                apiVersion: "v1",
-                requestError: error instanceof Error ? error.name + ": " + error.message : "Unknown request error"
-              };
-            }
-
-            console.log("TORN_V1_LOG_PROBE " + JSON.stringify(report));
-            if (index < selections.length - 1) {
+              results.push(report);
+              console.log("TORN_V1_HISTORICAL_PROBE " + JSON.stringify(report));
               await new Promise(resolve => setTimeout(resolve, 1200));
             }
           }
+
+          const totals = selections.map(selection => {
+            const entries = results.filter(result => result.selectionId === selection.id);
+            return {
+              selectionId: selection.id,
+              selection: selection.label,
+              totalRecordsAcrossYears: entries.reduce(
+                (sum, entry) => sum + (Number.isFinite(entry.recordCount) ? entry.recordCount : 0), 0
+              ),
+              yearsWithRecords: entries
+                .filter(entry => Number.isFinite(entry.recordCount) && entry.recordCount > 0)
+                .map(entry => entry.eventYear),
+              yearCounts: entries.map(entry => ({
+                year: entry.eventYear,
+                count: entry.recordCount
+              }))
+            };
+          });
+
+          console.log("TORN_V1_HISTORICAL_SUMMARY " + JSON.stringify({
+            yearsTested: years,
+            eventWindow: "December 1 through January 15 (inclusive)",
+            requestCount: results.length,
+            totals
+          }));
 
           if (failed) process.exitCode = 1;
           NODE
