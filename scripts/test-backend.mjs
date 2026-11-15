@@ -120,8 +120,8 @@ try {
     ))
     const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
     return {
-      consentVersion: "portal-data-policy-v3",
-      policyVersion: "2026-11-15-v1",
+      consentVersion: "portal-data-policy-v4",
+      policyVersion: "2026-11-15-v2",
       apiKeyUsageAccepted: 1,
       apiKeyAccessType: "custom",
       apiKeyConsentFingerprint: fingerprint,
@@ -179,8 +179,8 @@ try {
               if (statementProperty === "first") {
                 return async (...args) => {
                   const existing = await statementTarget.first(...args)
-                  if (existing?.consentVersion === "portal-data-policy-v3" &&
-                      existing?.policyVersion === "2026-11-15-v1" &&
+                  if (existing?.consentVersion === "portal-data-policy-v4" &&
+                      existing?.policyVersion === "2026-11-15-v2" &&
                       existing?.apiKeyAccessType === "custom" &&
                       Number(existing.apiKeyUsageAccepted) === 1 &&
                       typeof existing.apiKeyConsentFingerprint === "string") return existing
@@ -1499,7 +1499,6 @@ try {
       DB: db,
       KEY_ENCRYPTION_SECRET: keySecret,
       ALLOWED_ORIGIN: "https://naughty-company-dashboard.pages.dev",
-      DEBUG_PORTAL_CONSENT: true,
     }
     const request = (method, body, pathname = "/api/me/private-live/key") => worker.fetch(new Request("https://worker.test" + pathname, {
       method,
