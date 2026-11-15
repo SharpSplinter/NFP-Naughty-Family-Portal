@@ -2297,7 +2297,6 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
       const payload = await response.json() as { error?: string }
       if (!response.ok) throw new Error(payload.error || "Could not disconnect your private live key.")
       await loadPrivateLiveStatus()
-      setPrivateLiveIncludeNetworth(false)
       setAccountNotice("Your private live key and current faction-shared snapshot were deleted.")
     } catch (caught) { setAccountError(caught instanceof Error ? caught.message : "Could not disconnect your private live key.") }
     finally { setPrivateLiveBusy(false) }
