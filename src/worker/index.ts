@@ -6494,8 +6494,10 @@ export default {
         }
 
         const priorKey = await savedKey(env, player.id).catch(() => null)
-        if (priorKey && priorKey !== apiKey) await invalidateMemberKeyDependents(env, player.id, priorKey)
-        await saveKey(env, player.id, apiKey)
+        if (priorKey !== apiKey) {
+          if (priorKey) await invalidateMemberKeyDependents(env, player.id, priorKey)
+          await saveKey(env, player.id, apiKey)
+        }
         const token = randomToken()
         const expiresAt = Math.floor(Date.now() / 1000) + 30 * DAY
         await db.prepare("INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), player.id, expiresAt, now).run()
@@ -6624,8 +6626,10 @@ export default {
         const player = await validateTornKey(apiKey)
         if (player.id !== session.player_id) return jsonResponse({ error: "That key belongs to a different Torn player. Sign out and sign in as that player to switch accounts." }, 403, origin)
         const priorKey = await savedKey(env, player.id).catch(() => null)
-        if (priorKey && priorKey !== apiKey) await invalidateMemberKeyDependents(env, player.id, priorKey)
-        await saveKey(env, player.id, apiKey)
+        if (priorKey !== apiKey) {
+          if (priorKey) await invalidateMemberKeyDependents(env, player.id, priorKey)
+          await saveKey(env, player.id, apiKey)
+        }
         return jsonResponse({ saved: true, lastFour: apiKey.slice(-4), updatedAt: new Date().toISOString(), dependentConnectionsReset: priorKey !== null && priorKey !== apiKey }, 200, origin)
       } catch (error) { return tornError(error, origin) }
     }
