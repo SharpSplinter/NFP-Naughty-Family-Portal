@@ -23,6 +23,16 @@ function sqlQuote(value) {
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
+function syntheticPrimaryKey(playerId) {
+  const ciphertext = "staging-consent-envelope-" + playerId;
+  const iv = "staging-consent-iv-" + playerId;
+  return {
+    ciphertext,
+    iv,
+    lastFour: String(playerId).slice(-4),
+    fingerprint: sha256(String(playerId) + ":" + ciphertext + ":" + iv),
+  };
+}
 function profileFor(member, dailyIncome) {
   return {
     profile: {
@@ -91,6 +101,7 @@ const statements = [
   "PRAGMA foreign_keys = ON;",
   // Only previously created fixture identities are removed. A colliding real member ID is never deleted.
   "DELETE FROM admin_audit_log WHERE actor_player_id IN (" + [MEMBERS[0].id, MEMBERS[1].id, ADMIN.id].map(sqlQuote).join(", ") + ");",
+  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + "));",
   "DELETE FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ");",
 ];
 for (let index = 0; index < MEMBERS.length; index += 1) {
@@ -99,9 +110,14 @@ for (let index = 0; index < MEMBERS.length; index += 1) {
     "INSERT INTO players (player_id, player_name, created_at, updated_at, faction_id, faction_verified_at) VALUES (" +
     [member.id, member.name, nowIso, nowIso, "8317", nowIso].map(sqlQuote).join(", ") + ");"
   );
+  const primaryKey = syntheticPrimaryKey(member.id);
   statements.push(
-    "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
-    [member.id, "portal-data-policy-v2", "2026-11-14-v2", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+    "INSERT INTO api_keys (player_id, ciphertext, iv, last_four, created_at, updated_at) VALUES (" +
+    [member.id, primaryKey.ciphertext, primaryKey.iv, primaryKey.lastFour, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+  );
+  statements.push(
+    "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
+    [member.id, "portal-data-policy-v3", "2026-11-15-v1", nowIso, 1, nowIso, primaryKey.fingerprint, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
   );
   statements.push(
     "INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (" +
@@ -144,9 +160,14 @@ statements.push(
   "INSERT INTO players (player_id, player_name, created_at, updated_at, faction_id, faction_verified_at) VALUES (" +
   [ADMIN.id, ADMIN.name, nowIso, nowIso, "8317", nowIso].map(sqlQuote).join(", ") + ");"
 );
+const adminPrimaryKey = syntheticPrimaryKey(ADMIN.id);
 statements.push(
-  "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
-  [ADMIN.id, "portal-data-policy-v2", "2026-11-14-v2", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+  "INSERT INTO api_keys (player_id, ciphertext, iv, last_four, created_at, updated_at) VALUES (" +
+  [ADMIN.id, adminPrimaryKey.ciphertext, adminPrimaryKey.iv, adminPrimaryKey.lastFour, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+);
+statements.push(
+  "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
+  [ADMIN.id, "portal-data-policy-v3", "2026-11-15-v1", nowIso, 1, nowIso, adminPrimaryKey.fingerprint, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
 );
 statements.push(
   "INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (" +
@@ -173,6 +194,7 @@ const gymTimestamp1 = Math.floor(Date.parse("2026-11-12T12:00:00.000Z") / 1000);
 const gymTimestamp2 = Math.floor(Date.parse("2026-11-14T12:00:00.000Z") / 1000);
 
 // Recreate only the exact, named synthetic feature fixtures if this workflow is re-run.
+statements.push("DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + "));");
 statements.push("DELETE FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + ");");
 // The second synthetic member explicitly shares its own staged Halloween history so
 // the feature walkthrough can exercise comparison and visibility controls.
@@ -180,10 +202,13 @@ statements.push("UPDATE portal_user_consents SET historical_collection_enabled =
 statements.push("INSERT OR IGNORE INTO event_history_consent_records (player_id, event_key, first_consented_at) VALUES (" + [MEMBERS[1].id, "halloween", nowIso].map(sqlQuote).join(", ") + ");");
 
 for (const member of [FEATURE_MEMBER, PARTIAL_MEMBER]) {
+  const primaryKey = syntheticPrimaryKey(member.id);
   insertSql("players", "player_id, player_name, created_at, updated_at, faction_id, faction_verified_at",
     [member.id, member.name, nowIso, nowIso, "8317", nowIso]);
-  insertSql("portal_user_consents", "player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at",
-    [member.id, "portal-data-policy-v2", "2026-11-14-v2", nowIso, 1, 1, 0, 0, nowIso, nowIso]);
+  insertSql("api_keys", "player_id, ciphertext, iv, last_four, created_at, updated_at",
+    [member.id, primaryKey.ciphertext, primaryKey.iv, primaryKey.lastFour, nowIso, nowIso]);
+  insertSql("portal_user_consents", "player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at",
+    [member.id, "portal-data-policy-v3", "2026-11-15-v1", nowIso, 1, nowIso, primaryKey.fingerprint, 1, 1, 0, 0, nowIso, nowIso]);
 }
 insertSql("sessions", "token_hash, player_id, expires_at, created_at",
   [featureTokenHash, FEATURE_MEMBER.id, expiresAt, nowIso]);
