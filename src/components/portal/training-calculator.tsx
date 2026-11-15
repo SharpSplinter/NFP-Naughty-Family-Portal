@@ -736,16 +736,16 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <NumberField label="Green Easter Eggs" value={greenEggCount} onChange={setGreenEggCount} min={0} max={maximumYellowEggCount}
                 hint={"Each gives +500E and adds 6 hours of booster cooldown. Maximum " + maximumYellowEggCount + " at the current cooldown budget."} testId="training-green-egg-count" />
               <NumberField label="Other energy sources" value={otherEnergy} onChange={setOtherEnergy} min={0} max={100000}
-                hint="Manual addition for energy not listed above. Maximum 100,000E per plan." />
+                hint="Manual addition for energy not listed above. Maximum 100,000E per plan." testId="training-other-energy" />
               <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded} disabled={!pointRefillAvailable}
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
                 <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
               </label>
-              <label className="tc-check-field"><input type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
+              <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
                 <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Models the maximum +50% energy-drink branch."}</small></span>
               </label>
-              <label className="tc-check-field"><input type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
+              <label className="tc-check-field"><input data-testid="training-event-drink-bonus" type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
                 <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
               </label>
             </div>
