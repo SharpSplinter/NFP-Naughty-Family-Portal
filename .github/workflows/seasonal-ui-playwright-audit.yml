@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   seasonal-ui-audit:
-    name: Christmas Town and Halloween browser audit
+    name: Halloween, Christmas Town and Training Calculator browser audit
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -62,7 +62,7 @@ jobs:
           console.log("Production preview is ready.");
           NODE
 
-      - name: Audit both seasonal pages across desktop, tablet and mobile
+      - name: Audit all three workspaces across desktop, tablet and mobile
         env:
           SEASONAL_AUDIT_BASE_URL: http://127.0.0.1:4173
         run: npm run test:seasonal-ui
