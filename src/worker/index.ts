@@ -7342,7 +7342,7 @@ export default {
       const gymModifierFor = (stat: string): { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] } => {
         const groupMultipliers: Record<string, number> = {
           property: 1, job: 1, book: 1, enhancer: 1, faction: 1,
-          educationGeneral: 1, educationSpecific: 1, other: 1,
+          educationGeneral: 1, educationSpecific: 1,
         }
         const bonuses: string[] = []
         const seen = new Set<string>()
@@ -7383,10 +7383,9 @@ export default {
           if (/sports sneakers/i.test(text) && stat === "speed") add("enhancer", "Enhancer: " + text, 5, "enhancer:" + text)
         }
         for (const text of activeFactionPerks) {
-          const steadfast = text.match(/\\b(strength|defense|speed|dexterity)\\s+(?:gym\\s+)?train(?:ing|s)\\s+([IVXLCDM]+)\\b/i)
-          if (steadfast && /steadfast/i.test(text)) {
-            const targetStat = steadfast[1].toLowerCase()
-            if (targetStat === stat) add("faction", "Faction: " + text, romanNumber(steadfast[2]), "faction:" + text)
+          const steadfast = text.match(/\b(strength|defense|speed|dexterity)\s+(?:gym\s+)?train(?:ing|s)\s+([IVXLCDM]+)\b/i)
+          if (steadfast && steadfast[1].toLowerCase() === stat) {
+            add("faction", "Faction: " + text, romanNumber(steadfast[2]), "faction:" + text)
           }
         }
         const perkGroups: Array<[string, string[], string]> = [
@@ -7399,10 +7398,11 @@ export default {
         ]
         for (const [group, entries, label] of perkGroups) {
           for (const text of entries) {
-            const match = text.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
+            const match = text.match(/(\d+(?:\.\d+)?)\s*%/)
             if (!match || !/(gym|training)/i.test(text)) continue
-            const statMention = text.match(/\\b(strength|defense|speed|dexterity)\\b/i)
+            const statMention = text.match(/\b(strength|defense|speed|dexterity)\b/i)
             if (statMention && statMention[1].toLowerCase() !== stat) continue
+            if (group === "educationGeneral" && statMention && educationMap.some(([pattern]) => pattern.test(text))) continue
             add(group, label + ": " + text, Number(match[1]), group + ":" + text)
           }
         }
