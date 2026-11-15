@@ -726,8 +726,11 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   const permanentBookGain = await page.locator(".tc-stat-book-row").filter({ hasText: "Brawn Over Brains" }).locator(".tc-stat-book-gain").innerText();
   recordAssertion("Training Calculator " + viewportName + ": permanent stat book applies the 10M completion cap",
     permanentBookGain.includes("10,000,000"), permanentBookGain);
+  await tab("happy").click();
+  const dvdHappyMode = await page.getByTestId("training-dvd-happy").inputValue();
   recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness remains in live auto mode",
-    await page.getByTestId("training-dvd-happy").inputValue() === "auto", await page.getByTestId("training-dvd-happy").inputValue());
+    dvdHappyMode === "auto", dvdHappyMode);
+  await tab("enhancers").click();
   recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
   const seCost = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": SE market price is included", seCost === "$800,000,000", seCost);
