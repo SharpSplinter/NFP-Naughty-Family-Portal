@@ -360,7 +360,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   useEffect(() => {
     const controller = new AbortController()
     const historyController = new AbortController()
-    const base = apiBase.replace(/\\/+$/, "")
+    const base = apiBase.replace(/\/+$/, "")
     let syncTimedOut = false
     const syncTimeout = window.setTimeout(() => {
       syncTimedOut = true
