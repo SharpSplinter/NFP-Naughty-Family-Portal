@@ -350,6 +350,47 @@ The master service-key binding's presence resolves the earlier “missing Full A
 
 No production D1 writes, migrations, Pages deployment, or portal Worker code deployment were performed as part of this read-only configuration discovery.
 
+## 14. Repository alignment and final master-key staging acceptance (2026-11-15 00:37 UTC)
+
+This section supersedes the outstanding repository-alignment items in Section 13.
+
+### Production configuration and source alignment
+
+- The checked-in production Worker target is now `naughtyfamily-api`; `wrangler.toml` keeps the existing production D1 database ID/name and sets the canonical CORS origin to `https://naughtyfamily.pages.dev`.
+- The protected production Worker workflow confirms `naughtyfamily-api`, validates the existing `naughty-company-dashboard` D1 ID, and probes `https://naughtyfamily-api.kboone801.workers.dev/health`. Production deployment remains manual-only from `main`, requiring explicit target confirmation and an external backup reference.
+- The manual Pages workflow builds with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and publishes to the separate `naughtyfamily` Pages project. Frontend fallback URL and health payload service identity now use `naughtyfamily-api`.
+- The Worker source now prefers production `TORN_API_KEY_SERVICE` for shared Full Access service calls. It retains `TORN_API_KEY_FULL_ACCESS` only as a compatibility alias for the current isolated staging Worker until its old secret name can be retired. Public global rankings use SERVICE first, then the staging compatibility alias, then the Custom Access service fallback; no service path substitutes a member's private credential.
+- The Discord bot's checked-in Wrangler service binding now names `naughtyfamily-api`, its source `/link` instruction points at `https://naughtyfamily.pages.dev`, and the live production bot's `DASHBOARD_API` service binding was independently verified pointing to `naughtyfamily-api`. The bot source change is in the PR; this review does not claim a new production bot code deployment.
+- Cloudflare's read-only production Worker check still showed deployment `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093`, version `54f02948-73b3-4535-bd71-8d9683ad62c9`, at 100% traffic. This is the already-existing renamed production Worker version, not a deployment of the PR's Worker code.
+- Live production secret *names* include `TORN_API_KEY_SERVICE`, `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY` and `KEY_ENCRYPTION_SECRET`; no secret values were read. The old Worker name `naughty-company-api` remains removed/404. Pages project `naughtyfamily` remains configured at `https://naughtyfamily.pages.dev` with zero production deployments.
+- Production D1 remains `naughty-company-dashboard` / `bbbe128a-c5cc-46ec-b8ef-93860183e795`. The final read-only ledger check still returned 16 migration records ending `0012_company_ranking_snapshots.sql`. No production migration was applied.
+- The legacy Pages project `naughty-company-dashboard` still serves its old compiled API URL. Since the old Worker hostname no longer exists, that site is not a verified operational rollback. Preserve it as an archived prior deployment, but do not rely on it for rollback unless a compatibility Worker is restored or the legacy Pages project is rebuilt against the new API and verified.
+
+### Final isolated staging acceptance with service-key compatibility
+
+[Manual staging acceptance run #43658512441](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43658512441) completed **SUCCESS**, all 25 job steps, on branch `portal-rebuild` at tested HEAD `e4e48e62b52b0e79630999d6c927d586e9b30d3e`.
+
+- Typecheck, backend regression tests, frontend production build, and explicit staging-only Worker/D1/Queue checks passed.
+- Staging D1 migrations were applied and verified through `0031_torn_event_calendar_windows.sql`; production D1 was not targeted.
+- The staging Worker deployed with the `TORN_API_KEY_SERVICE`-first helper and legacy `TORN_API_KEY_FULL_ACCESS` compatibility binding. Staging API `/health` returned 200 with database/encryption readiness `ok`; CORS was correct. The staging Pages origin returned 200 and its bundle embedded the staging API URL.
+- Responsive Company workspace checks passed at eight viewports. Admin/non-admin checks, keyboard/semantic navigation, automated accessibility scan and read-only request-budget smoke passed. The accessibility scan covered 11 screens with zero axe violations.
+- Sustained read-only staging load passed for 285 seconds and 1,425 requests at 5 requests/second, observed concurrency 3, zero failures, p50 120.4 ms, p95 166.5 ms, p99 304.1 ms and max 577.3 ms.
+- Synthetic private-history fixtures were removed successfully. Screenshot artifact [company-dashboard-staging-validation, ID 14139094009](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43658512441/artifacts/14139094009) uploaded (14,625,231 bytes).
+
+This establishes successful isolated acceptance of the branch's renamed Worker/Pages endpoints and its SERVICE-first/legacy-staging-binding compatibility logic. The production SERVICE secret's value was never read or copied to staging; the test run used only the isolated staging Worker's existing configured bindings. It does not, by itself, constitute a production traffic cutover or prove the production secret's external Torn permissions by making a live production call.
+
+### Remaining production release gates
+
+**Production cutover remains NO-GO until the following are completed:**
+
+1. Complete an explicit feature walkthrough of Halloween Live/current-year and Historical all-time/year-specific views, member comparisons, partial coverage and Revitalize numerator/denominator; Christmas Town archive; Torn event calendar windows; and Discord reconnect/`/link-code`.
+2. Record explicit owner approval for PR #152 and the production migration/Worker deployment/Pages publication. PR #152 remains OPEN/DRAFT after this staging result.
+3. Immediately before migration, independently verify the encrypted external D1 backup and checksum/access, re-read the current production D1 Time Travel bookmark, and read the exact pending production migration ledger again.
+4. After the approved merge, manually dispatch the protected production Worker workflow from `main` using target `naughtyfamily-api` and the verified backup reference. Apply the ordered portal D1 migrations, deploy the Worker, verify health/encryption and service-key behavior, then manually publish the separate `naughtyfamily` Pages project.
+5. Run production smoke tests and retain an available rollback operator. The legacy Pages deployment is not a working API fallback while it points at the removed Worker hostname; prepare and verify a real fallback before relying on it.
+
+No production portal migrations, portal Worker code deployment, `naughtyfamily` Pages production deployment, PR merge or secret-value access was performed during this update.
+
 ## Cloudflare references
 
 - [D1 import/export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
