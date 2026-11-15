@@ -42,7 +42,7 @@ type D1Database = {
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
-type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_FACTION_API_KEY?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
+type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_FACTION_API_KEY?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
 type Session = { player_id: string; player_name: string; is_admin: number; faction_id?: string | null; faction_verified_at?: string | null; membership_check_attempted_at?: string | null; membership_check_status?: string | null }
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }
@@ -1590,11 +1590,11 @@ async function fetchGlobalCompanyTypeCatalog(apiKey: string): Promise<GlobalComp
 
 async function getGlobalRankingApiKey(env: WorkerEnv, preferredKey?: string): Promise<string> {
   if (preferredKey) return preferredKey
-  // Use the dedicated service-owned Full Access key for Torn's public global-company
-  // directory/ranking data. The Custom Access binding previously failed Torn's
-  // public-access check. Keep it as a fallback, and never borrow a member key.
-  const fullAccess = env.TORN_API_KEY_FULL_ACCESS?.trim()
-  if (fullAccess) return fullAccess
+  // Use the service-owned master Full Access key for shared Torn company
+  // directory/ranking data. Keep the Custom Access service key as a fallback,
+  // and never borrow a member's personal key.
+  const serviceKey = env.TORN_API_KEY_SERVICE?.trim()
+  if (serviceKey) return serviceKey
   const customAccess = env.TORN_API_KEY_CUSTOM?.trim()
   if (customAccess) return customAccess
   const row = await requireDb(env).prepare("SELECT player_id FROM api_keys ORDER BY updated_at DESC LIMIT 1").first<{ player_id: string }>()
@@ -2042,7 +2042,7 @@ async function loadHalloweenExchangeMarketValue(
 
   const cached = await readCache()
   const cacheById = new Map((cached.results ?? []).map(row => [String(row.itemId), row]))
-  const apiKey = env.TORN_API_KEY_FULL_ACCESS?.trim() ?? ""
+  const apiKey = env.TORN_API_KEY_SERVICE?.trim() ?? ""
   const refreshIds = apiKey
     ? itemIds
       .filter(itemId => {
@@ -2353,7 +2353,7 @@ async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: str
     ).bind(playerId).first<{ accessLevel: string; consentVersion: string }>()
     if (!consent || consent.consentVersion !== "halloween-history-v2") return null
     if (playerId === ADMIN_PLAYER_ID) {
-      const apiKey = env.TORN_API_KEY_FULL_ACCESS?.trim() ?? ""
+      const apiKey = env.TORN_API_KEY_SERVICE?.trim() ?? ""
       if (!apiKey || consent.accessLevel !== "Full Access") return null
     const response = await trackedTornFetch("halloween-owner-key-validation", "https://api.torn.com/v2/key/info", {
       headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
@@ -6151,8 +6151,8 @@ export default {
     if (url.pathname === "/health" && request.method === "GET") {
       const checkedAt = new Date().toISOString()
       const keyEncryption = env.KEY_ENCRYPTION_SECRET && env.KEY_ENCRYPTION_SECRET.length >= 32 ? "ok" : "missing"
-      try { await requireDb(env).prepare("SELECT 1 AS ok").first<{ ok: number }>(); return jsonResponse({ ok: true, service: "naughty-company-api", database: "ok", keyEncryption, checkedAt }, 200, origin) }
-      catch { return jsonResponse({ ok: false, service: "naughty-company-api", database: "error", keyEncryption, checkedAt }, 503, origin) }
+      try { await requireDb(env).prepare("SELECT 1 AS ok").first<{ ok: number }>(); return jsonResponse({ ok: true, service: "naughtyfamily-api", database: "ok", keyEncryption, checkedAt }, 200, origin) }
+      catch { return jsonResponse({ ok: false, service: "naughtyfamily-api", database: "error", keyEncryption, checkedAt }, 503, origin) }
     }
     if (url.pathname === "/api/auth/sign-in" && request.method === "POST") {
       try {
