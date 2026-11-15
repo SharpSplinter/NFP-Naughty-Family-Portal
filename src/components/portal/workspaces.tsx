@@ -2710,10 +2710,8 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           }
         }
 
-        let gymTrainingReady = false
         try {
           await request("/api/me/gym-training/key", "POST")
-          gymTrainingReady = true
           const gymJob = await request("/api/me/gym-training/collect", "POST")
           nextNotices.push(gymJob.alreadyComplete
             ? "Your private gym training history is already complete."
