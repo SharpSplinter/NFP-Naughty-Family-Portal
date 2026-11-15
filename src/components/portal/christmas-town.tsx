@@ -343,7 +343,7 @@ export function ChristmasTownWorkspace({
 
       <section className="season-year-filter christmas-town-year-filter" aria-label="Christmas Town historical scope">
         <div>
-          <small>YEAR RANGE</small>
+          <small>CHRISTMAS TOWN HISTORY SCOPE</small>
           <strong>{selectedYear === "all" ? "All time" : "Christmas Town " + selectedYear}</strong>
           <span>Showing {appliedFromDate} – {appliedToDate} · UTC</span>
         </div>
