@@ -259,7 +259,8 @@ try {
   console.log("::add-mask::" + tokens[0]);
   console.log("::add-mask::" + tokens[1]);
   console.log("::add-mask::" + adminToken);
-  console.log("Seeding two synthetic non-admin members, one synthetic administrator and seven private reporting dates in the isolated acceptance D1.");
+  console.log("::add-mask::" + featureToken);
+  console.log("Seeding synthetic private-history, feature-walkthrough, partial-coverage and administrator fixtures in the isolated acceptance D1.");
   execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
     "wrangler", "d1", "execute", DATABASE, "--remote", "--config", CONFIG, "--file", sqlPath,
   ], { stdio: "inherit", env: process.env });
@@ -267,6 +268,8 @@ try {
   const envValues = {
     STAGING_TEST_SESSION_TOKEN: tokens[0],
     STAGING_TEST_OTHER_SESSION_TOKEN: tokens[1],
+    STAGING_FEATURE_SESSION_TOKEN: featureToken,
+    STAGING_FEATURE_PLAYER_ID: FEATURE_MEMBER.id,
     STAGING_TEST_ADMIN_SESSION_TOKEN: adminToken,
     STAGING_TEST_ADMIN_PLAYER_ID: ADMIN.id,
     STAGING_TEST_COMPANY_ID: COMPANY_ID,
@@ -276,7 +279,7 @@ try {
     STAGING_TEST_OTHER_INCOME_SERIES: JSON.stringify(incomeSeries[1]),
   };
   appendFileSync(process.env.GITHUB_ENV, Object.entries(envValues).map(([key, value]) => key + "=" + value).join("\n") + "\n");
-  console.log("PASS seeded synthetic authenticated sessions, private company records, seven reporting dates, cost reconciliation inputs, and stock snapshots.");
+  console.log("PASS seeded synthetic sessions, private company history, Halloween/Christmas/Gym archives, Torn calendar cache rows, consent fixtures, and administrator access.");
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
 }
