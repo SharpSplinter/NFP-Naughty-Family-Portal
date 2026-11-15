@@ -190,7 +190,7 @@ try {
     await consentPage.getByRole("heading", { name: /Welcome to the Naughty Family/ }).waitFor({ state: "visible", timeout: 15000 });
     await consentPage.getByRole("heading", { name: "Data policy & privacy" }).waitFor({ state: "visible" });
     await consentPage.getByRole("heading", { name: "Primary Torn API key use & permissions" }).waitFor({ state: "visible" });
-    const customAccess = consentPage.getByRole("radio", { name: /Custom Access/ });
+    const customAccess = consentPage.getByRole("radio", { name: "Custom Access · Recommended" });
     await customAccess.check();
     const policyAcknowledgement = consentPage.locator("label.portal-setup-check").filter({ hasText: "I have read and acknowledge the current Naughty Family data policy" }).locator("input");
     await policyAcknowledgement.check();
