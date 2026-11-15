@@ -10,7 +10,7 @@ on:
         required: true
         type: choice
         options:
-          - naughty-company-api
+          - naughtyfamily-api
       backup_reference:
         description: Reference to the verified encrypted pre-deployment D1 export stored outside this repository
         required: true
@@ -26,7 +26,7 @@ concurrency:
 jobs:
   deploy-worker:
     # Production changes only run from main and require a named target plus an operator-supplied backup reference.
-    if: github.ref == 'refs/heads/main' && inputs.confirm_target == 'naughty-company-api' && inputs.backup_reference != ''
+    if: github.ref == 'refs/heads/main' && inputs.confirm_target == 'naughtyfamily-api' && inputs.backup_reference != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,9 +49,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$CONFIRM_TARGET" = "naughty-company-api"
+          test "$CONFIRM_TARGET" = "naughtyfamily-api"
           test -n "$BACKUP_REFERENCE"
-          grep -F 'name = "naughty-company-api"' wrangler.toml
+          grep -F 'name = "naughtyfamily-api"' wrangler.toml
           grep -F 'database_name = "naughty-company-dashboard"' wrangler.toml
           grep -F 'database_id = "bbbe128a-c5cc-46ec-b8ef-93860183e795"' wrangler.toml
           ! grep -F 'naughtyfamily-acceptance-staging' wrangler.toml
@@ -98,7 +98,7 @@ jobs:
 
       - name: Verify production Worker health and encryption readiness
         env:
-          PRODUCTION_API_URL: https://naughty-company-api.kboone801.workers.dev
+          PRODUCTION_API_URL: https://naughtyfamily-api.kboone801.workers.dev
         run: |
           node --input-type=module <<'NODE'
           const base = process.env.PRODUCTION_API_URL;
