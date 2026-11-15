@@ -2189,6 +2189,15 @@ type EventHistoryConsentStatus = {
   } | null
 }
 
+type GymTrainingHistoryStatus = {
+  collectionEnabled: boolean
+  connected: boolean
+  key: { lastFour: string; accessLevel: string; lastValidatedAt: string } | null
+  job: { status: string; pagesCollected: number; logsScanned: number; logsCollected: number; lastError: string | null; updatedAt: string | null; completedAt: string | null } | null
+  totalLogs: number
+  logs: Array<{ logId: string; timestamp: number; category: string | null; title: string | null; record: unknown }>
+}
+
 type AccountSettingsProps = WorkspaceProps & {
   apiBase: string
   sessionToken: string
@@ -2208,6 +2217,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
   const [privateLiveBusy, setPrivateLiveBusy] = useState(false)
   const [halloweenHistoryStatus, setHalloweenHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
   const [christmasTownHistoryStatus, setChristmasTownHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
+  const [gymTrainingHistory, setGymTrainingHistory] = useState<GymTrainingHistoryStatus | null>(null)
   const [eventHistoryBusy, setEventHistoryBusy] = useState(false)
 
   const loadHalloweenHistoryStatus = async () => {
@@ -2228,6 +2238,36 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     if (!response.ok) throw new Error(payload.error || "Could not load Christmas Town history settings.")
     setChristmasTownHistoryStatus(payload)
     return payload
+  }
+
+  const loadGymTrainingHistory = async () => {
+    const response = await fetch(props.apiBase + "/api/me/gym-training/history", {
+      headers: { Authorization: "Bearer " + props.sessionToken },
+    })
+    const payload = await response.json() as GymTrainingHistoryStatus & { error?: string }
+    if (!response.ok) throw new Error(payload.error || "Could not load gym training history.")
+    setGymTrainingHistory(payload)
+    return payload
+  }
+
+  const startGymTrainingCollection = async () => {
+    if (eventHistoryBusy) return
+    setEventHistoryBusy(true); setAccountError(""); setAccountNotice("")
+    try {
+      const response = await fetch(props.apiBase + "/api/me/gym-training/collect", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + props.sessionToken },
+      })
+      const payload = await response.json() as { error?: string; queued?: boolean; alreadyComplete?: boolean; job?: { status: string } }
+      if (!response.ok) throw new Error(payload.error || "Could not queue gym training history.")
+      await loadGymTrainingHistory()
+      setAccountNotice(payload.alreadyComplete
+        ? "Your gym training history is already complete."
+        : payload.queued ? "Your private gym training history backfill has been queued."
+        : "Your gym training history collection is " + String(payload.job?.status ?? "in progress") + ".")
+    } catch (caught) {
+      setAccountError(caught instanceof Error ? caught.message : "Could not start gym training history collection.")
+    } finally { setEventHistoryBusy(false) }
   }
 
   const disconnectEventHistory = async (kind: "halloween" | "christmas-town") => {
@@ -2264,8 +2304,8 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     void loadPrivateLiveStatus().catch(caught => {
       setAccountError(caught instanceof Error ? caught.message : "Could not load your private live connection status.")
     })
-    void Promise.all([loadHalloweenHistoryStatus(), loadChristmasTownHistoryStatus()]).catch(caught => {
-      setAccountError(caught instanceof Error ? caught.message : "Could not load event-history settings.")
+    void Promise.all([loadHalloweenHistoryStatus(), loadChristmasTownHistoryStatus(), loadGymTrainingHistory()]).catch(caught => {
+      setAccountError(caught instanceof Error ? caught.message : "Could not load historical collection settings.")
     })
   }, [props.apiBase, props.sessionToken])
 
@@ -2495,6 +2535,30 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
             <div className="settings-inline-form"><p className="settings-form-hint">Historical collection permission is managed centrally. When enabled, the portal automatically queues eligible Christmas Town event-year archives using your own member key.</p><button type="button" onClick={() => props.onNavigate("/setup")}>Review central data preferences →</button></div>
           )}
         </article>
+        <article className="settings-card settings-card-wide gym-training-history">
+          <div className="settings-card-icon">⌁</div><small>PERSONAL HISTORY</small><h2>Gym training history</h2>
+          <p>Your own gym-training activity is imported from your Torn User → Log records. It remains private to your account and is never included in faction reports.</p>
+          <span className={gymTrainingHistory?.connected && gymTrainingHistory.collectionEnabled ? "settings-connection good" : "settings-connection"}><i /> {!gymTrainingHistory ? "Checking history connection…" : !gymTrainingHistory.collectionEnabled ? "Historical collection is disabled" : gymTrainingHistory.connected ? "Connected securely · •••• " + (gymTrainingHistory.key?.lastFour || "••••") : "User → Log connection required"}</span>
+          {gymTrainingHistory?.job && <div className="settings-form-hint">
+            <strong>{gymTrainingHistory.job.status === "complete" ? "Import complete" : gymTrainingHistory.job.status === "failed" ? "Import needs attention" : gymTrainingHistory.job.status === "cancelled" ? "Import cancelled" : "Import " + gymTrainingHistory.job.status}</strong>
+            <p>{gymTrainingHistory.job.logsCollected.toLocaleString()} gym-training entries saved from {gymTrainingHistory.job.logsScanned.toLocaleString()} log records across {gymTrainingHistory.job.pagesCollected.toLocaleString()} pages. {gymTrainingHistory.totalLogs.toLocaleString()} total entries are available.</p>
+            {gymTrainingHistory.job.lastError && <p role="status">{gymTrainingHistory.job.lastError}</p>}
+          </div>}
+          {gymTrainingHistory?.logs?.length ? <div className="gym-training-history-list">
+            <strong>Recent training activity</strong>
+            {gymTrainingHistory.logs.slice(0, 8).map(log => (
+              <div className="gym-training-history-row" key={log.logId}>
+                <span>{log.title || "Gym training"}</span>
+                <small>{new Date(log.timestamp * 1000).toLocaleString()}</small>
+              </div>
+            ))}
+          </div> : <p className="settings-form-hint">No gym-training log entries have been imported yet.</p>}
+          {(!gymTrainingHistory?.collectionEnabled || !gymTrainingHistory.connected) ? (
+            <button type="button" onClick={() => props.onNavigate("/setup")}>Review central privacy & data preferences →</button>
+          ) : gymTrainingHistory.job?.status === "failed" || gymTrainingHistory.job?.status === "cancelled" ? (
+            <button type="button" disabled={eventHistoryBusy} onClick={() => void startGymTrainingCollection()}>{eventHistoryBusy ? "Queueing…" : "Retry gym training history"}</button>
+          ) : null}
+        </article>
         <article className="settings-card">
           <div className="settings-card-icon">◈</div><small>ACCOUNT SECURITY</small><h2>Sessions & access</h2>
           <p>Revoke all active sessions when you suspect another device may still have access. You will be signed out here as well.</p>
@@ -2646,6 +2710,19 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           }
         }
 
+        let gymTrainingReady = false
+        try {
+          await request("/api/me/gym-training/key", "POST")
+          gymTrainingReady = true
+          const gymJob = await request("/api/me/gym-training/collect", "POST")
+          nextNotices.push(gymJob.alreadyComplete
+            ? "Your private gym training history is already complete."
+            : "Your private gym training history backfill has been queued.")
+        } catch (caught) {
+          nextWarnings.push("Gym training history could not be enabled: " +
+            (caught instanceof Error ? caught.message : "The member key needs unrestricted User → Log access."))
+        }
+
         let christmasReady = false
         try {
           await request("/api/me/christmas-town/key", "POST")
@@ -2722,7 +2799,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             <div className="portal-setup-policy-grid">
               <article><strong>Your member API key</strong><p>Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions. The encrypted key is stored by the portal API, not in this browser's local storage.</p></article>
               <article><strong>Shared faction and market data</strong><p>Shared faction information and public market prices are requested by the portal Worker using its own server-side Torn service key. Your personal API key is not used for these shared requests.</p></article>
-              <article><strong>Historical collections & sharing</strong><p>When enabled below, supported personal event archives are imported automatically using your own key. Halloween event metrics are shared with authenticated Naughty Souls members only when you separately enable the Halloween sharing option. Christmas Town records remain private to your account.</p></article>
+              <article><strong>Historical collections & sharing</strong><p>When enabled below, supported personal archives including gym-training log entries, Halloween activity, and Christmas Town activity are imported using your own member key. Gym training and Christmas Town records remain private to your account. Halloween event metrics are shared with authenticated Naughty Souls members only when you separately enable the Halloween sharing option.</p></article>
               <article><strong>Retention & revocation</strong><p>You can turn off collection and sharing later. Revocation stops future collection and removes the stored collection credential or shared live snapshot. Previously collected historical event records are retained under the portal's data-retention policy.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
@@ -2733,10 +2810,10 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>02</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
-            <p>Allow the portal to import historical records supported by your Torn key. The current event backfill integrations cover Halloween and Christmas Town. Halloween needs User → Log and User → Attacks; Christmas Town needs unrestricted User → Log access. Restricted log categories can prevent some history from being imported. Other workspaces will become available here as their historical collectors are added.</p>
+            <p>Allow the portal to import historical records supported by your Torn key. Supported backfills include private gym-training logs, Halloween event activity, and Christmas Town activity. These use your own User → Log permission; Halloween additionally needs User → Attacks. An unrestricted User → Log selection avoids silently incomplete imports. Other historical datasets will be listed here as their collectors become available.</p>
             <label className="portal-setup-check">
               <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => { setHistoricalCollectionEnabled(event.target.checked); if (!event.target.checked) setShareHalloweenHistory(false) }} disabled={busy || saved} />
-              <span><strong>Allow historical collection for supported portal features.</strong><small>Eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
+              <span><strong>Allow historical collection for supported portal features.</strong><small>Gym training and eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
             </label>
             <label className={"portal-setup-check portal-setup-subcheck" + (!historicalCollectionEnabled ? " is-disabled" : "")}>
               <input type="checkbox" checked={shareHalloweenHistory} onChange={event => setShareHalloweenHistory(event.target.checked)} disabled={!historicalCollectionEnabled || busy || saved} />
