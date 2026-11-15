@@ -71,7 +71,7 @@ assert.ok(workspace.includes("successful attacks or hits in the same covered gro
 assert.ok(workspace.includes('key: "revitalizeProcRate"'), "member comparisons must compare Revitalize proc percentages")
 assert.ok(workspace.includes("SIX-PACKS OF ALCOHOL"))
 assert.ok(workspace.includes("Review privacy & data preferences"), "the event workspace must link to central preferences rather than ask for another consent")
-assert.ok(workspace.includes("Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions."))
+assert.ok(workspace.includes("Your primary key verifies your Torn identity and is used only for data tied to your account or features that require your personal Torn permissions."))
 assert.ok(workspace.includes("LIVE HALLOWEEN STATS"), "historical dashboard must show personal item-use counts separately")
 assert.ok(workspace.includes("FACTION-WIDE EVENT TOTALS"), "historical dashboard must label aggregated faction totals")
 assert.ok(workspace.includes("PRACTICAL FHC TARGET"), "personal cooldown summary must distinguish the buffered FHC target")
