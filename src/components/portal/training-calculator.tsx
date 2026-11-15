@@ -16,6 +16,9 @@ type LiveData = {
     companyCooldownReductionPercent: number
     gymHappyLossReductionPercent: number
   }
+  battleStatModifiers?: Record<StatKey, { percent: number; modifiers: Array<{ effect: string; value: number; type: string }> }>
+  job: { type?: string; name?: string; position?: string; companyId?: number; companyTypeId?: number; rating?: number; daysInCompany?: number; points?: number } | null
+  jobPoints: { jobs: Record<string, number>; companies: Array<{ company: { id?: number; name?: string }; points: number }> } | null
   gym: { id: string; name: string; unlockedGyms: Array<{ id: string; name: string; available: boolean }> } | null
   gyms: GymPreset[]
   gymModifiers: Record<StatKey, { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] }>
@@ -124,6 +127,15 @@ function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: nu
   const ticks = waitSeconds < untilNext ? 0 : 1 + Math.floor((waitSeconds - untilNext) / interval)
   return Math.min(maximum - current, ticks * increment)
 }
+function estimateEnergyEquivalentGain(stat: number, happy: number, energy: number, dots: number, modifier: number): number {
+  const adjustedHappy = clamp(happy, 0, HAPPY_CAP) + 250
+  const perEnergy =
+    (3.480061091e-7 * Math.log(adjustedHappy) + 3.091619094e-6) * Math.max(0, stat)
+    + 6.82775184551527e-5 * adjustedHappy
+    - 0.0301431777
+  return Math.max(0, modifier * dots * Math.max(0, energy) * perEnergy)
+}
+
 function estimateGymSession({
   stat, happy, energy, dots, energyPerTrain, modifier, happyLossRate,
 }: {
@@ -276,14 +288,16 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [factionVoracity, setFactionVoracity] = useState(false)
   const [eventDrinkBonus, setEventDrinkBonus] = useState(false)
   const [dvdCount, setDvdCount] = useState(0)
-  const [dvdHappy, setDvdHappy] = useState(2500)
+  const [manualDvdHappy, setManualDvdHappy] = useState<number | null>(null)
   const [yellowEggCount, setYellowEggCount] = useState(0)
   const [mistletoeCount, setMistletoeCount] = useState(0)
-  const [mistletoeTargetHappy, setMistletoeTargetHappy] = useState(99999)
+  const [mistletoeTargetHappy, setMistletoeTargetHappy] = useState(0)
   const [otherHappy, setOtherHappy] = useState(0)
   const [ecstasy, setEcstasy] = useState(false)
   const [seQuantity, setSeQuantity] = useState(0)
   const [seTargetStat, setSeTargetStat] = useState<StatKey>("strength")
+  const [jobPointQuantity, setJobPointQuantity] = useState(0)
+  const [pressPassQuantity, setPressPassQuantity] = useState(0)
   const [projectionDays, setProjectionDays] = useState(30)
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
   const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
@@ -451,6 +465,53 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: 0.4,
   }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier])
 
+  const currentJob = liveData?.job
+  const currentJobName = currentJob?.name || ""
+  const currentJobRating = Math.max(0, safeNumber(currentJob?.rating))
+  const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
+  const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
+  const jobPointSpecial = (() => {
+    if (currentJob?.type !== "company") return null
+    const name = currentJobName.toLowerCase()
+    if (name.includes("fitness center") && currentJobRating >= 5) return { name: "Roid Rage", stat: "strength" as StatKey, energyEquivalent: 4.5 }
+    if (name.includes("furniture store") && currentJobRating >= 3) return { name: "Heavy Lifting", stat: "strength" as StatKey, energyEquivalent: 4.5 }
+    if (name.includes("mining corporation") && currentJobRating >= 5) return { name: "Rock Salt", stat: "defense" as StatKey, energyEquivalent: 4.5 }
+    if (name.includes("logistics management") && currentJobRating >= 1) return { name: "Efficiency", stat: "speed" as StatKey, energyEquivalent: 4.5 }
+    return null
+  })()
+  const hasPressPass = currentJob?.type === "company" && currentJobName.toLowerCase().includes("television network") && currentJobRating >= 10
+  const jobPointMax = jobPointSpecial ? Math.max(0, currentJobPoints - pressPassQuantity * 25) : 0
+  const pressPassMax = hasPressPass ? Math.max(0, Math.floor((currentJobPoints - jobPointQuantity) / 25)) : 0
+  const jobPointStat = jobPointSpecial?.stat || null
+  const jobPointStartingStat = jobPointStat
+    ? (manualStats[jobPointStat].trim() === "" ? safeNumber(liveData?.battleStats?.[jobPointStat]) : Math.max(0, safeNumber(manualStats[jobPointStat])))
+    : 0
+  const jobPointProfile = jobPointStat ? liveData?.gymModifiers?.[jobPointStat] : null
+  const jobPointBookBonus: Record<string, number> = {
+    none: 0, "get-hard": 20, "gym-grunting": jobPointStat === "strength" ? 30 : 0,
+    "self-defense": jobPointStat === "defense" ? 30 : 0,
+    "speed-script": jobPointStat === "speed" ? 30 : 0,
+    "limbo-lovers": jobPointStat === "dexterity" ? 30 : 0,
+  }
+  const jobPointModifier = !jobPointStat ? 1 : gymBookChoice === "auto"
+    ? safeNumber(jobPointProfile?.multiplier, 1)
+    : safeNumber(jobPointProfile?.baseMultiplier, 1) + (jobPointBookBonus[gymBookChoice] || 0) / 100
+  const jobPointDots = jobPointStat ? safeNumber(selectedGym.dots[jobPointStat]) : 0
+  const jobPointGain = (() => {
+    if (!jobPointSpecial || !jobPointStat) return { gain: 0, endingStat: 0, perPoint: 0 }
+    let stat = jobPointStartingStat
+    let gain = 0
+    for (let index = 0; index < Math.min(jobPointQuantity, jobPointMax); index++) {
+      const next = estimateEnergyEquivalentGain(stat, startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
+      stat += next
+      gain += next
+    }
+    return {
+      gain,
+      endingStat: stat,
+      perPoint: estimateEnergyEquivalentGain(jobPointStartingStat, startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
+    }
+  })()
   const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
   const seCalculation = useMemo(() => {
     let value = currentStat
@@ -557,6 +618,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
                 hint={liveStatSource + ". Clear the field to restore the live API value."} testId="training-stat-value" />
               <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(selectedGym.energyCost)} energy per individual train</small></div>
+              <div className="tc-readout-field"><span>Live combat modifier</span><strong>{fmt(safeNumber(liveData?.battleStatModifiers?.[selectedStat]?.percent))}%</strong><small>Combat-only modifiers are not multiplied into the raw-stat gym gain formula.</small></div>
               <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
                 <option value="auto">Use active book from API</option><option value="none">No gym-gain book</option>
                 <option value="get-hard">Get Hard Or Go Home · +20% all stats</option>
@@ -719,9 +781,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div className="tc-readout-field"><span>FHC planned</span><strong>{fmt(fhcCount)} × +500 happy</strong><small>Quantity comes from Energy Supply.</small></div>
               <NumberField label="Erotic DVDs" value={dvdCount} onChange={setDvdCount} min={0} max={maximumDvdCount}
                 hint={"Maximum " + maximumDvdCount + " at the current booster-cooldown budget. Each gives " + fmt(dvdHappy) + " happy."} testId="training-dvd-count" />
-              <label className="tc-field"><span>Happy per Erotic DVD</span><select data-testid="training-dvd-happy" value={String(dvdHappy)} onChange={event => setDvdHappy(Number(event.target.value))}>
-                <option value="2500">2,500 · standard</option><option value="5000">5,000 · 10★ Adult Novelties</option>
-              </select></label>
+              <label className="tc-field"><span>Happy per Erotic DVD</span><select data-testid="training-dvd-happy" value={manualDvdHappy === null ? "auto" : String(manualDvdHappy)}
+                onChange={event => setManualDvdHappy(event.target.value === "auto" ? null : Number(event.target.value))}>
+                <option value="auto">Auto · {fmt(dvdHappy)} happy</option><option value="2500">2,500 · standard</option><option value="5000">5,000 · 10★ Adult Novelties</option>
+              </select><small className="tc-hint">{manualDvdHappy === null && currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10
+                ? "Auto-detected from your current 10★ Adult Novelties job." : manualDvdHappy === null ? "Auto uses standard 2,500 happy unless your live job is 10★ Adult Novelties." : "Manual scenario override."}</small></label>
               <NumberField label="Yellow Easter Eggs" value={yellowEggCount} onChange={setYellowEggCount} min={0} max={maximumYellowEggCount}
                 hint={"Each adds +10,000 happy and 6h booster cooldown. Maximum " + maximumYellowEggCount + " by remaining cooldown."} testId="training-yellow-egg-count" />
               <NumberField label="Poison Mistletoe uses" value={mistletoeCount} onChange={setMistletoeCount} min={0} max={maximumMistletoeCount}
@@ -793,14 +857,29 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-result-total"><span>Projected ending {STAT_OPTIONS.find(option => option.value === seTargetStat)?.label.toLowerCase()}</span><strong>{fmt(seCalculation.endingStat, 2)}</strong></div>
             <div className="tc-inline-note"><strong>Item mapping:</strong> Dumbbells → Strength · Boxing Gloves → Defense · Skateboard → Speed · Parachute → Dexterity.</div>
           </Panel>
-          <Panel title="Other permanent training" eyebrow="WHAT THE CALCULATOR COVERS">
+          <Panel title="Company job-point stat gains" eyebrow="LIVE JOB + JOBPOINTS API" description="Some company specials award permanent battle-stat gains through job points. Current company, rating and saved points are read automatically.">
             <div className="tc-condition-list">
-              <div><span>Gym training</span><strong>Included · live dots + perks</strong></div>
-              <div><span>Stat Enhancers</span><strong>Included · live market</strong></div>
-              <div><span>Education and gym-gain books</span><strong>Included in API modifier</strong></div>
-              <div><span>Temporary combat drug effects</span><strong>Not counted as permanent growth</strong></div>
+              <div><span>Current job / company</span><strong>{currentJobName || "Not returned by Torn API"}</strong></div>
+              <div><span>Company rating / position</span><strong>{currentJob ? fmt(currentJobRating) + "★ · " + (currentJob.position || "Position unavailable") : "Not available"}</strong></div>
+              <div><span>Current company job points</span><strong>{fmt(currentJobPoints)}</strong></div>
+              {jobPointSpecial && <div><span>Available stat special</span><strong>{jobPointSpecial.name} · {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label}</strong></div>}
+              {hasPressPass && <div><span>Press Pass</span><strong>{fmt(pressPassMax)} uses available · 25 points each</strong></div>}
             </div>
-            <p className="tc-muted">Passive battle-stat education bonuses and company/job special stat awards are not treated as ordinary gym trains. They can be layered into a custom scenario when you know the resulting stat change.</p>
+            {jobPointSpecial ? <div className="tc-form-grid">
+              <NumberField label={jobPointSpecial.name + " job points to spend"} value={jobPointQuantity} onChange={setJobPointQuantity}
+                min={0} max={jobPointMax} hint={"Maximum " + fmt(jobPointMax) + " points available. Each point is approximately 4.5E worth of gains in your selected gym."}
+                testId="training-jobpoint-quantity" />
+              <div className="tc-readout-field"><span>Estimated " + STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label + " gain</span><strong>+{fmt(jobPointGain.gain, 2)}</strong>
+                <small>About +{fmt(jobPointGain.perPoint, 2)} per point · current stat, happiness and gym modifiers</small></div>
+              <div className="tc-readout-field"><span>Projected ending stat</span><strong>{fmt(jobPointGain.endingStat, 2)}</strong><small>{fmt(jobPointSpecial.energyEquivalent, 1)}E-equivalent gain per point</small></div>
+            </div> : <p className="tc-muted">No deterministic gym-equivalent company special is available from the current job. Supported: Fitness Center Roid Rage (5★), Furniture Store Heavy Lifting (3★), Mining Corporation Rock Salt (5★) and Logistics Management Efficiency (1★).</p>}
+            {hasPressPass && <div className="tc-form-grid">
+              <NumberField label="Television Network Press Pass uses" value={pressPassQuantity} onChange={setPressPassQuantity}
+                min={0} max={pressPassMax} hint={"Maximum " + fmt(pressPassMax) + " from the remaining job points. Each pass costs 25 points."}
+                testId="training-press-pass-quantity" />
+              <div className="tc-readout-field"><span>Possible battle-stat reward</span><strong>+0.25% to a random fighting stat</strong><small>Random outcome, excluded from the selected-stat forecast.</small></div>
+            </div>}
+            <p className="tc-muted">Company special values are approximate gym-equivalent estimates, not guaranteed exact server awards. Press Pass outcomes are random and are not added to the deterministic forecast.</p>
           </Panel>
         </aside>
       </main>}
