@@ -10,7 +10,7 @@ import { AdminPanel } from "./admin-panel"
 import { InsightsWorkspace } from "./insights-workspace"
 import { AlertsPanel, NotificationSettingsPanel } from "./alerts-panel"
 import { companyTypeIdFromProfile, estimateWeeklyProfit, financialCosts, formatMoney, formatNumber, getObject, pretty, reportedCompanyProfit, resolveDisplayedDailyProfit, stockPriceRows } from "./financial-utils"
-import { AccountSettingsWorkspace, FactionWorkspacePlaceholder, HalloweenWorkspace, PortalHome } from "../portal/workspaces"
+import { AccountSettingsWorkspace, FactionWorkspacePlaceholder, HalloweenWorkspace, PortalHome, PortalSetupWorkspace } from "../portal/workspaces"
 import { ChristmasTownWorkspace } from "../portal/christmas-town"
 import "../portal/workspaces.css"
 
@@ -112,6 +112,7 @@ export function FloorApp() {
   const [loading, setLoading] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
   const [sessionToken, setSessionToken] = useState("")
+  const [setupToken, setSetupToken] = useState("")
   const [sessionActionBusy, setSessionActionBusy] = useState(false)
   const [authChecking, setAuthChecking] = useState(true)
   const [demoMode, setDemoMode] = useState(false)
@@ -223,17 +224,25 @@ export function FloorApp() {
       try {
         const response = await fetch(`${API_BASE}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } })
         if (!response.ok) throw new Error("Session expired")
-        const session = await response.json() as { player: { id: string; name: string }; isAdmin?: boolean; key: { saved: boolean } }
+        const session = await response.json() as { player: { id: string; name: string }; isAdmin?: boolean; setupRequired?: boolean; key: { saved: boolean } }
         if (cancelled) return
-        setSessionToken(token)
         setPlayerName(session.player.name)
         setPlayerId(session.player.id)
         setIsAdmin(session.isAdmin === true)
         setKeySaved(session.key.saved)
         setIsDirector(false)
         setCompanyKeySaved(false)
+        if (session.setupRequired) {
+          setSessionToken("")
+          setSetupToken(token)
+          window.history.replaceState({}, "", "/setup")
+          setRoutePath("/setup")
+          return
+        }
+        setSetupToken("")
+        setSessionToken(token)
 
-        const listResponse = await fetch(`${API_BASE}/api/me/companies`, { headers: { Authorization: `Bearer ${token}` } })
+        const listResponse = await fetch(API_BASE + "/api/me/companies", { headers: { Authorization: "Bearer " + token } })
         if (!listResponse.ok) return
         const list = await listResponse.json() as { companies: SavedCompany[] }
         if (cancelled) return
@@ -845,19 +854,27 @@ export function FloorApp() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ apiKey: apiKey.trim() }),
       })
-      const payload = await response.json() as { error?: string; token?: string; isAdmin?: boolean; player?: { id: string; name: string }; key?: { saved: boolean } }
+      const payload = await response.json() as { error?: string; token?: string; isAdmin?: boolean; setupRequired?: boolean; player?: { id: string; name: string }; key?: { saved: boolean } }
       if (!response.ok) throw new Error(payload.error || "Sign-in failed. Check that your Torn custom key or Full Access key is valid and includes User profile and faction access.")
       if (!payload.token) throw new Error("The sign-in service did not return a session. Please try again.")
       localStorage.setItem("ncd_session", payload.token)
-      setSessionToken(payload.token)
       setPlayerName(payload.player?.name || "Torn member")
       setPlayerId(payload.player?.id || "")
       setIsAdmin(payload.isAdmin === true)
       setKeySaved(payload.key?.saved ?? true)
       setIsDirector(false)
       setCompanyKeySaved(false)
-
       setApiKey("")
+
+      if (payload.setupRequired) {
+        setSessionToken("")
+        setSetupToken(payload.token)
+        window.history.replaceState({}, "", "/setup")
+        setRoutePath("/setup")
+        return
+      }
+      setSetupToken("")
+      setSessionToken(payload.token)
 
       const listResponse = await fetch(`${API_BASE}/api/me/companies`, { headers: { Authorization: `Bearer ${payload.token}` } })
       if (listResponse.ok) {
@@ -881,6 +898,7 @@ export function FloorApp() {
       void fetch(`${API_BASE}/api/auth/sign-out`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined)
     }
     localStorage.removeItem("ncd_session")
+    setSetupToken("")
     window.history.replaceState({}, "", "/")
     setRoutePath("/")
     setDemoMode(false)
@@ -961,6 +979,32 @@ export function FloorApp() {
 
   if (authChecking) return <div className="login-screen"><div className="login-card login-loading"><span className="brand-mark">NC</span><p>Checking your member session…</p></div></div>
 
+  if (setupToken && !sessionToken && !demoMode) return (
+    <PortalSetupWorkspace
+      playerName={playerName}
+      playerId={playerId}
+      apiBase={API_BASE}
+      sessionToken={setupToken}
+      onComplete={() => {
+        const token = setupToken
+        setSetupToken("")
+        setSessionToken(token)
+        window.history.replaceState({}, "", "/")
+        setRoutePath("/")
+        void fetch(API_BASE + "/api/me/companies", { headers: { Authorization: "Bearer " + token } })
+          .then(async response => response.ok ? await response.json() as { companies?: SavedCompany[] } : { companies: [] })
+          .then(payload => {
+            const companies = payload.companies || []
+            setSavedCompanies(companies)
+            setCompanyKeySaved(companies.some(company => company.has_api_key))
+            if (companies.length) setSelectedCompanyId(companies[0].company_id)
+          })
+          .catch(() => undefined)
+      }}
+      onSignOut={() => signOut()}
+    />
+  )
+
   if (!sessionToken && !demoMode) return (
     <main className="login-screen">
       <section className="login-card" aria-labelledby="login-title">
@@ -973,8 +1017,8 @@ export function FloorApp() {
           <label htmlFor="login-api-key">Your Naughty Family Portal Torn API key</label>
           <input id="login-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste your Torn API key" required />
           <p className="login-hint">Your key is sent securely to the dashboard API for validation. It is never stored in this browser's local storage.</p>
-          <p className="login-hint">This is your one portal key for sign-in, company data, private live status and optional Halloween collection. Features are enabled only when your key has the required Torn selections and you grant their separate data-sharing consent.</p>
-          <p className="login-hint"><a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&title=Naughty%20Family%20Portal&user=profile,faction,job,personalstats,bars,cooldowns,networth,halloween,log&faction=members,stats,contributors&company=profile,employees,stock,companies&torn=companies&key=info" target="_blank" rel="noreferrer">Create the recommended Naughty Family Portal custom key ↗</a></p>
+          <p className="login-hint">Your member key verifies your identity and is used only for data that specifically requires your own Torn permissions. Shared faction and market requests use the portal Worker's server-side service key.</p>
+          <p className="login-hint"><a className="login-key-builder-button" href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=faction,job,personalstats,profile,bars,calendar,cooldowns,gym,halloween,perks,refills,attacks,networth,log&company=companies,employees,profile,stock&faction=members,stats,contributors&torn=companies,gyms,items,logcategories,logtypes&sensitiveData=1&title=NaughtyFamily" target="_blank" rel="noreferrer"><span>＋</span> Create Custom Torn API Key <b>↗</b></a></p>
           {error && <div className={`error-banner${error.startsWith("ACCESS DENIED:") ? " access-denied-banner" : ""}`} role="alert">{error.startsWith("ACCESS DENIED:") && <strong>ACCESS DENIED · NAUGHTY SOULS MEMBERSHIP REQUIRED</strong>}{error.startsWith("ACCESS DENIED:") && <br />}{error}</div>}
           <button className="primary-button form-submit" disabled={loading}>{loading ? <><span className="spinner" /> Verifying key…</> : <>Sign in securely <span>→</span></>}</button>
         </form>
