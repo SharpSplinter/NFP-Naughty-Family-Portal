@@ -283,7 +283,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
     } finally { setPrivateLiveDiagnosticsLoading(false) }
   }, [apiBase, sessionToken])
 
-  const loadDataGovernance = useCallback(async (query = dataGovernanceQuery) => {
+  const loadDataGovernance = useCallback(async (query: string) => {
     setDataGovernanceLoading(true)
     setDataGovernanceError("")
     try {
@@ -297,7 +297,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
       setDataGovernanceError(caught instanceof Error ? caught.message : "Could not load data governance diagnostics.")
       setDataGovernance(null)
     } finally { setDataGovernanceLoading(false) }
-  }, [apiBase, sessionToken, dataGovernanceQuery])
+  }, [apiBase, sessionToken])
 
   const loadJobs = useCallback(async () => {
     try {
@@ -340,7 +340,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
   useEffect(() => { void refreshAll() }, [refreshAll])
   useEffect(() => { if (tab === "administrators") void loadAdministrators() }, [tab])
   useEffect(() => { if (tab === "private-live") void loadPrivateLiveDiagnostics() }, [tab, loadPrivateLiveDiagnostics])
-  useEffect(() => { if (tab === "data-governance") void loadDataGovernance() }, [tab, loadDataGovernance])
+  useEffect(() => { if (tab === "data-governance") void loadDataGovernance("") }, [tab, loadDataGovernance])
   useEffect(() => { if (tab === "weekly-boundaries") void loadWeeklyBoundaries() }, [tab])
   useEffect(() => { if (tab === "operations") void loadAutomationRuns() }, [tab, loadAutomationRuns])
   useEffect(() => { if (tab === "operations") void loadRefreshCandidates(refreshMemberSearch, refreshMemberOffset) }, [tab, loadRefreshCandidates, refreshMemberSearch, refreshMemberOffset])
@@ -627,7 +627,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
       </section>
     </div>}
     {tab === "data-governance" && <div className="admin-section-stack">
-      <div className="admin-section-heading"><div><h2>Data & consent governance</h2><p>Central policy status, independent sharing choices, and private historical-collection progress across Naughty Family accounts.</p></div><button type="button" className="secondary-button" onClick={() => void loadDataGovernance()} disabled={dataGovernanceLoading}>{dataGovernanceLoading ? "Refreshing…" : "Refresh governance ↻"}</button></div>
+      <div className="admin-section-heading"><div><h2>Data & consent governance</h2><p>Central policy status, independent sharing choices, and private historical-collection progress across Naughty Family accounts.</p></div><button type="button" className="secondary-button" onClick={() => void loadDataGovernance(dataGovernanceQuery)} disabled={dataGovernanceLoading}>{dataGovernanceLoading ? "Refreshing…" : "Refresh governance ↻"}</button></div>
       <p className="admin-readonly-note"><strong>Privacy boundary.</strong> This is an operational metadata view. It does not expose API keys, key suffixes, private bars, networth values, or raw event logs. Historical collection consent is separate from Halloween sharing; Christmas Town and Gym Training archives remain member-private.</p>
       {dataGovernanceError && <div className="error-banner" role="alert">{dataGovernanceError}</div>}
       {dataGovernance && <>
@@ -683,7 +683,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
               <td><small>Halloween {Number(member.halloweenKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Christmas Town {Number(member.christmasTownKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Gym Training {Number(member.gymTrainingKeyConnected) === 1 ? "connected" : "not connected"}</small></td>
               <td><small>Halloween {member.halloweenJobStatus ? prettyStatus(member.halloweenJobStatus) : "no job"}{member.halloweenJobYear ? ` · ${member.halloweenJobYear}` : ""} · {Number(member.halloweenStoredLogs ?? 0)} logs</small><small>Christmas Town {member.christmasTownJobStatus ? prettyStatus(member.christmasTownJobStatus) : "no job"}{member.christmasTownJobYear ? ` · ${member.christmasTownJobYear}` : ""} · {Number(member.christmasTownStoredLogs ?? 0)} logs</small><small>Gym Training {member.gymTrainingJobStatus ? prettyStatus(member.gymTrainingJobStatus) : "no job"} · {Number(member.gymTrainingStoredLogs ?? 0)} logs · {Number(member.gymTrainingPagesCollected ?? 0)} pages</small></td>
             </tr>
-          })}</tbody></table></div> : <div className="empty-state">{dataGovernanceLoading ? "Loading member governance…" : "No accounts match this filter. Try another search or filter."}</div>}
+          })}</tbody></table></div> : <div className="empty-state">{dataGovernanceLoading ? "Loading member governance…" : dataGovernanceError ? "Governance data could not be loaded." : "No accounts match this filter. Try another search or filter."}</div>}
       </section>
       <p className="field-hint">Collector connection flags indicate validated feature connection metadata only. They do not prove ongoing Torn availability or reveal credentials. Job status and stored-record counts are informational and do not grant access to member-private records.</p>
     </div>}
