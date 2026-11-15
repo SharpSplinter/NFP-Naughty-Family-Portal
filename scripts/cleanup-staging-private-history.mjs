@@ -8,13 +8,13 @@ const DATABASE = "naughtyfamily-acceptance-staging";
 const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
 const sql = [
   "PRAGMA foreign_keys = ON;",
-  "DELETE FROM admin_audit_log WHERE actor_player_id IN ('999999001', '999999002', '999999004', '999999005', '999999006');",
+  "DELETE FROM admin_audit_log WHERE actor_player_id IN ('999999001', '999999002', '999999004', '999999005', '999999006', '999999007');",
   "DELETE FROM discord_link_codes WHERE owner_player_id = '999999005';",
   "DELETE FROM discord_account_links WHERE owner_player_id = '999999005';",
   "DELETE FROM discord_alert_poll_health WHERE owner_player_id = '999999005';",
   "DELETE FROM discord_alert_poll_history WHERE owner_player_id = '999999005';",
-  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member'));",
-  "DELETE FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member');",
+  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member') OR (player_id = '999999007' AND player_name = 'Staging First Login Consent Member'));",
+  "DELETE FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member') OR (player_id = '999999007' AND player_name = 'Staging First Login Consent Member');",
 ].join("\n") + "\n";
 
 if (!process.env.CLOUDFLARE_API_TOKEN) throw new Error("CLOUDFLARE_API_TOKEN is required for staging fixture cleanup.");
