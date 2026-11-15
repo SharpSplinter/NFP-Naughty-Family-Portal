@@ -776,7 +776,7 @@ async function runFactionStatsCollection(env: WorkerEnv, runId: string): Promise
   ).bind(runId).first<{ runId: string; factionId: string; status: string; scheduledAt: string }>()
   if (!run || ["completed", "failed"].includes(run.status)) return
   const apiKey = serviceFullAccessApiKey(env)
-  if (!apiKey) throw new Error("Faction collector secret is not configured.")
+  if (!apiKey) throw new Error("Worker service Torn API key is not configured.")
   const startedAt = new Date().toISOString()
   await db.prepare(
     "UPDATE faction_stats_collection_runs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE run_id = ? AND status IN ('queued', 'running')"
@@ -1172,7 +1172,7 @@ async function runFactionPerformanceCollection(env: WorkerEnv, runId: string): P
   ).bind(runId).first<FactionPerformanceRunRow>()
   if (!run || run.status === "completed" || run.status === "partial" || run.status === "failed") return
   const apiKey = serviceFullAccessApiKey(env)
-  if (!apiKey) throw new Error("Faction collector secret is not configured.")
+  if (!apiKey) throw new Error("Worker service Torn API key is not configured.")
   const now = new Date().toISOString()
   await db.prepare(
     "UPDATE faction_performance_collection_runs SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE run_id = ? AND status IN ('queued', 'running')"
@@ -1595,8 +1595,7 @@ async function fetchGlobalCompanyTypeCatalog(apiKey: string): Promise<GlobalComp
   return types
 }
 
-async function getGlobalRankingApiKey(env: WorkerEnv, preferredKey?: string): Promise<string> {
-  if (preferredKey) return preferredKey
+async function getGlobalRankingApiKey(env: WorkerEnv): Promise<string> {
   // Use the service-owned master Full Access key for shared Torn company
   // directory/ranking data. Keep the Custom Access service key as a fallback,
   // and never borrow a member's personal key.
@@ -1612,7 +1611,6 @@ async function startGlobalRankingRefresh(
   source: "scheduled" | "automatic" | "admin",
   adminJobId?: string,
   deferDispatch = false,
-  preferredKey?: string,
 ): Promise<{ runId: string; dispatchRequired: boolean }> {
   if (!env.GLOBAL_RANKINGS_QUEUE) throw new Error("The resumable global-ranking queue is not configured.")
   const db = requireDb(env)
@@ -1626,7 +1624,7 @@ async function startGlobalRankingRefresh(
     return { runId: active.runId, dispatchRequired: false }
   }
 
-  const apiKey = await getGlobalRankingApiKey(env, preferredKey)
+  const apiKey = await getGlobalRankingApiKey(env)
   const types = await fetchGlobalCompanyTypeCatalog(apiKey)
   const now = new Date().toISOString()
   const runId = randomToken().slice(0, 24)
@@ -3519,7 +3517,7 @@ async function handleGlobalRankingQueueBatch(batch: { messages: QueueMessage[]; 
   }
 }
 
-async function refreshGlobalRankingCache(env: WorkerEnv, apiKey?: string, force = false): Promise<void> {
+async function refreshGlobalRankingCache(env: WorkerEnv, force = false): Promise<void> {
   if (!env.DB) return
   const db = requireDb(env)
   await db.prepare("CREATE TABLE IF NOT EXISTS global_rankings_cache (cache_id INTEGER PRIMARY KEY CHECK (cache_id = 1), companies_json TEXT NOT NULL, fetched_at TEXT NOT NULL)").run()
@@ -3532,13 +3530,12 @@ async function refreshGlobalRankingCache(env: WorkerEnv, apiKey?: string, force 
   if (!force && Number.isFinite(cacheAge) && cacheAge >= 0 && cacheAge < maxAgeMs) return
 
   if (env.GLOBAL_RANKINGS_QUEUE) {
-    await startGlobalRankingRefresh(env, force ? "scheduled" : "automatic", undefined, false, apiKey)
+    await startGlobalRankingRefresh(env, force ? "scheduled" : "automatic", undefined, false)
     return
   }
 
   // Local/test fallback only. Production is bound to GLOBAL_RANKINGS_QUEUE in wrangler.toml.
-  let key = apiKey
-  if (!key) key = await getGlobalRankingApiKey(env)
+  const key = await getGlobalRankingApiKey(env)
   const snapshot = await fetchGlobalCompanyRankings(key)
   await db.prepare("INSERT INTO global_rankings_cache (cache_id, companies_json, fetched_at) VALUES (1, ?, ?) ON CONFLICT(cache_id) DO UPDATE SET companies_json = excluded.companies_json, fetched_at = excluded.fetched_at")
     .bind(asJson(snapshot.companies), snapshot.snapshotFetchedAt).run()
@@ -4582,7 +4579,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   const isOfficialVerificationWindow = controller.cron.trim() === "10 0 * * *"
   try { await ensureAutomationSchema(env) } catch {
     const fallbackTasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromAnyKey(env, 35)]
-    if (isRankingCaptureWindow) fallbackTasks.push(refreshGlobalRankingCache(env, undefined, true))
+    if (isRankingCaptureWindow) fallbackTasks.push(refreshGlobalRankingCache(env, true))
     if (isOfficialVerificationWindow) fallbackTasks.push(verifyGlobalRankingsAgainstOfficialSnapshot(env, controller.scheduledTime))
     await Promise.allSettled(fallbackTasks)
     return
@@ -4592,7 +4589,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   await db.prepare("INSERT INTO automation_runs (run_id, trigger_name, status, started_at) VALUES (?, ?, 'running', ?)").bind(runId, controller.cron || "scheduled", startedAt).run()
   const isWeeklyLock = new Date(controller.scheduledTime).getUTCDay() === 0
   const tasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromAnyKey(env, isWeeklyLock ? 250 : 35)]
-  if (isRankingCaptureWindow) tasks.push(refreshGlobalRankingCache(env, undefined, true))
+  if (isRankingCaptureWindow) tasks.push(refreshGlobalRankingCache(env, true))
   if (isOfficialVerificationWindow) tasks.push(verifyGlobalRankingsAgainstOfficialSnapshot(env, controller.scheduledTime))
   if (isWeeklyLock) tasks.push(captureWeeklyFactionStarCounts(env, startedAt))
   const results = await Promise.allSettled(tasks)
@@ -4681,7 +4678,7 @@ async function runAdminEndpointRefresh(env: WorkerEnv, config: AdminEndpointRefr
         } else {
           await db.prepare("CREATE TABLE IF NOT EXISTS global_rankings_cache (cache_id INTEGER PRIMARY KEY CHECK (cache_id = 1), companies_json TEXT NOT NULL, fetched_at TEXT NOT NULL)").run()
           const before = await db.prepare("SELECT fetched_at AS fetchedAt FROM global_rankings_cache WHERE cache_id = 1").first<{ fetchedAt: string }>()
-          await refreshGlobalRankingCache(env, undefined, true)
+          await refreshGlobalRankingCache(env, true)
           const after = await db.prepare("SELECT fetched_at AS fetchedAt FROM global_rankings_cache WHERE cache_id = 1").first<{ fetchedAt: string }>()
           if (!after?.fetchedAt || after.fetchedAt === before?.fetchedAt) {
             throw new Error("Global company ranking refresh did not write a new cache snapshot. Another refresh may still hold the refresh lock.")
