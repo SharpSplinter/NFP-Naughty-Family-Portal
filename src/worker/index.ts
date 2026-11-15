@@ -438,17 +438,25 @@ type PortalConsentRecord = {
   apiKeyUsageAccepted?: number
   apiKeyConsentFingerprint?: string | null
 }
+async function currentPortalApiKeyFingerprint(env: WorkerEnv, playerId: string): Promise<string | null> {
+  // Hash the encrypted credential envelope rather than decrypting the key on
+  // each portal request. A replacement produces a new ciphertext/IV pair.
+  const row = await requireDb(env).prepare(
+    "SELECT ciphertext, iv FROM api_keys WHERE player_id = ?",
+  ).bind(playerId).first<{ ciphertext: string; iv: string }>()
+  if (!row?.ciphertext || !row?.iv) return null
+  return sha256(playerId + ":" + row.ciphertext + ":" + row.iv)
+}
 async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent: PortalConsentRecord | null): Promise<boolean> {
   if (
     consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
     Number(consent.apiKeyUsageAccepted) !== 1 ||
     !consent.apiKeyConsentFingerprint
   ) return false
-  const apiKey = await savedKey(env, playerId)
-  if (!apiKey) return false
-  // Bind the acknowledgement to the exact primary credential. Replacing that
-  // credential requires a fresh API-key use consent before another portal API call.
-  return consent.apiKeyConsentFingerprint === await sha256(apiKey)
+  const currentFingerprint = await currentPortalApiKeyFingerprint(env, playerId)
+  // A primary-key replacement changes the encrypted envelope and requires a
+  // fresh acknowledgement before any gated member endpoint becomes available.
+  return currentFingerprint !== null && consent.apiKeyConsentFingerprint === currentFingerprint
 }
 
 /** Remove feature registrations tied to an older portal credential while retaining user data/history. */
@@ -6553,9 +6561,8 @@ export default {
       if (!isRecord(body) || body.policyAccepted !== true || body.apiKeyUsageAccepted !== true || body.consentVersion !== PORTAL_CONSENT_VERSION) {
         return jsonResponse({ error: "Acknowledge the current privacy policy and confirm authorization to use your own Custom Access or Full Access Torn API key." }, 400, origin)
       }
-      const primaryApiKey = await savedKey(env, session.player_id)
-      if (!primaryApiKey) return jsonResponse({ error: "Your primary portal API key is missing. Sign in again with your own Custom Access or Full Access key before completing consent." }, 409, origin)
-      const apiKeyConsentFingerprint = await sha256(primaryApiKey)
+      const apiKeyConsentFingerprint = await currentPortalApiKeyFingerprint(env, session.player_id)
+      if (!apiKeyConsentFingerprint) return jsonResponse({ error: "Your primary portal API key is missing. Sign in again with your own Custom Access or Full Access key before completing consent." }, 409, origin)
       const historicalCollectionEnabled = body.historicalCollectionEnabled === true
       const shareHalloweenHistory = historicalCollectionEnabled && body.shareHalloweenHistory === true
       const sharePrivateLive = body.sharePrivateLive === true
