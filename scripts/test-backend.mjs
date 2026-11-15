@@ -121,6 +121,7 @@ try {
     const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
     return {
       consentVersion: "portal-data-policy-v3",
+      policyVersion: "2026-11-15-v1",
       apiKeyUsageAccepted: 1,
       apiKeyConsentFingerprint: fingerprint,
     }
@@ -142,7 +143,7 @@ try {
         return (sql) => {
           const statement = target.prepare(sql)
           const normalizedSql = String(sql).trim().replace(/\s+/g, " ").toLowerCase()
-          if (normalizedSql.startsWith("select ciphertext, iv from api_keys where player_id = ? and last_four is not null")) {
+          if (normalizedSql.startsWith("select ciphertext, iv from api_keys where player_id = ? and ciphertext is not null and iv is not null")) {
             let boundKeyValues = []
             let keyStatement
             keyStatement = new Proxy(statement, {
@@ -160,7 +161,7 @@ try {
             })
             return keyStatement
           }
-          if (!normalizedSql.startsWith("select consent_version as consentversion, api_key_usage_accepted as apikeyusageaccepted, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
+          if (!normalizedSql.startsWith("select consent_version as consentversion, policy_version as policyversion, api_key_usage_accepted as apikeyusageaccepted, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
             return statement
           }
           let consentStatement
@@ -178,6 +179,7 @@ try {
                 return async (...args) => {
                   const existing = await statementTarget.first(...args)
                   if (existing?.consentVersion === "portal-data-policy-v3" &&
+                      existing?.policyVersion === "2026-11-15-v1" &&
                       Number(existing.apiKeyUsageAccepted) === 1 &&
                       typeof existing.apiKeyConsentFingerprint === "string") return existing
                   return consentFixtureForMember(target, env, String(boundValues[0] ?? ""))
