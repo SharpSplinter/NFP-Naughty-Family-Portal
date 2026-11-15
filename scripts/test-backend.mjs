@@ -106,6 +106,27 @@ try {
   // their setupRequired behavior can still be tested with an unconsented record.
   const workerImplementation = worker
   const originalWorkerFetch = workerImplementation.fetch.bind(workerImplementation)
+  async function consentFixtureForMember(database, env, playerId) {
+    const keyRow = await database.prepare("SELECT ciphertext, iv FROM api_keys WHERE player_id = ?")
+      .bind(playerId).first()
+    if (!keyRow || !env?.KEY_ENCRYPTION_SECRET) return {
+      consentVersion: "portal-data-policy-v3",
+      apiKeyUsageAccepted: 0,
+      apiKeyConsentFingerprint: null,
+    }
+    const keyMaterial = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.KEY_ENCRYPTION_SECRET))
+    const encryptionKey = await crypto.subtle.importKey("raw", keyMaterial, { name: "AES-GCM" }, false, ["decrypt"])
+    const ciphertext = Uint8Array.from(Buffer.from(keyRow.ciphertext, "base64"))
+    const iv = Uint8Array.from(Buffer.from(keyRow.iv, "base64"))
+    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, encryptionKey, ciphertext)
+    const digest = await crypto.subtle.digest("SHA-256", plaintext)
+    const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
+    return {
+      consentVersion: "portal-data-policy-v3",
+      apiKeyUsageAccepted: 1,
+      apiKeyConsentFingerprint: fingerprint,
+    }
+  }
   workerImplementation.fetch = (request, env, ctx) => {
     const path = new URL(request instanceof Request ? request.url : String(request)).pathname
     if (!env?.DB || env.TEST_WITHOUT_PORTAL_CONSENT === true ||
@@ -123,7 +144,7 @@ try {
         return (sql) => {
           const statement = target.prepare(sql)
           const normalizedSql = String(sql).trim().replace(/\s+/g, " ").toLowerCase()
-          if (normalizedSql !== "select consent_version as consentversion from portal_user_consents where player_id = ?") {
+          if (!normalizedSql.startsWith("select consent_version as consentversion, api_key_usage_accepted as apikeyusageaccepted, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
             return statement
           }
           let consentStatement
@@ -136,8 +157,10 @@ try {
                 }
               }
               if (statementProperty === "first") {
-                return async (...args) => (await statementTarget.first(...args)) ?? {
-                  consentVersion: "portal-data-policy-v2",
+                return async (...args) => {
+                  const existing = await statementTarget.first(...args)
+                  if (existing) return existing
+                  return consentFixtureForMember(target, env, String(args[0] ?? ""))
                 }
               }
               const value = Reflect.get(statementTarget, statementProperty, statementTarget)
@@ -4316,9 +4339,17 @@ try {
         created_at: new Date(Date.now() - 86400000).toISOString(),
       })
       if (member.apiKey) apiKeys.set(playerId, await makeEncryptedTestKey(secret, member.apiKey))
+      const apiKeyDigest = member.apiKey
+        ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(member.apiKey))
+        : null
+      const apiKeyConsentFingerprint = apiKeyDigest
+        ? Array.from(new Uint8Array(apiKeyDigest), byte => byte.toString(16).padStart(2, "0")).join("")
+        : null
       portalConsents.set(playerId, {
         player_id: playerId,
-        consent_version: "portal-data-policy-v2",
+        consent_version: "portal-data-policy-v3",
+        api_key_usage_accepted: apiKeyConsentFingerprint ? 1 : 0,
+        api_key_consent_fingerprint: apiKeyConsentFingerprint,
         historical_collection_enabled: 1,
         share_halloween_history: 0,
         share_private_live: 0,
@@ -4349,9 +4380,21 @@ try {
         return {
           bind(...args) { values = args; return this },
           async first() {
-            if (normalized.startsWith("select consent_version as consentversion from portal_user_consents")) {
+            if (normalized.startsWith("select consent_version as consentversion")) {
               const consent = portalConsents.get(String(values[0]))
-              return consent ? { consentVersion: consent.consent_version } : null
+              if (!consent) return null
+              return {
+                consentVersion: consent.consent_version,
+                policyVersion: consent.policy_version ?? "2026-11-15-v1",
+                acknowledgedAt: consent.policy_acknowledged_at ?? new Date().toISOString(),
+                apiKeyUsageAccepted: consent.api_key_usage_accepted ?? 0,
+                apiKeyConsentAcknowledgedAt: consent.api_key_consent_acknowledged_at ?? null,
+                apiKeyConsentFingerprint: consent.api_key_consent_fingerprint ?? null,
+                historicalCollectionEnabled: consent.historical_collection_enabled,
+                shareHalloweenHistory: consent.share_halloween_history,
+                sharePrivateLive: consent.share_private_live,
+                shareNetworth: consent.share_networth,
+              }
             }
             if (normalized.startsWith("select historical_collection_enabled as enabled from portal_user_consents")) {
               const consent = portalConsents.get(String(values[0]))
