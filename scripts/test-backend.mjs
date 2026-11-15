@@ -4416,6 +4416,7 @@ try {
                 policyVersion: consent.policy_version ?? "2026-11-15-v1",
                 acknowledgedAt: consent.policy_acknowledged_at ?? new Date().toISOString(),
                 apiKeyUsageAccepted: consent.api_key_usage_accepted ?? 0,
+                apiKeyAccessType: consent.api_key_access_type ?? "custom",
                 apiKeyConsentAcknowledgedAt: consent.api_key_consent_acknowledged_at ?? null,
                 apiKeyConsentFingerprint: consent.api_key_consent_fingerprint ?? null,
                 historicalCollectionEnabled: consent.historical_collection_enabled,
