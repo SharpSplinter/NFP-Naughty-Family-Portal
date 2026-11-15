@@ -43,7 +43,7 @@ type D1Database = {
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
-type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer; DEBUG_PORTAL_CONSENT?: boolean }
+type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
 function serviceFullAccessApiKey(env: WorkerEnv): string {
   // SERVICE is the production master binding. FULL_ACCESS remains a compatibility
   // alias for the isolated acceptance Worker until its secret is renamed there.
@@ -452,28 +452,6 @@ async function currentPortalApiKeyFingerprint(env: WorkerEnv, playerId: string):
   return sha256(playerId + ":" + row.ciphertext + ":" + row.iv)
 }
 async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent: PortalConsentRecord | null): Promise<boolean> {
-  if (env.DEBUG_PORTAL_CONSENT) {
-    const currentFingerprint = await currentPortalApiKeyFingerprint(env, playerId)
-    const checks = {
-      consentVersionMatches: consent?.consentVersion === PORTAL_CONSENT_VERSION,
-      policyVersionMatches: consent?.policyVersion === PORTAL_POLICY_VERSION,
-      apiKeyUsageAccepted: Number(consent?.apiKeyUsageAccepted) === 1,
-      apiKeyAccessTypeValid: consent?.apiKeyAccessType === "custom" || consent?.apiKeyAccessType === "full",
-      consentFingerprintPresent: Boolean(consent?.apiKeyConsentFingerprint),
-      currentFingerprintPresent: currentFingerprint !== null,
-      fingerprintMatches: currentFingerprint !== null && consent?.apiKeyConsentFingerprint === currentFingerprint,
-    }
-    console.info(JSON.stringify({
-      event: "test_portal_consent_diagnostic",
-      playerId,
-      consentVersion: consent?.consentVersion ?? null,
-      expectedConsentVersion: PORTAL_CONSENT_VERSION,
-      policyVersion: consent?.policyVersion ?? null,
-      expectedPolicyVersion: PORTAL_POLICY_VERSION,
-      checks,
-    }))
-    return Object.values(checks).every(Boolean)
-  }
   if (
     consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
     consent?.policyVersion !== PORTAL_POLICY_VERSION ||
