@@ -42,7 +42,12 @@ type D1Database = {
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
-type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_FACTION_API_KEY?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
+type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_FACTION_API_KEY?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
+function serviceFullAccessApiKey(env: WorkerEnv): string {
+  // SERVICE is the production master binding. FULL_ACCESS remains a compatibility
+  // alias for the isolated acceptance Worker until its secret is renamed there.
+  return env.TORN_API_KEY_SERVICE?.trim() || env.TORN_API_KEY_FULL_ACCESS?.trim() || ""
+}
 type Session = { player_id: string; player_name: string; is_admin: number; faction_id?: string | null; faction_verified_at?: string | null; membership_check_attempted_at?: string | null; membership_check_status?: string | null }
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }
@@ -1593,7 +1598,7 @@ async function getGlobalRankingApiKey(env: WorkerEnv, preferredKey?: string): Pr
   // Use the service-owned master Full Access key for shared Torn company
   // directory/ranking data. Keep the Custom Access service key as a fallback,
   // and never borrow a member's personal key.
-  const serviceKey = env.TORN_API_KEY_SERVICE?.trim()
+  const serviceKey = serviceFullAccessApiKey(env)
   if (serviceKey) return serviceKey
   const customAccess = env.TORN_API_KEY_CUSTOM?.trim()
   if (customAccess) return customAccess
@@ -2042,7 +2047,7 @@ async function loadHalloweenExchangeMarketValue(
 
   const cached = await readCache()
   const cacheById = new Map((cached.results ?? []).map(row => [String(row.itemId), row]))
-  const apiKey = env.TORN_API_KEY_SERVICE?.trim() ?? ""
+  const apiKey = serviceFullAccessApiKey(env)
   const refreshIds = apiKey
     ? itemIds
       .filter(itemId => {
