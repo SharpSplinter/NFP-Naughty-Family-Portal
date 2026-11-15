@@ -42,7 +42,7 @@ type D1Database = {
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
-type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_FACTION_API_KEY?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
+type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
 function serviceFullAccessApiKey(env: WorkerEnv): string {
   // SERVICE is the production master binding. FULL_ACCESS remains a compatibility
   // alias for the isolated acceptance Worker until its secret is renamed there.
@@ -3574,9 +3574,8 @@ async function verifyGlobalRankingsAgainstOfficialSnapshot(env: WorkerEnv, sched
         record.weeklyIncomeMismatches, record.status, record.errorMessage).run()
   }
   try {
-    const keyRow = await db.prepare("SELECT player_id FROM api_keys ORDER BY updated_at DESC LIMIT 1").first<{ player_id: string }>()
-    const apiKey = keyRow ? await savedKey(env, keyRow.player_id) : null
-    if (!apiKey) throw new Error("No saved Torn API key is available for the official company snapshot verification.")
+    const apiKey = serviceFullAccessApiKey(env)
+    if (!apiKey) throw new Error("No Worker-owned Torn service API key is available for the official company snapshot verification.")
     const [official, cached] = await Promise.all([
       fetchOfficialCompanySnapshot(apiKey),
       db.prepare("SELECT companies_json AS companiesJson, fetched_at AS fetchedAt FROM global_rankings_cache WHERE cache_id = 1").first<{ companiesJson: string; fetchedAt: string }>(),
