@@ -486,7 +486,7 @@ async function memberHasFactionApiAccess(env: WorkerEnv, playerId: string): Prom
       "SELECT key_fingerprint AS keyFingerprint, faction_access AS factionAccess, validated_at AS validatedAt FROM portal_member_key_capabilities WHERE player_id = ?",
     ).bind(playerId).first<{ keyFingerprint: string; factionAccess: number; validatedAt: string }>()
     const validatedAt = cached?.validatedAt ? Date.parse(cached.validatedAt) : Number.NaN
-    if (cached?.keyFingerprint === fingerprint && Number.isFinite(validatedAt) && Date.now() - validatedAt < 6 * 60 * 60 * 1000) {
+    if (cached?.keyFingerprint === fingerprint && Number.isFinite(validatedAt) && Date.now() - validatedAt < 15 * 60 * 1000) {
       return Number(cached.factionAccess) === 1
     }
 
