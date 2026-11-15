@@ -54,6 +54,8 @@ const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-
 const DAY = 86400
 const ADMIN_PLAYER_ID = "351311"
 const NAUGHTY_SOULS_FACTION_ID = "8317"
+const PORTAL_CONSENT_VERSION = "portal-data-policy-v1"
+const PORTAL_POLICY_VERSION = "2026-11-14"
 const FACTION_DIRECTOR_ADMIN_QUEUE_KIND = "faction-director-admin-refresh"
 const ADMIN_FACTION_DIRECTORY_BATCH_SIZE = 35
 const ADMIN_FACTION_DIRECTORY_MAX_BATCHES = 6
@@ -691,7 +693,7 @@ async function enqueueOneFactionPerformanceRun(
   kind: FactionPerformanceRunRow["collectionKind"],
   intervalMs: number,
 ): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !env.TORN_FACTION_API_KEY?.trim()) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
   const db = requireDb(env)
   const bucketStart = Math.floor(scheduledTime / intervalMs) * intervalMs
   const scheduledAt = new Date(bucketStart).toISOString()
@@ -736,7 +738,7 @@ async function enqueueOneFactionPerformanceRun(
 
 
 async function enqueueFactionStatsCollection(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !env.TORN_FACTION_API_KEY?.trim()) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
   const db = requireDb(env)
   const intervalMs = 15 * 60 * 1000
   const bucketStart = Math.floor(scheduledTime / intervalMs) * intervalMs
@@ -773,7 +775,7 @@ async function runFactionStatsCollection(env: WorkerEnv, runId: string): Promise
     "SELECT run_id AS runId, faction_id AS factionId, status, scheduled_at AS scheduledAt FROM faction_stats_collection_runs WHERE run_id = ?"
   ).bind(runId).first<{ runId: string; factionId: string; status: string; scheduledAt: string }>()
   if (!run || ["completed", "failed"].includes(run.status)) return
-  const apiKey = env.TORN_FACTION_API_KEY?.trim()
+  const apiKey = serviceFullAccessApiKey(env)
   if (!apiKey) throw new Error("Faction collector secret is not configured.")
   const startedAt = new Date().toISOString()
   await db.prepare(
@@ -797,7 +799,7 @@ async function runFactionStatsCollection(env: WorkerEnv, runId: string): Promise
 
 async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTime: number): Promise<number> {
   // Dedicated Cloudflare Worker secret. Never substitute a member login key.
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !env.TORN_FACTION_API_KEY?.trim()) return 0
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return 0
   let enqueued = 0
   if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", 5 * 60 * 1000)) enqueued += 1
   const fiveMinuteBucket = Math.floor(scheduledTime / (5 * 60 * 1000))
@@ -810,7 +812,7 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
 }
 
 async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
-  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !env.TORN_FACTION_API_KEY?.trim()) return false
+  if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) return false
   const db = requireDb(env)
   const boundaryMs = utcSundayStart(scheduledTime)
   const boundaryAt = new Date(boundaryMs).toISOString()
@@ -1169,7 +1171,7 @@ async function runFactionPerformanceCollection(env: WorkerEnv, runId: string): P
     "SELECT run_id AS runId, faction_id AS factionId, collection_kind AS collectionKind, status, scheduled_at AS scheduledAt, target_user_ids_json AS targetUserIdsJson, next_index AS nextIndex, last_enqueued_at AS lastEnqueuedAt FROM faction_performance_collection_runs WHERE run_id = ?"
   ).bind(runId).first<FactionPerformanceRunRow>()
   if (!run || run.status === "completed" || run.status === "partial" || run.status === "failed") return
-  const apiKey = env.TORN_FACTION_API_KEY?.trim()
+  const apiKey = serviceFullAccessApiKey(env)
   if (!apiKey) throw new Error("Faction collector secret is not configured.")
   const now = new Date().toISOString()
   await db.prepare(
@@ -1602,10 +1604,7 @@ async function getGlobalRankingApiKey(env: WorkerEnv, preferredKey?: string): Pr
   if (serviceKey) return serviceKey
   const customAccess = env.TORN_API_KEY_CUSTOM?.trim()
   if (customAccess) return customAccess
-  const row = await requireDb(env).prepare("SELECT player_id FROM api_keys ORDER BY updated_at DESC LIMIT 1").first<{ player_id: string }>()
-  const key = row ? await savedKey(env, row.player_id) : null
-  if (!key) throw Object.assign(new Error("No saved Torn API key is available to refresh the global company rankings cache."), { status: 503 })
-  return key
+  throw Object.assign(new Error("No Worker-owned Torn service API key is configured for shared company-ranking requests."), { status: 503 })
 }
 
 async function startGlobalRankingRefresh(
@@ -5730,8 +5729,8 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
     }
     const currentSundayMs = utcSundayStart(Date.now())
     if (boundaryMs > currentSundayMs) return jsonResponse({ error: "Future Sunday boundaries cannot be recovered." }, 400, origin)
-    if (!env.GLOBAL_RANKINGS_QUEUE || !env.TORN_FACTION_API_KEY?.trim()) {
-      return jsonResponse({ error: "Faction collection queue or dedicated faction API key is not configured." }, 503, origin)
+    if (!env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) {
+      return jsonResponse({ error: "Faction collection queue or Worker service Torn API key is not configured." }, 503, origin)
     }
     const relatedWeekStarts = [
       new Date(boundaryMs - WEEK_MS).toISOString(),
@@ -6147,6 +6146,33 @@ export default {
     if (!origin) return jsonResponse({ error: "Origin not allowed." }, 403)
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": origin, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "Authorization, Content-Type, X-Admin-Confirm-Restore", "access-control-max-age": "86400", vary: "Origin" } })
     const url = new URL(request.url)
+
+    // The first-login policy acknowledgement is the portal-wide gate. Consent
+    // management and authentication endpoints stay reachable so an incomplete
+    // setup can be completed or the user can sign out.
+    const consentExemptPaths = new Set([
+      "/health",
+      "/api/auth/sign-in",
+      "/api/auth/session",
+      "/api/auth/sign-out",
+      "/api/auth/sign-out-all",
+      "/api/me/portal-consent",
+    ])
+    if (!consentExemptPaths.has(url.pathname)) {
+      const consentSession = await authenticate(request, env)
+      if (consentSession) {
+        const portalConsent = await requireDb(env).prepare(
+          "SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?",
+        ).bind(consentSession.player_id).first<{ consentVersion: string }>()
+        if (portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION) {
+          return jsonResponse({
+            error: "Complete the Naughty Family privacy and data preferences before using the portal.",
+            setupRequired: true,
+          }, 428, origin)
+        }
+      }
+    }
+
     const adminResponse = await handleAdminRequest(request, env, origin, ctx)
     if (adminResponse) return adminResponse
     const automationResponse = await handleAutomationRequest(request, env, origin)
@@ -6194,12 +6220,17 @@ export default {
         const token = randomToken()
         const expiresAt = Math.floor(Date.now() / 1000) + 30 * DAY
         await db.prepare("INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), player.id, expiresAt, now).run()
-        const meta = await db.prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(player.id).first<{ last_four: string; updated_at: string }>()
+        const [meta, portalConsent] = await Promise.all([
+          db.prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(player.id).first<{ last_four: string; updated_at: string }>(),
+          db.prepare("SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?")
+            .bind(player.id).first<{ consentVersion: string }>(),
+        ])
         return jsonResponse({
           token,
           expiresAt,
           player,
           isAdmin: Boolean(adminRole),
+          setupRequired: portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION,
           key: { saved: true, lastFour: meta?.last_four, updatedAt: meta?.updated_at },
         }, 200, origin)
       } catch (error) { return tornError(error, origin) }
@@ -6207,13 +6238,83 @@ export default {
     if (url.pathname === "/api/auth/session" && request.method === "GET") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
-      const key = await requireDb(env).prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(session.player_id).first<{ last_four: string; updated_at: string }>()
+      const [key, portalConsent] = await Promise.all([
+        requireDb(env).prepare("SELECT last_four, updated_at FROM api_keys WHERE player_id = ?").bind(session.player_id).first<{ last_four: string; updated_at: string }>(),
+        requireDb(env).prepare("SELECT consent_version AS consentVersion FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ consentVersion: string }>(),
+      ])
       return jsonResponse({
         player: { id: session.player_id, name: session.player_name },
         isAdmin: session.is_admin === 1,
+        setupRequired: portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION,
         key: key ? { saved: true, lastFour: key.last_four, updatedAt: key.updated_at } : { saved: false },
       }, 200, origin)
     }
+
+    if (url.pathname === "/api/me/portal-consent" && request.method === "GET") {
+      const session = await authenticate(request, env)
+      if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
+      const consent = await requireDb(env).prepare(
+        "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, historical_collection_enabled AS historicalCollectionEnabled, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
+      ).bind(session.player_id).first<Record<string, unknown>>()
+      return jsonResponse({
+        required: consent?.consentVersion !== PORTAL_CONSENT_VERSION,
+        consent: consent ? {
+          ...consent,
+          historicalCollectionEnabled: Number(consent.historicalCollectionEnabled) === 1,
+          sharePrivateLive: Number(consent.sharePrivateLive) === 1,
+          shareNetworth: Number(consent.shareNetworth) === 1,
+        } : null,
+      }, 200, origin)
+    }
+
+    if (url.pathname === "/api/me/portal-consent" && request.method === "POST") {
+      const session = await authenticate(request, env)
+      if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
+      const body: unknown = await request.json().catch(() => null)
+      if (!isRecord(body) || body.policyAccepted !== true || body.consentVersion !== PORTAL_CONSENT_VERSION) {
+        return jsonResponse({ error: "Acknowledge the current Naughty Family data policy to complete setup." }, 400, origin)
+      }
+      const historicalCollectionEnabled = body.historicalCollectionEnabled === true
+      const sharePrivateLive = body.sharePrivateLive === true
+      const shareNetworth = sharePrivateLive && body.shareNetworth === true
+      const now = new Date().toISOString()
+      const db = requireDb(env)
+      await db.prepare(
+        "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_private_live, share_networth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET consent_version = excluded.consent_version, policy_version = excluded.policy_version, policy_acknowledged_at = excluded.policy_acknowledged_at, historical_collection_enabled = excluded.historical_collection_enabled, share_private_live = excluded.share_private_live, share_networth = excluded.share_networth, updated_at = excluded.updated_at",
+      ).bind(
+        session.player_id, PORTAL_CONSENT_VERSION, PORTAL_POLICY_VERSION, now,
+        historicalCollectionEnabled ? 1 : 0, sharePrivateLive ? 1 : 0, shareNetworth ? 1 : 0, now, now,
+      ).run()
+
+      if (!sharePrivateLive) {
+        await db.prepare("DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?").bind(session.player_id).run()
+        await db.prepare("DELETE FROM member_private_live_keys WHERE player_id = ?").bind(session.player_id).run()
+      }
+      if (!historicalCollectionEnabled) {
+        await db.prepare("DELETE FROM halloween_historical_keys WHERE player_id = ?").bind(session.player_id).run()
+        await db.prepare("DELETE FROM christmas_town_historical_keys WHERE player_id = ?").bind(session.player_id).run()
+        await db.prepare("UPDATE halloween_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
+          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
+        await db.prepare("UPDATE halloween_attack_metrics_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
+          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
+        await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
+          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
+      }
+      return jsonResponse({
+        saved: true,
+        setupRequired: false,
+        consent: {
+          consentVersion: PORTAL_CONSENT_VERSION,
+          policyVersion: PORTAL_POLICY_VERSION,
+          acknowledgedAt: now,
+          historicalCollectionEnabled,
+          sharePrivateLive,
+          shareNetworth,
+        },
+      }, 200, origin)
+    }
+
     if (url.pathname === "/api/auth/key" && request.method === "POST") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
