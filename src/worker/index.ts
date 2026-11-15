@@ -5669,10 +5669,16 @@ async function handleUserInsightsRequest(request: Request, env: WorkerEnv, origi
   return jsonResponse({ error: "Insights route not found." }, 404, origin)
 }
 
-async function handleAdminRequest(request: Request, env: WorkerEnv, origin: string, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response | null> {
+async function handleAdminRequest(
+  request: Request,
+  env: WorkerEnv,
+  origin: string,
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
+  verifiedSession?: Session | null,
+): Promise<Response | null> {
   const url = new URL(request.url)
   if (!url.pathname.startsWith("/api/admin")) return null
-  const session = await authenticate(request, env)
+  const session = verifiedSession === undefined ? await authenticate(request, env) : verifiedSession
   if (!session) return jsonResponse({ error: "An active dashboard session is required." }, 401, origin)
   if (session.is_admin !== 1) {
     await writeAdminAudit(env, session, "authorization.denied", "route", url.pathname, "denied", "A non-administrator session attempted to access an administration route.")
@@ -6475,8 +6481,10 @@ export default {
       "/api/auth/sign-out-all",
       "/api/me/portal-consent",
     ])
+    let consentSessionForRequest: Session | null | undefined
     if (!consentExemptPaths.has(url.pathname)) {
       const consentSession = await authenticate(request, env)
+      consentSessionForRequest = consentSession
       if (consentSession) {
         const portalConsent = await requireDb(env).prepare(
           "SELECT consent_version AS consentVersion, policy_version AS policyVersion, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_access_type AS apiKeyAccessType, api_key_consent_fingerprint AS apiKeyConsentFingerprint FROM portal_user_consents WHERE player_id = ?",
@@ -6490,7 +6498,9 @@ export default {
       }
     }
 
-    const adminResponse = await handleAdminRequest(request, env, origin, ctx)
+    // The portal consent gate already performed full session/authz validation.
+    // Reuse that session for admin routes instead of repeating the same D1 reads.
+    const adminResponse = await handleAdminRequest(request, env, origin, ctx, consentSessionForRequest)
     if (adminResponse) return adminResponse
     const automationResponse = await handleAutomationRequest(request, env, origin)
     if (automationResponse) return automationResponse
