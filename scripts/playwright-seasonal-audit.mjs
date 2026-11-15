@@ -374,6 +374,11 @@ async function installApiFixtures(page, state) {
       payload = { required: false };
     } else if (url.pathname === "/api/me/training-calculator") {
       payload = trainingCalculatorData();
+      if (state.energyBarProfile === "inactive") {
+        payload.bars.energy = { ...payload.bars.energy, current: 50, maximum: 100, increment: 5, interval: 900, tickTime: 900, fullTime: 9000 };
+      } else if (state.energyBarProfile === "unknown") {
+        payload.bars.energy = { ...payload.bars.energy, current: 50, maximum: 250, increment: 5, interval: 750, tickTime: 750, fullTime: 15000 };
+      }
     } else if (url.pathname === "/api/me/gym-training/history") {
       payload = {
         collectionEnabled: true,
@@ -542,8 +547,24 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
   return pageReport;
 }
 
-async function auditTrainingCalculatorInteractions(page, viewportName) {
+async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   const tab = name => page.getByTestId("training-tab-" + name);
+  const donatorStatus = page.getByTestId("training-donator-status").locator("strong");
+  recordAssertion("Training Calculator " + viewportName + ": Donator status is detected from the live donor bar",
+    await donatorStatus.innerText() === "Active", await donatorStatus.innerText());
+  state.energyBarProfile = "inactive";
+  await page.getByRole("button", { name: /Refresh live data/i }).click();
+  await page.getByTestId("training-donator-status").getByText("Inactive", { exact: true }).waitFor({ state: "visible" });
+  recordAssertion("Training Calculator " + viewportName + ": a 100E / 15-minute bar is classified as non-donator",
+    await donatorStatus.innerText() === "Inactive", await donatorStatus.innerText());
+  state.energyBarProfile = "unknown";
+  await page.getByRole("button", { name: /Refresh live data/i }).click();
+  await page.getByTestId("training-donator-status").getByText("Unconfirmed", { exact: true }).waitFor({ state: "visible" });
+  recordAssertion("Training Calculator " + viewportName + ": non-standard bar data is never guessed as Donator status",
+    await donatorStatus.innerText() === "Unconfirmed", await donatorStatus.innerText());
+  state.energyBarProfile = "active";
+  await page.getByRole("button", { name: /Refresh live data/i }).click();
+  await page.getByTestId("training-donator-status").getByText("Active", { exact: true }).waitFor({ state: "visible" });
   const noOverflow = async label => {
     const dimensions = await page.evaluate(() => ({
       viewport: window.innerWidth,
@@ -801,7 +822,7 @@ async function main() {
         try {
           await auditLayout(page, pageCase.name, viewportCase.name, pageCase.path, pageCase.selector, pageCase.heading, state);
           if (pageCase.name === "Training Calculator") {
-            await auditTrainingCalculatorInteractions(page, viewportCase.name);
+            await auditTrainingCalculatorInteractions(page, viewportCase.name, state);
           }
           if (viewportCase.name === "desktop" && pageCase.name === "Christmas Town") {
             const control = page.locator("#" + pageCase.selector);
