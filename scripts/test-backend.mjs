@@ -2027,7 +2027,7 @@ try {
     assert.match(refreshBody, /client\.getCompanyEmployees\(\)/)
     assert.match(refreshBody, /client\.getCompanyStock\(\)/)
     assert.match(refreshBody, /WHERE player_id IN \(/, "selected-user refreshes must scope the credential query")
-    assert.match(refreshBody, /refreshGlobalRankingCache\(env, undefined, true\)/)
+    assert.match(refreshBody, /refreshGlobalRankingCache\(env, true\)/)
     assert.match(refreshBody, /syncFactionDirectorDirectory\(env, apiKey, ADMIN_FACTION_DIRECTORY_BATCH_SIZE, true\)/, "manual directory refresh must force live lookup without writing director history")
     assert.match(refreshBody, /directoryBatch\.pending > 0[\s\S]*pendingFactionDirectoryJobId = adminJobId/, "manual directory refresh must queue automatic continuation when more batches remain")
     assert.match(workerSource, /continueAdminFactionDirectoryRefresh\(env, halloweenJobId\)/, "queued continuation must process each remaining faction-directory batch")
