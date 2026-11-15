@@ -424,6 +424,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const happyConsumableCost = dvdCount * dvdPrice + yellowEggCount * yellowEggPrice + mistletoeCount * mistletoePrice
   const totalEnergyPlanCost = energyConsumableCost + happyConsumableCost
 
+  const currentJob = liveData?.job
+  const currentJobName = currentJob?.name || ""
+  const currentJobRating = Math.max(0, safeNumber(currentJob?.rating))
+  const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
+  const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
+
   const happyJump = useMemo(() => {
     let value = clamp(startingHappy, 0, HAPPY_CAP)
     value = Math.min(HAPPY_CAP, value + xanaxCount * 75)
@@ -465,11 +471,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: 0.4,
   }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier])
 
-  const currentJob = liveData?.job
-  const currentJobName = currentJob?.name || ""
-  const currentJobRating = Math.max(0, safeNumber(currentJob?.rating))
-  const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
-  const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
     const name = currentJobName.toLowerCase()
@@ -869,7 +870,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <NumberField label={jobPointSpecial.name + " job points to spend"} value={jobPointQuantity} onChange={setJobPointQuantity}
                 min={0} max={jobPointMax} hint={"Maximum " + fmt(jobPointMax) + " points available. Each point is approximately 4.5E worth of gains in your selected gym."}
                 testId="training-jobpoint-quantity" />
-              <div className="tc-readout-field"><span>Estimated " + STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label + " gain</span><strong>+{fmt(jobPointGain.gain, 2)}</strong>
+              <div className="tc-readout-field"><span>Estimated {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label} gain</span><strong>+{fmt(jobPointGain.gain, 2)}</strong>
                 <small>About +{fmt(jobPointGain.perPoint, 2)} per point · current stat, happiness and gym modifiers</small></div>
               <div className="tc-readout-field"><span>Projected ending stat</span><strong>{fmt(jobPointGain.endingStat, 2)}</strong><small>{fmt(jobPointSpecial.energyEquivalent, 1)}E-equivalent gain per point</small></div>
             </div> : <p className="tc-muted">No deterministic gym-equivalent company special is available from the current job. Supported: Fitness Center Roid Rage (5★), Furniture Store Heavy Lifting (3★), Mining Corporation Rock Salt (5★) and Logistics Management Efficiency (1★).</p>}
