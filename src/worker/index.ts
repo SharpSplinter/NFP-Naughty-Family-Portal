@@ -2358,7 +2358,7 @@ async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: str
     ).bind(playerId).first<{ accessLevel: string; consentVersion: string }>()
     if (!consent || consent.consentVersion !== "halloween-history-v2") return null
     if (playerId === ADMIN_PLAYER_ID) {
-      const apiKey = env.TORN_API_KEY_SERVICE?.trim() ?? ""
+      const apiKey = serviceFullAccessApiKey(env)
       if (!apiKey || consent.accessLevel !== "Full Access") return null
     const response = await trackedTornFetch("halloween-owner-key-validation", "https://api.torn.com/v2/key/info", {
       headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
