@@ -4,9 +4,9 @@ import { performance } from "node:perf_hooks";
 
 const apiUrl = process.env.STAGING_API_URL || "https://naughtyfamily-api-staging.kboone801.workers.dev";
 const adminToken = process.env.STAGING_TEST_ADMIN_SESSION_TOKEN || "";
-const durationSeconds = Number(process.env.STAGING_LOAD_DURATION_SECONDS || 300);
-const requestsPerSecond = Number(process.env.STAGING_LOAD_REQUESTS_PER_SECOND || 5);
-const maxConcurrency = Number(process.env.STAGING_LOAD_MAX_CONCURRENCY || 8);
+const durationSeconds = Number(process.env.STAGING_LOAD_DURATION_SECONDS || 60);
+const requestsPerSecond = Number(process.env.STAGING_LOAD_REQUESTS_PER_SECOND || 1);
+const maxConcurrency = Number(process.env.STAGING_LOAD_MAX_CONCURRENCY || 2);
 const timeoutMs = Number(process.env.STAGING_LOAD_TIMEOUT_MS || 15000);
 
 assert.ok(adminToken, "Synthetic staging administrator token is required.");
@@ -27,6 +27,9 @@ const endpoints = [
   "/api/admin/member-activity?days=7",
   "/api/admin/private-live",
 ];
+// Keep the default D1 read budget intentionally bounded. The admin endpoint
+// mix includes aggregate and history reads; only raise this profile after
+// reviewing recent D1 rows-read usage for the acceptance database.
 const totalPlanned = durationSeconds * requestsPerSecond;
 const intervalMs = 1000 / requestsPerSecond;
 const timings = [];
