@@ -60,8 +60,8 @@ const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-
 const DAY = 86400
 const ADMIN_PLAYER_ID = "351311"
 const NAUGHTY_SOULS_FACTION_ID = "8317"
-const PORTAL_CONSENT_VERSION = "portal-data-policy-v3"
-const PORTAL_POLICY_VERSION = "2026-11-15-v1"
+const PORTAL_CONSENT_VERSION = "portal-data-policy-v4"
+const PORTAL_POLICY_VERSION = "2026-11-15-v2"
 const FACTION_DIRECTOR_ADMIN_QUEUE_KIND = "faction-director-admin-refresh"
 const ADMIN_FACTION_DIRECTORY_BATCH_SIZE = 35
 const ADMIN_FACTION_DIRECTORY_MAX_BATCHES = 6
@@ -465,12 +465,83 @@ async function portalConsentIsCurrent(env: WorkerEnv, playerId: string, consent:
   return currentFingerprint !== null && consent.apiKeyConsentFingerprint === currentFingerprint
 }
 
+type PrivateDataVisibility = "self" | "faction_access" | "faction_members"
+
+function normalizePrivateDataVisibility(value: unknown): PrivateDataVisibility {
+  return value === "faction_access" || value === "faction_members" ? value : "self"
+}
+
+/**
+ * Return whether the viewer's own saved Torn key currently has faction API
+ * access. This is the source of truth for the leadership/staff/council tier.
+ * Cache valid results against the encrypted primary-key fingerprint, and fail
+ * closed if Torn cannot confirm the permission.
+ */
+async function memberHasFactionApiAccess(env: WorkerEnv, playerId: string): Promise<boolean> {
+  const db = requireDb(env)
+  try {
+    const fingerprint = await currentPortalApiKeyFingerprint(env, playerId)
+    if (!fingerprint) return false
+    const cached = await db.prepare(
+      "SELECT key_fingerprint AS keyFingerprint, faction_access AS factionAccess, validated_at AS validatedAt FROM portal_member_key_capabilities WHERE player_id = ?",
+    ).bind(playerId).first<{ keyFingerprint: string; factionAccess: number; validatedAt: string }>()
+    const validatedAt = cached?.validatedAt ? Date.parse(cached.validatedAt) : Number.NaN
+    if (cached?.keyFingerprint === fingerprint && Number.isFinite(validatedAt) && Date.now() - validatedAt < 6 * 60 * 60 * 1000) {
+      return Number(cached.factionAccess) === 1
+    }
+
+    const apiKey = await savedKey(env, playerId)
+    if (!apiKey) return false
+    const fetcher = privateLiveFetcher(env)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    let response: Response
+    let payload: unknown
+    try {
+      response = await trackedTornFetch("private-data-visibility-key-info", "https://api.torn.com/v2/key/info", {
+        headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+        signal: controller.signal,
+      }, fetcher, playerId)
+      payload = await response.json().catch(() => null)
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null
+    if (!response.ok || error) return false
+    const root = isRecord(payload) && isRecord(payload.info) ? payload.info : null
+    const owner = isRecord(root?.user) ? root.user.id : undefined
+    if (String(owner ?? "") !== playerId) return false
+    const access = isRecord(root?.access) ? root.access : null
+    const factionAccess = root?.faction === true || access?.faction === true
+    const now = new Date().toISOString()
+    await db.prepare(
+      "INSERT INTO portal_member_key_capabilities (player_id, key_fingerprint, faction_access, validated_at) VALUES (?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET key_fingerprint = excluded.key_fingerprint, faction_access = excluded.faction_access, validated_at = excluded.validated_at",
+    ).bind(playerId, fingerprint, factionAccess ? 1 : 0, now).run()
+    return factionAccess
+  } catch {
+    return false
+  }
+}
+
+async function privateDataVisibilityAllows(env: WorkerEnv, ownerPlayerId: string, viewerPlayerId: string): Promise<boolean> {
+  if (ownerPlayerId === viewerPlayerId) return true
+  const preference = await requireDb(env).prepare(
+    "SELECT private_data_visibility AS visibility FROM portal_user_consents WHERE player_id = ?",
+  ).bind(ownerPlayerId).first<{ visibility: string }>()
+  const visibility = normalizePrivateDataVisibility(preference?.visibility)
+  if (visibility === "faction_members") return true
+  if (visibility === "faction_access") return memberHasFactionApiAccess(env, viewerPlayerId)
+  return false
+}
+
 /** Remove feature registrations tied to an older portal credential while retaining user data/history. */
 async function invalidateMemberKeyDependents(env: WorkerEnv, playerId: string, previousPortalKey?: string | null): Promise<void> {
   const db = requireDb(env)
   const now = new Date().toISOString()
   await db.prepare("DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?").bind(playerId).run()
   await db.prepare("DELETE FROM member_private_live_keys WHERE player_id = ?").bind(playerId).run()
+  await db.prepare("DELETE FROM portal_member_key_capabilities WHERE player_id = ?").bind(playerId).run()
   await db.prepare("DELETE FROM halloween_historical_keys WHERE player_id = ?").bind(playerId).run()
   await db.prepare("UPDATE halloween_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
     .bind("The member's portal API key changed or was removed. Re-enable historical collection with the current key.", now, playerId).run()
@@ -6584,7 +6655,7 @@ export default {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       const consent = await requireDb(env).prepare(
-        "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_access_type AS apiKeyAccessType, api_key_consent_acknowledged_at AS apiKeyConsentAcknowledgedAt, api_key_consent_fingerprint AS apiKeyConsentFingerprint, historical_collection_enabled AS historicalCollectionEnabled, share_halloween_history AS shareHalloweenHistory, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
+        "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_access_type AS apiKeyAccessType, api_key_consent_acknowledged_at AS apiKeyConsentAcknowledgedAt, api_key_consent_fingerprint AS apiKeyConsentFingerprint, historical_collection_enabled AS historicalCollectionEnabled, private_data_visibility AS privateDataVisibility, share_halloween_history AS shareHalloweenHistory, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
       ).bind(session.player_id).first<Record<string, unknown> & PortalConsentRecord>()
       const consentCurrent = await portalConsentIsCurrent(env, session.player_id, consent)
       const policyAcknowledgementRequired = consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
@@ -6616,18 +6687,19 @@ export default {
       }
       const apiKeyConsentFingerprint = await currentPortalApiKeyFingerprint(env, session.player_id)
       if (!apiKeyConsentFingerprint) return jsonResponse({ error: "Your primary portal API key is missing. Sign in again with your own Custom Access or Full Access key before completing consent." }, 409, origin)
-      const historicalCollectionEnabled = body.historicalCollectionEnabled === true
-      const shareHalloweenHistory = historicalCollectionEnabled && body.shareHalloweenHistory === true
-      const sharePrivateLive = body.sharePrivateLive === true
+      const historicalCollectionEnabled = true
+      const privateDataVisibility = normalizePrivateDataVisibility(body.privateDataVisibility)
+      const shareHalloweenHistory = privateDataVisibility !== "self"
+      const sharePrivateLive = privateDataVisibility !== "self"
       const shareNetworth = sharePrivateLive && body.shareNetworth === true
       const now = new Date().toISOString()
       const db = requireDb(env)
       await db.prepare(
-        "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_access_type, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET consent_version = excluded.consent_version, policy_version = excluded.policy_version, policy_acknowledged_at = excluded.policy_acknowledged_at, api_key_usage_accepted = excluded.api_key_usage_accepted, api_key_access_type = excluded.api_key_access_type, api_key_consent_acknowledged_at = excluded.api_key_consent_acknowledged_at, api_key_consent_fingerprint = excluded.api_key_consent_fingerprint, historical_collection_enabled = excluded.historical_collection_enabled, share_halloween_history = excluded.share_halloween_history, share_private_live = excluded.share_private_live, share_networth = excluded.share_networth, updated_at = excluded.updated_at",
+        "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, api_key_usage_accepted, api_key_access_type, api_key_consent_acknowledged_at, api_key_consent_fingerprint, historical_collection_enabled, private_data_visibility, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET consent_version = excluded.consent_version, policy_version = excluded.policy_version, policy_acknowledged_at = excluded.policy_acknowledged_at, api_key_usage_accepted = excluded.api_key_usage_accepted, api_key_access_type = excluded.api_key_access_type, api_key_consent_acknowledged_at = excluded.api_key_consent_acknowledged_at, api_key_consent_fingerprint = excluded.api_key_consent_fingerprint, historical_collection_enabled = excluded.historical_collection_enabled, private_data_visibility = excluded.private_data_visibility, share_halloween_history = excluded.share_halloween_history, share_private_live = excluded.share_private_live, share_networth = excluded.share_networth, updated_at = excluded.updated_at",
       ).bind(
         session.player_id, PORTAL_CONSENT_VERSION, PORTAL_POLICY_VERSION, now,
         1, body.apiKeyAccessType, now, apiKeyConsentFingerprint,
-        historicalCollectionEnabled ? 1 : 0, shareHalloweenHistory ? 1 : 0, sharePrivateLive ? 1 : 0, shareNetworth ? 1 : 0, now, now,
+        1, privateDataVisibility, shareHalloweenHistory ? 1 : 0, sharePrivateLive ? 1 : 0, shareNetworth ? 1 : 0, now, now,
       ).run()
 
       if (!sharePrivateLive) {
@@ -6636,19 +6708,6 @@ export default {
       } else {
         await db.prepare("UPDATE member_private_live_keys SET include_networth = ?, updated_at = ? WHERE player_id = ?")
           .bind(shareNetworth ? 1 : 0, now, session.player_id).run()
-      }
-      if (!historicalCollectionEnabled) {
-        await db.prepare("DELETE FROM halloween_historical_keys WHERE player_id = ?").bind(session.player_id).run()
-        await db.prepare("DELETE FROM christmas_town_historical_keys WHERE player_id = ?").bind(session.player_id).run()
-        await db.prepare("UPDATE halloween_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
-          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
-        await db.prepare("UPDATE halloween_attack_metrics_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
-          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
-        await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
-          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
-        await db.prepare("DELETE FROM gym_training_historical_keys WHERE player_id = ?").bind(session.player_id).run()
-        await db.prepare("UPDATE gym_training_collection_jobs SET status = 'cancelled', last_error = ?, updated_at = ? WHERE player_id = ? AND status IN ('queued', 'running')")
-          .bind("Historical collection is disabled in the member's central portal preferences. Previously collected records were retained.", now, session.player_id).run()
       }
       return jsonResponse({
         saved: true,
@@ -6661,6 +6720,7 @@ export default {
           apiKeyAccessType: body.apiKeyAccessType,
           apiKeyConsentAcknowledgedAt: now,
           historicalCollectionEnabled,
+          privateDataVisibility,
           shareHalloweenHistory,
           sharePrivateLive,
           shareNetworth,
