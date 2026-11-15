@@ -83,6 +83,8 @@ type AdminDataGovernanceMember = {
   policyAcknowledgedAt: string | null
   preferencesUpdatedAt: string | null
   historicalCollectionEnabled: number
+  primaryKeySaved: number
+  secondaryCompanyKeyCount: number
   shareHalloweenHistory: number
   sharePrivateLive: number
   shareNetworth: number
@@ -640,6 +642,8 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
             ["Halloween sharing opt-ins", dataGovernance.summary.halloweenSharingOptIns],
             ["Private-live sharing opt-ins", dataGovernance.summary.privateLiveSharingOptIns],
             ["Detailed networth opt-ins", dataGovernance.summary.networthSharingOptIns],
+            ["Halloween archive logs", dataGovernance.summary.halloweenStoredLogs],
+            ["Christmas Town archive logs", dataGovernance.summary.christmasTownStoredLogs],
             ["Gym Training connections", dataGovernance.summary.gymTrainingKeyConnections],
             ["Gym Training logs stored", dataGovernance.summary.gymTrainingStoredLogs],
             ["Shared market prices cached", dataGovernance.summary.sharedMarketPriceCacheItems],
@@ -680,7 +684,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
               <td><span className={policyCurrent ? "admin-status good" : "admin-status warning"}>{policyCurrent ? "Current policy" : "Review required"}</span><small>{member.policyVersion || "No acknowledgement"}</small><small>{prettyDate(member.policyAcknowledgedAt)}</small></td>
               <td><span className={collectionEnabled ? "admin-status good" : "admin-status neutral"}>{collectionEnabled ? "Opted in" : "Off"}</span><small>Central member choice</small></td>
               <td><small>Halloween {halloweenSharing ? "shared" : "private"}</small><small>Private live {privateLiveSharing ? "shared" : "private"}</small><small>Networth {networthSharing ? "shared" : "private"}</small></td>
-              <td><small>Halloween {Number(member.halloweenKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Christmas Town {Number(member.christmasTownKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Gym Training {Number(member.gymTrainingKeyConnected) === 1 ? "connected" : "not connected"}</small></td>
+              <td><small>Primary portal key {Number(member.primaryKeySaved) === 1 ? "saved" : "not saved"}</small><small>Secondary company keys {Number(member.secondaryCompanyKeyCount ?? 0)}</small><small>Halloween {Number(member.halloweenKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Christmas Town {Number(member.christmasTownKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Gym Training {Number(member.gymTrainingKeyConnected) === 1 ? "connected" : "not connected"}</small></td>
               <td><small>Halloween {member.halloweenJobStatus ? prettyStatus(member.halloweenJobStatus) : "no job"}{member.halloweenJobYear ? ` · ${member.halloweenJobYear}` : ""} · {Number(member.halloweenStoredLogs ?? 0)} logs</small><small>Christmas Town {member.christmasTownJobStatus ? prettyStatus(member.christmasTownJobStatus) : "no job"}{member.christmasTownJobYear ? ` · ${member.christmasTownJobYear}` : ""} · {Number(member.christmasTownStoredLogs ?? 0)} logs</small><small>Gym Training {member.gymTrainingJobStatus ? prettyStatus(member.gymTrainingJobStatus) : "no job"} · {Number(member.gymTrainingStoredLogs ?? 0)} logs · {Number(member.gymTrainingPagesCollected ?? 0)} pages</small></td>
             </tr>
           })}</tbody></table></div> : <div className="empty-state">{dataGovernanceLoading ? "Loading member governance…" : dataGovernanceError ? "Governance data could not be loaded." : "No accounts match this filter. Try another search or filter."}</div>}
