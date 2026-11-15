@@ -398,7 +398,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const usableEnergy = energyAfterNatural + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
   const cooldownUsedHours = canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6
   const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
-  const maximumXanax = 4
+  const currentDrugCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.drug) / 3600)
+  const timeAvailableForDrugs = Math.max(0, waitHours - currentDrugCooldownHours)
+  const maximumXanax = waitHours < currentDrugCooldownHours ? 0
+    : Math.max(0, Math.floor(timeAvailableForDrugs / 6) + (ecstasy ? 0 : 1))
   const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
   const maximumCanCount = Math.min(48, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
   const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
@@ -411,6 +414,18 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const maximumMistletoeCount = targetHappy > 1 ? Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75))) : 0
   const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
   const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
+  useEffect(() => {
+    setXanaxCount(current => Math.min(current, maximumXanax))
+    setCanCount(current => Math.min(current, maximumCanCount))
+    setFhcCount(current => Math.min(current, maximumFhcCount))
+    setGreenEggCount(current => Math.min(current, maximumYellowEggCount))
+    setDvdCount(current => Math.min(current, maximumDvdCount))
+    setYellowEggCount(current => Math.min(current, maximumYellowEggCount))
+    setSeQuantity(current => Math.min(current, maxSeByCooldown))
+    setMistletoeCount(current => Math.min(current, maximumMistletoeCount))
+    setJobPointQuantity(current => Math.min(current, jobPointMax))
+    setPressPassQuantity(current => Math.min(current, pressPassMax))
+  }, [maximumXanax, maximumCanCount, maximumFhcCount, maximumDvdCount, maximumYellowEggCount, maxSeByCooldown, maximumMistletoeCount, jobPointMax, pressPassMax])
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
   const canPrice = getPrice(priceOverrides["can:" + canId] || "", liveData?.items?.energyDrinks?.[canId])
@@ -703,7 +718,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={setManualEnergy} max={ENERGY_HARD_CAP} hint="Live Torn bar value. Maximum energy held at once is 1,000." testId="training-current-energy" />
               <div className="tc-readout-field"><span>Natural energy by training time</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
               <NumberField label="Xanax per full train cycle" value={xanaxCount} onChange={setXanaxCount} min={0} max={maximumXanax}
-                hint={"Maximum " + maximumXanax + " doses in a 1,000E Xanax stack. Each gives +250E and +75 happy; overdose risk is not modeled."} testId="training-xanax-count" />
+                hint={"Maximum " + maximumXanax + " dose(s) in your " + fmt(waitHours) + "h training window after " + fmt(currentDrugCooldownHours, 1) + "h current drug cooldown"
+                  + (ecstasy ? ", reserving 6h after the final Xanax for Ecstasy." : ".")
+                  + " Each Xanax gives +250E and +75 happy. Overdose risk is not modeled."} testId="training-xanax-count" />
               <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={maximumFhcCount}
                 hint={"Maximum " + maximumFhcCount + " at the remaining booster-cooldown budget. Each refills the bar to " + fmt(refillBarMaximum) + "E and gives +500 happy."} testId="training-fhc-count" />
               <label className="tc-field"><span>Energy drink</span><select data-testid="training-can-type" value={canId} onChange={event => setCanId(event.target.value)}>
@@ -762,7 +779,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Current bar maximum</span><strong>{fmt(refillBarMaximum)}E</strong></div>
               <div><span>Natural energy in selected wait</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong></div>
               <div><span>Cooldown budget remaining</span><strong>{fmt(boosterBudgetHours, 1)}h</strong></div>
-              <div><span>Drug cooldown reported</span><strong>{fmt(safeNumber(liveData?.cooldowns?.drug) / 3600, 1)}h</strong></div>
+              <div><span>Drug cooldown remaining</span><strong>{fmt(currentDrugCooldownHours, 1)}h</strong></div>
+              <div><span>Maximum Xanax before planned train</span><strong>{fmt(maximumXanax)}</strong></div>
               <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {activeBook === "self-control" ? "50% book" : "No book"}</strong></div>
               <div><span>Gym happy loss reduction</span><strong>{autoHappyLossReduction > 0 ? fmt(autoHappyLossReduction) + "% company" : "No company reduction"}</strong></div>
             </div>
