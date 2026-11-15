@@ -1,0 +1,83 @@
+name: Seasonal UI / UX Playwright audit
+
+on:
+  push:
+    branches: [portal-rebuild]
+  pull_request:
+    branches: [portal-rebuild]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seasonal-ui-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  seasonal-ui-audit:
+    name: Christmas Town and Halloween browser audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: portal-rebuild
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Install ephemeral Playwright and axe browser-audit tools
+        run: npm install --no-save --no-package-lock playwright @axe-core/playwright
+
+      - name: Install Chromium and operating-system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Build production portal
+        run: npm run build
+
+      - name: Start local production preview
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/seasonal-ui-preview.log 2>&1 &
+          echo $! > /tmp/seasonal-ui-preview.pid
+          node --input-type=module <<'NODE'
+          const deadline = Date.now() + 60000;
+          let ready = false;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch("http://127.0.0.1:4173/");
+              if (response.ok) { ready = true; break; }
+            } catch { /* Vite preview is still starting. */ }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          if (!ready) throw new Error("Production preview did not become ready within 60 seconds.");
+          console.log("Production preview is ready.");
+          NODE
+
+      - name: Audit both seasonal pages across desktop, tablet and mobile
+        env:
+          SEASONAL_AUDIT_BASE_URL: http://127.0.0.1:4173
+        run: npm run test:seasonal-ui
+
+      - name: Upload browser screenshots and UX / accessibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seasonal-ui-playwright-audit
+          path: artifacts/seasonal-ui/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Show preview log if the browser audit failed
+        if: failure()
+        run: cat /tmp/seasonal-ui-preview.log

@@ -672,25 +672,36 @@
 }
 
 
-/* Halloween recorded-year navigation and optional member comparison */
-.halloween-year-filter{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 16px;padding:14px 16px;border:1px solid #40564e;border-radius:9px;background:#111e23}
-.halloween-year-filter>div small,.halloween-year-filter>div strong,.halloween-year-filter>div span{display:block}
-.halloween-year-filter>div small{font-size:8px;color:#a1bba9;font-weight:700;letter-spacing:.14em}
-.halloween-year-filter>div strong{margin-top:5px;color:#e5eee7;font:600 13px 'Space Grotesk',sans-serif}
-.halloween-year-filter>div span{margin-top:4px;color:#879f9d;font-size:9px}
-.halloween-year-filter label,.halloween-comparison-select{display:flex;flex-direction:column;gap:6px;color:#abc0b4;font-size:9px;font-weight:700;letter-spacing:.08em}
-.halloween-year-filter select,.halloween-comparison-select select{min-width:180px;min-height:38px;padding:8px 10px;border:1px solid #49645a;border-radius:7px;background:#0c1718;color:#e5f2eb;font-size:11px;letter-spacing:normal}
+/* Shared, compact year navigation for the seasonal dashboards. */
+.season-year-filter{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:0;margin:8px 0 14px;padding:8px 10px;border:1px solid #40564e;border-radius:9px;background:#111e23}
+.season-year-filter>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 10px;min-width:0;flex:1 1 auto}
+.season-year-filter>div small,.season-year-filter>div strong,.season-year-filter>div span{display:block}
+.season-year-filter>div small{color:#a1bba9;font-size:8px;font-weight:700;letter-spacing:.14em}
+.season-year-filter>div strong{color:#e5eee7;font:600 12px 'Space Grotesk',sans-serif;white-space:nowrap}
+.season-year-filter>div span{min-width:0;color:#879f9d;font-size:9px;white-space:nowrap}
+.season-year-filter label,.halloween-comparison-select{display:flex;flex-direction:row;align-items:center;gap:7px;color:#abc0b4;font-size:9px;font-weight:700;letter-spacing:.08em;white-space:nowrap}
+.season-year-filter select,.halloween-comparison-select select{box-sizing:border-box;min-width:118px;max-width:178px;min-height:32px;padding:5px 9px;border:1px solid #49645a;border-radius:7px;background:#0c1718;color:#e5f2eb;font-size:11px;letter-spacing:normal}
+.halloween-year-filter{border-color:#40564e}
+.christmas-town-year-filter{margin:8px auto 14px;max-width:1140px}
 .halloween-member-comparison{min-height:0;border-color:#43534d;background:linear-gradient(145deg,#18242a,#111a22)}
 .halloween-member-comparison h2{margin-top:12px}
 .halloween-member-comparison>p{max-width:850px}
-.halloween-comparison-select{max-width:420px;margin:15px 0}
-.halloween-comparison-select select:disabled,.halloween-year-filter select:disabled{opacity:.6}
+.halloween-comparison-select{max-width:420px;margin:15px 0;flex-direction:column;align-items:stretch}
+.halloween-comparison-select select{max-width:none;min-width:180px;min-height:38px;padding:8px 10px}
+.halloween-comparison-select select:disabled,.season-year-filter select:disabled{opacity:.6}
 .halloween-comparison-table{margin-top:12px}
 .halloween-comparison-table table{min-width:540px}
 .halloween-comparison-table>p{margin:10px 12px;color:#91a7ac;font-size:9px;line-height:1.6}
 @media(max-width:680px){
-  .halloween-year-filter{align-items:stretch;flex-direction:column}
-  .halloween-year-filter label,.halloween-year-filter select,.halloween-comparison-select,.halloween-comparison-select select{width:100%;max-width:none}
+  .season-year-filter{gap:8px;margin:7px 0 12px;padding:7px 9px}
+  .season-year-filter>div{gap:2px 7px}
+  .season-year-filter>div small{display:none}
+  .season-year-filter>div strong{font-size:11px}
+  .season-year-filter>div span{display:none}
+  .season-year-filter label{gap:5px;font-size:8px}
+  .season-year-filter select{min-width:112px;max-width:150px;min-height:32px;padding:5px 7px;font-size:10px}
+  .halloween-comparison-select,.halloween-comparison-select select{width:100%;max-width:none}
+  .halloween-comparison-select{flex-direction:column;align-items:stretch}
 }
 
 .christmas-town-collection-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
@@ -803,9 +814,6 @@
 }
 @media(max-width:390px){.christmas-town-game-grid{grid-template-columns:minmax(0,1fr)}.christmas-town-ornament-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
-.christmas-town-year-filter{margin:0 auto 16px;max-width:1140px}
-.christmas-town-year-filter>div span{display:block;margin-top:5px;color:#91aaa3;font-size:9px}
-@media(max-width:680px){.christmas-town-year-filter{margin:0 0 14px}.christmas-town-year-filter select{width:100%;min-width:0}}
 
 
 

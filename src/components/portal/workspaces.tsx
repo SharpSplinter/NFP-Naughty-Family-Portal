@@ -1557,6 +1557,8 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   const eventYear = new Date().getUTCFullYear()
   const [tab, setTab] = useState<"live" | "historical">("live")
   const [historicalYear, setHistoricalYear] = useState("all")
+  const [availableEventYears, setAvailableEventYears] = useState<number[]>([])
+  const [availableEventYearsBusy, setAvailableEventYearsBusy] = useState(true)
   const [selectedComparePlayerId, setSelectedComparePlayerId] = useState("")
   const [personalWindow, setPersonalWindow] = useState<HalloweenMemberEventWindow | null>(null)
   const [personalWindowYear, setPersonalWindowYear] = useState<number | null>(null)
@@ -1582,6 +1584,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   const [memberDetail, setMemberDetail] = useState<{ collection: { status: string; coverage: string; logsCollected?: number; completedEventYears?: number[]; recordedEventYears?: number[] }; dailyActivity: Array<{ eventYear?: number; eventDay: string; totalHits: number; relevantLogs: number }>; metrics: Pick<HalloweenEventMetrics, "fhcsUsed" | "greenEggsUsed" | "energyCansUsed"> | null; logs: Array<{ eventYear?: number; logId: string; timestamp: number; title: string; category: string; labels: string[]; isHit: boolean; details: Record<string, unknown> | null }> } | null>(null)
   const [memberDetailBusy, setMemberDetailBusy] = useState(false)
   const autoCollectionYearRef = useRef<number | null>(null)
+  const archiveRequestRef = useRef(0)
 
   const historicalCollectionYear = historicalYear === "all"
     ? archive?.eventYears?.[0] ?? null
@@ -1596,12 +1599,16 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   }
 
   const loadArchive = async (yearScope: string = (tab === "historical" ? historicalYear : String(eventYear))) => {
-    setArchiveBusy(true); setArchiveError("")
+    const requestId = ++archiveRequestRef.current
+    setArchiveBusy(true)
+    setArchiveError("")
+    setArchive(null)
     try {
       const response = await fetch(apiBase + "/api/me/halloween/archive?year=" + encodeURIComponent(yearScope), { headers: { Authorization: "Bearer " + sessionToken } })
       const payload = await response.json() as { error?: string } & Partial<HalloweenArchivePayload>
       if (!response.ok) throw new Error(payload.error || "Could not load the faction Halloween archive.")
       if (yearScope !== "all" && !payload.event) throw new Error("This Halloween event year is not configured yet.")
+      if (requestId !== archiveRequestRef.current) return
       setArchive({
         event: payload.event ?? null,
         events: payload.events ?? (payload.event ? [payload.event] : []),
@@ -1619,8 +1626,11 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
         setPersonalWindowYear(Number(yearScope))
         if (payload.myWindow.startTime) setPersonalStartTime(payload.myWindow.startTime)
       }
-    } catch (caught) { setArchiveError(caught instanceof Error ? caught.message : "Could not load the faction Halloween archive.") }
-    finally { setArchiveBusy(false) }
+    } catch (caught) {
+      if (requestId === archiveRequestRef.current) setArchiveError(caught instanceof Error ? caught.message : "Could not load the faction Halloween archive.")
+    } finally {
+      if (requestId === archiveRequestRef.current) setArchiveBusy(false)
+    }
   }
 
   const loadLive = async () => {
@@ -1699,6 +1709,29 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
     }
   }, [tab, eventYear, apiBase, sessionToken])
   useEffect(() => { void loadHistoricalKeyStatus() }, [apiBase, sessionToken])
+  useEffect(() => {
+    let cancelled = false
+    const loadAvailableEventYears = async () => {
+      setAvailableEventYearsBusy(true)
+      try {
+        const response = await fetch(apiBase + "/api/me/halloween/archive?year=all", { headers: { Authorization: "Bearer " + sessionToken } })
+        const payload = await response.json() as { error?: string; eventYears?: number[] }
+        if (!response.ok) throw new Error(payload.error || "Could not load available Halloween years.")
+        if (!cancelled) {
+          const years = Array.isArray(payload.eventYears)
+            ? payload.eventYears.map(Number).filter(year => Number.isInteger(year) && year >= 2000 && year <= 2100)
+            : []
+          setAvailableEventYears(Array.from(new Set(years)).sort((a, b) => b - a))
+        }
+      } catch {
+        if (!cancelled) setAvailableEventYears([])
+      } finally {
+        if (!cancelled) setAvailableEventYearsBusy(false)
+      }
+    }
+    void loadAvailableEventYears()
+    return () => { cancelled = true }
+  }, [apiBase, sessionToken])
   useEffect(() => { if (tab === "historical") void loadArchive(historicalYear) }, [tab, historicalYear, apiBase, sessionToken])
   useEffect(() => { setSelectedComparePlayerId("") }, [tab, historicalYear, eventYear])
 
@@ -1837,6 +1870,19 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
     { label: "Revitalize procs", key: "revitalizeProcs" },
     { label: "Eligible attacks reviewed", key: "revitalizeAttacksReviewed" },
   ]
+  const selectHalloweenYearScope = (value: string) => {
+    setSelectedComparePlayerId("")
+    setSelectedMember(null)
+    setMemberDetail(null)
+    if (value === "live") {
+      setTab("live")
+      return
+    }
+    autoCollectionYearRef.current = null
+    setHistoricalYear(value)
+    setTab("historical")
+  }
+
   const comparisonValue = (metrics: HalloweenEventMetrics | null | undefined, hits: number | null | undefined, attackMetricsStatus: string | undefined, key: typeof comparisonMetricRows[number]["key"]) => {
     if (key === "dashboardBoostersUsed") {
       return metrics ? calculateHalloweenDashboardBoostersUsed(metrics).toLocaleString() : "—"
@@ -1854,6 +1900,16 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
     <main className="module-page halloween-module">
       <header className="module-topbar"><a className="portal-brand" href="/" onClick={(event) => { event.preventDefault(); onNavigate("/") }}><span className="portal-brand-mark">NF</span><span><strong>NAUGHTY FAMILY</strong><small>HALLOWEEN INTELLIGENCE</small></span></a><button type="button" onClick={() => onNavigate("/")}>← Return to portal</button></header>
       <section className="module-heading"><div className="portal-eyebrow"><span /> SHARED FACTION EVENT DATA</div><h1>Halloween <em>Dashboard</em></h1><p>One faction leaderboard and event archive, built from members' own authorized Torn data.</p></section>
+      <section className="season-year-filter halloween-year-filter" aria-label="Halloween event year selection">
+        <div><small>EVENT SCOPE</small><strong>{tab === "live" ? "Current event · " + eventYear : historicalYear === "all" ? "All recorded years" : "Event year " + historicalYear}</strong><span>{availableEventYearsBusy ? "Loading recorded years…" : availableEventYears.length + " archived years available"}</span></div>
+        <label htmlFor="halloween-year-scope">Year
+          <select id="halloween-year-scope" aria-label="Choose Halloween event year" value={tab === "live" ? "live" : historicalYear} onChange={event => selectHalloweenYearScope(event.target.value)}>
+            <option value="live">Current · {eventYear}</option>
+            <option value="all">All recorded years</option>
+            {availableEventYears.map(year => <option key={year} value={String(year)}>{year}</option>)}
+          </select>
+        </label>
+      </section>
       <nav className="halloween-tabs" aria-label="Halloween dashboard sections">
         <button type="button" className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}><span>◉</span> Live / Current Year</button>
         <button type="button" className={tab === "historical" ? "active" : ""} onClick={() => setTab("historical")}><span>◷</span> Historical</button>
@@ -2097,15 +2153,6 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
           <div className="halloween-status historical"><i /> FACTION ARCHIVE · {archiveYearLabel}</div>
           <h2>Historical event records</h2>
           <p>Browse the combined archive or narrow it to one recorded Halloween event year. All-time totals combine completed member-year collections, with coverage shown separately where records are partial or unavailable.</p>
-          <div className="halloween-year-filter">
-            <div><small>HISTORICAL EVENT SCOPE</small><strong>{historicalYear === "all" ? "All recorded years" : "Event year " + historicalYear}</strong><span>{archive?.eventYears.length ?? 0} recorded event years available</span></div>
-            <label htmlFor="halloween-historical-year">Display
-              <select id="halloween-historical-year" value={historicalYear} onChange={event => { autoCollectionYearRef.current = null; setHistoricalYear(event.target.value); setSelectedMember(null); setMemberDetail(null) }} disabled={archiveBusy}>
-                <option value="all">All time</option>
-                {(archive?.eventYears ?? []).map(year => <option key={year} value={String(year)}>{year}</option>)}
-              </select>
-            </label>
-          </div>
           {historicalKeyStatus && !historicalKeyConnected && (
             <div className="historical-key-muted" role="status">
               Halloween historical collection is not connected. Your optional historical collection permission is managed centrally, and the portal automatically validates your member key and queues eligible event years when enabled.

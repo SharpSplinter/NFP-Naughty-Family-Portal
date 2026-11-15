@@ -177,6 +177,7 @@ export function ChristmasTownWorkspace({
   const [archive, setArchive] = useState<ChristmasTownArchivePayload | null>(null)
   const [archiveLoadedRange, setArchiveLoadedRange] = useState("")
   const automaticCollectionKeyRef = useRef("")
+  const archiveRequestRef = useRef(0)
   const [busy, setBusy] = useState(false)
   const [collectBusy, setCollectBusy] = useState(false)
   const [error, setError] = useState("")
@@ -205,6 +206,7 @@ export function ChristmasTownWorkspace({
   }
 
   const loadArchive = async (from = appliedFromDate, to = appliedToDate) => {
+    const requestId = ++archiveRequestRef.current
     setBusy(true)
     setError("")
     try {
@@ -214,12 +216,15 @@ export function ChristmasTownWorkspace({
       )
       const payload = await response.json() as ChristmasTownArchivePayload & { error?: string }
       if (!response.ok) throw new Error(payload.error || "Could not load your Christmas Town archive.")
+      if (requestId !== archiveRequestRef.current) return
       setArchive(payload)
       setArchiveLoadedRange(from + "|" + to)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load your Christmas Town archive.")
+      if (requestId === archiveRequestRef.current) {
+        setError(caught instanceof Error ? caught.message : "Could not load your Christmas Town archive.")
+      }
     } finally {
-      setBusy(false)
+      if (requestId === archiveRequestRef.current) setBusy(false)
     }
   }
 
@@ -318,9 +323,10 @@ export function ChristmasTownWorkspace({
   )
   const allSelectedSeasonsComplete = selectedSeasonRows.length > 0 && selectedSeasonRows.every(season => season.status === "complete")
   const noConfirmedActivity = Boolean(metrics && metrics.logCount === 0 && !allSelectedSeasonsComplete)
+  const confirmedNoActivity = Boolean(metrics && metrics.logCount === 0 && allSelectedSeasonsComplete)
 
   return (
-    <main className="module-page christmas-town-module">
+    <main className="module-page christmas-town-module" aria-busy={busy}>
       <header className="module-topbar">
         <a className="portal-brand" href="/" onClick={event => { event.preventDefault(); onNavigate("/") }}>
           <span className="portal-brand-mark">NF</span>
@@ -335,13 +341,13 @@ export function ChristmasTownWorkspace({
         <p>Your personal Christmas Town history, rewards, chest openings, minigames and item values across the event seasons recorded by Torn.</p>
       </section>
 
-      <section className="halloween-year-filter christmas-town-year-filter" aria-label="Christmas Town historical scope">
+      <section className="season-year-filter christmas-town-year-filter" aria-label="Christmas Town historical scope">
         <div>
-          <small>CHRISTMAS TOWN HISTORY SCOPE</small>
+          <small>YEAR RANGE</small>
           <strong>{selectedYear === "all" ? "All time" : "Christmas Town " + selectedYear}</strong>
           <span>Showing {appliedFromDate} – {appliedToDate} · UTC</span>
         </div>
-        <label htmlFor="christmas-town-year">Display
+        <label htmlFor="christmas-town-year">Year
           <select id="christmas-town-year" value={selectedYear} onChange={event => { automaticCollectionKeyRef.current = ""; setSelectedYear(event.target.value) }} disabled={busy}>
             <option value="all">All time</option>
             {availableYears.map(year => <option key={year} value={String(year)}>{year}</option>)}
@@ -383,6 +389,12 @@ export function ChristmasTownWorkspace({
           <p>{selectedSeasonRows.length
             ? "No activity is stored yet for this range, and collection is not complete. Start the seasonal collection above. Until every relevant season is complete, empty counters are not treated as confirmed zeroes."
             : "The selected dates do not overlap a Christmas Town seasonal window. Choose dates that include the December / January event period to see event activity."}</p>
+        </section>
+      ) : confirmedNoActivity ? (
+        <section className="christmas-town-panel christmas-town-empty" role="status">
+          <h2>No Christmas Town activity recorded</h2>
+          <p>Collection is complete for every Christmas Town season in this range, and Torn returned no matching activity. These are confirmed zeroes, not missing or unfinished data.</p>
+          {selectedSeasonRows.length > 0 && <p className="christmas-town-muted">Verified seasons: {selectedSeasonRows.map(season => season.year).join(", ")}.</p>}
         </section>
       ) : metrics ? (
         <>
