@@ -139,7 +139,7 @@ assert.equal(replay.response.status, 400, "A redeemed one-time code must not be 
 const linkStatus = await api("/api/me/discord-link");
 ok(linkStatus, "Discord linked-account status");
 assert.equal(linkStatus.payload?.linked, true);
-assert.equal(linkStatus.payload?.discordUserId, discordUserId);
+assert.equal(linkStatus.payload?.alertsEnabled, false, "A newly linked Discord account must start with private alerts disabled.");
 const disconnect = await api("/api/me/discord-link", { method: "DELETE" });
 ok(disconnect, "Discord disconnect");
 const disconnectedStatus = await api("/api/me/discord-link");
