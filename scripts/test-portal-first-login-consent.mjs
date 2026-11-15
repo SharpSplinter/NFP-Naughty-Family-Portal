@@ -59,7 +59,7 @@ assert.ok(floor.includes("setSetupToken(payload.token)"), "sign-in must retain a
 assert.ok(floor.includes("setSetupToken(token)"), "restored sessions must route unconsented members to the consent form")
 assert.ok(floor.includes('placeholder="Input Custom or Full Access API Key"'), "the login API-key field must explain the accepted key types")
 assert.ok(workspace.includes('portalConsentStatus.consent.apiKeyAccessType === "full"'), "Account Settings must show the member's declared Full Access key type")
-assert.ok(workspace.includes("apiKeyAccessType === \"custom\""), "Account Settings must otherwise show the declared Custom Access key type")
+assert.ok(workspace.includes("Custom Access key authorized for the current saved key"), "Account Settings must otherwise show the declared Custom Access key type")
 assert.ok(worker.includes("function workerServiceTornApiKey(env: WorkerEnv): string"), "shared market and faction data must have a strict service-secret credential helper")
 assert.ok(worker.includes("return env.TORN_API_KEY_SERVICE?.trim() || \"\""), "the shared-data key helper must use only TORN_API_KEY_SERVICE")
 assert.ok(worker.includes("const apiKey = workerServiceTornApiKey(env)"), "faction collectors and market lookups must use the strict Worker service key")
