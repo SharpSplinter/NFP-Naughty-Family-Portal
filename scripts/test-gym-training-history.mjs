@@ -15,7 +15,7 @@ assert.ok(classifier.includes("return gymCategory && trainingSignal"));
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_historical_keys/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_collection_jobs/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_event_logs/);
-assert.match(migration, /PRIMARY KEY \\(player_id, log_id\\)/);
+assert.ok(migration.includes("PRIMARY KEY (player_id, log_id)"));
 assert.ok(worker.includes('url.pathname === "/api/me/gym-training/key"'));
 assert.ok(worker.includes('url.pathname === "/api/me/gym-training/collect"'));
 assert.ok(worker.includes('url.pathname === "/api/me/gym-training/history"'));
