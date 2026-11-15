@@ -211,6 +211,12 @@ try {
   await page.getByRole("button", { name: "Account Settings" }).click();
   const gymCard = page.locator(".gym-training-history");
   await gymCard.waitFor({ state: "visible", timeout: 15000 });
+  // The card mounts before its authenticated history request resolves.
+  // Wait for the final status and both saved records before reading its text.
+  await gymCard.getByText(/Connected securely/).waitFor({ state: "visible", timeout: 15000 });
+  await gymCard.getByText("Recent training activity", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+  await gymCard.getByText("Gym training - Strength", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+  await gymCard.getByText("Gym training - Endurance", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
   const gymUiText = await gymCard.innerText();
   assert.ok(gymUiText.includes("Connected securely"));
   assert.ok(gymUiText.includes("Recent training activity"));
