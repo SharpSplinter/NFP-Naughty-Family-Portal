@@ -400,7 +400,7 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
               )}
               <NumberField label="Total gym-gain modifier" value={modifier} onChange={setModifier} min={0} max={10} step={0.01} hint="1.15 means +15% total gym gains." />
               <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={setHappyLossPercent} min={40} max={60} suffix="%" hint="Torn's documented range is 40–60%; 50% is the midpoint." />
-              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} testId="training-current-happy" />
+              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} testId="training-session-happy" />
               <div className="tc-readout-field"><span>Usable energy</span><strong>{fmt(energyPlan.total)}E</strong><small>Set cans, Xanax and refills in Energy & cans.</small></div>
             </div>
             {selectedGym.note && <p className="tc-inline-note"><strong>Gym requirement:</strong> {selectedGym.note}</p>}
@@ -436,7 +436,7 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
         <div className="tc-layout">
           <Panel title="Build your happy jump" eyebrow="03 · HAPPINESS STACK" description="Choose the items in your jump. Xanax and FHC counts are shared with your Energy & cans plan.">
             <div className="tc-form-grid">
-              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} />
+              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} testId="training-current-happy" />
               <label className="tc-check-field"><input data-testid="training-ecstasy" type="checkbox" checked={ecstasy} onChange={event => setEcstasy(event.target.checked)} /><span><strong>Use Ecstasy</strong><small>Doubles the happiness you have before adding the flat happy items below.</small></span></label>
               <NumberField label="Erotic DVDs" value={dvdCount} onChange={setDvdCount} min={0} max={100} testId="training-dvd-count" />
               <label className="tc-field"><span>Happy per DVD</span><select data-testid="training-dvd-happy" value={dvdHappy} onChange={event => setDvdHappy(Number(event.target.value))}><option value={2500}>2,500 · standard</option><option value={5000}>5,000 · 10★ Adult Novelties</option></select><small className="tc-hint">Use the value that applies to your company special.</small></label>
@@ -520,7 +520,7 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
               <NumberField label="Number of Stat Enhancers" value={seQuantity} onChange={setSeQuantity} min={0} max={1000} testId="training-se-quantity" />
               <NumberField label="Price per SE" value={sePrice} onChange={setSePrice} min={0} step={100_000} testId="training-se-price" hint="Enter the current market or negotiated price." />
             </div>
-            <div className="tc-formula-note">This estimate applies successive 1% increases to the updated stat value. Each item gain is capped at 5 trillion. It does not predict item-use failures, addiction or cooldown timing.</div>
+            <div className="tc-formula-note">This estimate applies successive 1% increases to the updated stat value. Each item gain is capped at 5 trillion. Each Stat Enhancer carries a 6-hour booster cooldown. This projects stat value, not item-use failures, addiction or cooldown timing.</div>
           </Panel>
           <div className="tc-results-column">
             <Panel title="SE outcome" eyebrow="09 · ENHANCER OUTPUT">
