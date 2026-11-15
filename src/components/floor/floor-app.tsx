@@ -67,6 +67,24 @@ const transferPages: { key: TransferPageKey; title: string; description: string 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "")
   || "https://naughtyfamily-api.kboone801.workers.dev"
 
+async function portalSetupIsRequired(apiBase: string, token: string, reportedBySession = false): Promise<boolean> {
+  if (reportedBySession) return true
+  try {
+    // Read the consent endpoint directly instead of relying only on the session
+    // payload. This keeps the login flow aligned with the Worker-wide 428 gate.
+    const response = await fetch(apiBase + "/api/me/portal-consent", {
+      headers: { Authorization: "Bearer " + token },
+    })
+    if (!response.ok) return true
+    const payload = await response.json() as { required?: boolean }
+    return payload.required === true
+  } catch {
+    // A failed consent check must not send an incomplete account into a gated
+    // workspace. The setup page will show the underlying connection error.
+    return true
+  }
+}
+
 type IncomeSnapshot = { fetchedAt: string; dailyIncome: number | null }
 type ApiResult = { model: CompanyDashboardModel; profile: unknown; employees: unknown; stock?: unknown; incomeHistory?: IncomeSnapshot[] }
 type SavedCompany = { company_id: string; company_name: string | null; company_type: string | null; fetched_at: string; has_api_key?: boolean; key_last_four?: string | null; key_updated_at?: string | null }
@@ -224,7 +242,9 @@ export function FloorApp() {
       try {
         const response = await fetch(`${API_BASE}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } })
         if (!response.ok) throw new Error("Session expired")
-        const session = await response.json() as { player: { id: string; name: string }; isAdmin?: boolean; setupRequired?: boolean; key: { saved: boolean } }
+        const session = await response.json() as { player: { id: string; name: string }; isAdmin?: boolean; setupRequired?: boolean; key: { saved: boolean; lastFour?: string } }
+        if (cancelled) return
+        const setupRequired = await portalSetupIsRequired(API_BASE, token, session.setupRequired === true)
         if (cancelled) return
         setPlayerName(session.player.name)
         setPlayerId(session.player.id)
@@ -232,7 +252,7 @@ export function FloorApp() {
         setKeySaved(session.key.saved)
         setIsDirector(false)
         setCompanyKeySaved(false)
-        if (session.setupRequired) {
+        if (setupRequired) {
           setSessionToken("")
           setSetupToken(token)
           window.history.replaceState({}, "", "/setup")
@@ -854,8 +874,8 @@ export function FloorApp() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ apiKey: apiKey.trim() }),
       })
-      const payload = await response.json() as { error?: string; token?: string; isAdmin?: boolean; setupRequired?: boolean; player?: { id: string; name: string }; key?: { saved: boolean } }
-      if (!response.ok) throw new Error(payload.error || "Sign-in failed. Check that your Torn custom key or Full Access key is valid and includes User profile and faction access.")
+      const payload = await response.json() as { error?: string; token?: string; isAdmin?: boolean; setupRequired?: boolean; player?: { id: string; name: string }; key?: { saved: boolean; lastFour?: string } }
+      if (!response.ok) throw new Error(payload.error || "Sign-in failed. Check that your Torn Custom Access or Full Access key is valid and includes User profile and faction access.")
       if (!payload.token) throw new Error("The sign-in service did not return a session. Please try again.")
       localStorage.setItem("ncd_session", payload.token)
       setPlayerName(payload.player?.name || "Torn member")
@@ -866,7 +886,8 @@ export function FloorApp() {
       setCompanyKeySaved(false)
       setApiKey("")
 
-      if (payload.setupRequired) {
+      const setupRequired = await portalSetupIsRequired(API_BASE, payload.token, payload.setupRequired === true)
+      if (setupRequired) {
         setSessionToken("")
         setSetupToken(payload.token)
         window.history.replaceState({}, "", "/setup")
@@ -1029,8 +1050,8 @@ export function FloorApp() {
         <p className="login-subtitle">A private faction-wide portal for verified members of <strong>Naughty Souls</strong>.</p>
         <div className="member-notice"><span>◆</span><p><strong>Naughty Souls members only</strong><br />Sign in with one Torn API key created on your own account. A Custom Access key using our recommended builder is preferred; a Full Access key is also accepted. We verify your identity and Naughty Souls membership, then reuse this same key across the portal wherever its selections permit.</p></div>
         <form className="login-form" onSubmit={signIn}>
-          <label htmlFor="login-api-key">Your Naughty Family Portal Torn API key</label>
-          <input id="login-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste your Torn API key" required />
+          <label htmlFor="login-api-key">Input Custom or Full Access API Key</label>
+          <input id="login-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Input Custom or Full Access API Key" required />
           <p className="login-hint">Your key is sent securely to the dashboard API for validation. It is never stored in this browser's local storage.</p>
           <p className="login-hint">Your member key verifies your identity and is used only for data that specifically requires your own Torn permissions. Shared faction and market requests use the portal Worker's server-side service key.</p>
           <p className="login-hint"><a className="login-key-builder-button" href="https://www.torn.com/preferences.php?utm_source=chatgpt.com#tab=api?step=addNewKey&user=faction,job,personalstats,profile,bars,calendar,cooldowns,gym,halloween,perks,refills,attacks,networth,log&company=companies,employees,profile,stock&faction=members,stats,contributors&torn=companies,gyms,items,logcategories,logtypes&sensitiveData=1&title=NaughtyFamily" target="_blank" rel="noreferrer"><span>＋</span> Create Custom Torn API Key <b>↗</b></a></p>
