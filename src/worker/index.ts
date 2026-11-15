@@ -2348,11 +2348,11 @@ async function throttleHalloweenRequest(env: WorkerEnv, playerId: string): Promi
     .bind(playerId, startedAt).run()
 }
 
-async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: string, requireUpdatedConsent = false): Promise<string | null> {
+async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: string): Promise<string | null> {
   const db = requireDb(env)
   const [keyRegistration, portalConsent] = await Promise.all([
-    db.prepare("SELECT consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?")
-      .bind(playerId).first<{ consentVersion: string }>(),
+    db.prepare("SELECT player_id FROM halloween_historical_keys WHERE player_id = ?")
+      .bind(playerId).first<{ player_id: string }>(),
     db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
       .bind(playerId).first<{ enabled: number }>(),
   ])
@@ -2360,10 +2360,7 @@ async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: str
 
   // Historical logs and attack details are member-specific. Always use the
   // authenticated member's saved primary key, never the Worker's shared
-  // service key, even for the service-key owner / administrator account.
-  // The registration version is connection metadata; central portal consent
-  // remains the sole collection authorization.
-  if (requireUpdatedConsent && keyRegistration.consentVersion !== "halloween-history-v2") return null
+  // service key. Central portal consent is the sole collection authorization.
   return savedKey(env, playerId)
 }
 
@@ -2414,10 +2411,10 @@ async function runHalloweenAttackMetricsPage(env: WorkerEnv, jobId: string): Pro
     return
   }
 
-  const apiKey = await getHalloweenHistoricalCollectionKey(env, job.player_id, true)
+  const apiKey = await getHalloweenHistoricalCollectionKey(env, job.player_id)
   if (!apiKey) {
     await db.prepare("UPDATE halloween_attack_metrics_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
-      .bind("The member must accept the updated Halloween collection terms with a key that includes User → Attacks.", new Date().toISOString(), jobId).run()
+      .bind("Enable historical collection in central portal preferences and connect a member key with User → Log and User → Attacks access.", new Date().toISOString(), jobId).run()
     return
   }
 
@@ -2940,12 +2937,12 @@ async function runChristmasTownLogCollectionPage(env: WorkerEnv, jobId: string):
     return
   }
 
-  const keyRow = await db.prepare("SELECT consent_version FROM christmas_town_historical_keys WHERE player_id = ?")
-    .bind(job.player_id).first<{ consent_version: string }>()
-  const apiKey = keyRow?.consent_version === "christmas-town-history-v1" ? await savedKey(env, job.player_id) : null
+  const keyRow = await db.prepare("SELECT player_id FROM christmas_town_historical_keys WHERE player_id = ?")
+    .bind(job.player_id).first<{ player_id: string }>()
+  const apiKey = keyRow ? await savedKey(env, job.player_id) : null
   if (!apiKey) {
     await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
-      .bind("The Christmas Town history permission is no longer connected. Re-enable it with your saved portal key.", new Date().toISOString(), jobId).run()
+      .bind("The member's Christmas Town key connection is unavailable. Reconnect the member key through central portal preferences.", new Date().toISOString(), jobId).run()
     return
   }
 
@@ -6597,7 +6594,7 @@ export default {
           "INSERT INTO christmas_town_historical_keys (player_id, ciphertext, iv, last_four, access_level, consent_version, consented_at, last_validated_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, last_four = excluded.last_four, access_level = excluded.access_level, consent_version = excluded.consent_version, consented_at = excluded.consented_at, last_validated_at = excluded.last_validated_at, updated_at = excluded.updated_at",
         ).bind(
           session.player_id, encrypted.ciphertext, encrypted.iv, apiKey.slice(-4), accessType,
-          "christmas-town-history-v1", now, now, now, now,
+          PORTAL_CONSENT_VERSION, now, now, now, now,
         ).run()
         await requireDb(env).prepare("INSERT OR IGNORE INTO event_history_consent_records (player_id, event_key, first_consented_at) VALUES (?, 'christmas-town', ?)")
           .bind(session.player_id, now).run()
@@ -6662,12 +6659,12 @@ export default {
         return jsonResponse({ error: "Choose a valid date range from 1 December 2021 through today." }, 400, origin)
       }
       const [key, centralConsent] = await Promise.all([
-        requireDb(env).prepare("SELECT consent_version FROM christmas_town_historical_keys WHERE player_id = ?")
-          .bind(session.player_id).first<{ consent_version: string }>(),
+        requireDb(env).prepare("SELECT player_id FROM christmas_town_historical_keys WHERE player_id = ?")
+          .bind(session.player_id).first<{ player_id: string }>(),
         requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
           .bind(session.player_id).first<{ enabled: number }>(),
       ])
-      if (Number(centralConsent?.enabled) !== 1 || key?.consent_version !== "christmas-town-history-v1") {
+      if (Number(centralConsent?.enabled) !== 1 || !key) {
         return jsonResponse({ error: "Enable historical collection in your central portal data preferences and ensure your member key is connected." }, 409, origin)
       }
 
@@ -6862,7 +6859,7 @@ export default {
         const encrypted = await encryptKey(env, apiKey)
         const now = new Date().toISOString()
         await requireDb(env).prepare("INSERT INTO halloween_historical_keys (player_id, ciphertext, iv, last_four, access_level, consent_version, consented_at, last_validated_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, last_four = excluded.last_four, access_level = excluded.access_level, consent_version = excluded.consent_version, consented_at = excluded.consented_at, last_validated_at = excluded.last_validated_at, updated_at = excluded.updated_at")
-          .bind(session.player_id, encrypted.ciphertext, encrypted.iv, apiKey.slice(-4), accessType, "halloween-history-v2", now, now, now, now).run()
+          .bind(session.player_id, encrypted.ciphertext, encrypted.iv, apiKey.slice(-4), accessType, PORTAL_CONSENT_VERSION, now, now, now, now).run()
         await requireDb(env).prepare("INSERT OR IGNORE INTO event_history_consent_records (player_id, event_key, first_consented_at) VALUES (?, 'halloween', ?)")
           .bind(session.player_id, now).run()
         return jsonResponse({ saved: true, lastFour: apiKey.slice(-4), accessLevel: accessType, consentedAt: now, lastValidatedAt: now }, 200, origin)
@@ -7192,8 +7189,8 @@ export default {
       if (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
       const db = requireDb(env)
       const [key, centralConsent] = await Promise.all([
-        db.prepare("SELECT player_id, consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?")
-          .bind(session.player_id).first<{ player_id: string; consentVersion: string }>(),
+        db.prepare("SELECT player_id FROM halloween_historical_keys WHERE player_id = ?")
+          .bind(session.player_id).first<{ player_id: string }>(),
         db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
           .bind(session.player_id).first<{ enabled: number }>(),
       ])
@@ -7201,10 +7198,6 @@ export default {
         ? await getHalloweenHistoricalCollectionKey(env, session.player_id)
         : null
       if (!key || !portalKey) return jsonResponse({ error: "Enable Halloween historical collection with your saved portal API key before collecting logs." }, 409, origin)
-      if (key.consentVersion !== "halloween-history-v2") {
-        return jsonResponse({ error: "Review the updated Halloween collection terms and enable User → Attacks access before collecting Revitalize data." }, 409, origin)
-      }
-
       await ensureHalloweenEventDefinition(env, session.player_id, yearValue)
       const event = await db.prepare("SELECT start_at AS startAt, end_at AS endAt, historical_collection_enabled AS enabled FROM halloween_event_windows WHERE event_year = ?")
         .bind(yearValue).first<{ startAt: string; endAt: string; enabled: number }>()
