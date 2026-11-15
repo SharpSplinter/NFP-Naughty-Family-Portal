@@ -6795,10 +6795,10 @@ export default {
       try {
         const apiKey = await savedKey(env, session.player_id) ?? ""
         const centralPreferences = await requireDb(env).prepare(
-          "SELECT share_private_live AS sharePrivateLive, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?",
-        ).bind(session.player_id).first<{ sharePrivateLive: number; shareNetworth: number }>()
-        if (Number(centralPreferences?.sharePrivateLive) !== 1) {
-          return jsonResponse({ error: "Enable private live faction sharing in your central portal data preferences first." }, 409, origin)
+          "SELECT private_data_visibility AS privateDataVisibility, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?",
+        ).bind(session.player_id).first<{ privateDataVisibility: string; shareNetworth: number }>()
+        if (normalizePrivateDataVisibility(centralPreferences?.privateDataVisibility) === "self") {
+          return jsonResponse({ error: "Choose a faction visibility level in your central portal data preferences before connecting live faction data." }, 409, origin)
         }
         let includeNetworth = Number(centralPreferences?.shareNetworth) === 1
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling private live data." }, 409, origin)
@@ -6858,11 +6858,11 @@ export default {
       const [key, centralPreferences] = await Promise.all([
         db.prepare("SELECT include_networth FROM member_private_live_keys WHERE player_id = ? AND faction_id = ? AND share_with_faction = 1")
           .bind(session.player_id, NAUGHTY_SOULS_FACTION_ID).first<{ include_networth: number }>(),
-        db.prepare("SELECT share_private_live AS sharePrivateLive, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?")
-          .bind(session.player_id).first<{ sharePrivateLive: number; shareNetworth: number }>(),
+        db.prepare("SELECT private_data_visibility AS privateDataVisibility, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ privateDataVisibility: string; shareNetworth: number }>(),
       ])
-      if (Number(centralPreferences?.sharePrivateLive) !== 1) {
-        return jsonResponse({ error: "Private live sharing is disabled in your central portal data preferences." }, 409, origin)
+      if (normalizePrivateDataVisibility(centralPreferences?.privateDataVisibility) === "self") {
+        return jsonResponse({ error: "Private live sharing is limited to your own account by your central portal data preferences." }, 409, origin)
       }
       if (!key) return jsonResponse({ error: "Enable private live sharing with your saved portal key before refreshing." }, 404, origin)
       const apiKey = await savedKey(env, session.player_id)
@@ -8910,12 +8910,22 @@ export default {
             "SELECT g.user_id AS userId, g.captured_at AS gymEnergyCapturedAt, g.gym_energy_total AS gymEnergyTotal, g.in_faction AS gymEnergyInFaction, g.collection_status AS gymEnergyCollectionStatus FROM faction_gym_energy_snapshots g WHERE g.faction_id = ? AND NOT EXISTS (SELECT 1 FROM faction_gym_energy_snapshots newer WHERE newer.faction_id = g.faction_id AND newer.user_id = g.user_id AND (newer.captured_at > g.captured_at OR (newer.captured_at = g.captured_at AND newer.snapshot_id > g.snapshot_id)))",
           ).bind(NAUGHTY_SOULS_FACTION_ID).all<Record<string, unknown>>(),
           db.prepare(
-            "SELECT s.player_id AS userId, s.captured_at AS privateCapturedAt, s.bars_json AS barsJson, s.cooldowns_json AS cooldownsJson, s.networth_json AS networthJson, s.source_timestamps_json AS sourceTimestampsJson, k.include_networth AS includeNetworth, k.last_error AS lastError FROM faction_member_private_live_snapshots s JOIN member_private_live_keys k ON k.player_id = s.player_id AND k.faction_id = s.faction_id AND k.share_with_faction = 1 LEFT JOIN dashboard_member_status st ON st.player_id = s.player_id WHERE s.faction_id = ? AND st.disabled_at IS NULL",
+            "SELECT s.player_id AS userId, s.captured_at AS privateCapturedAt, s.bars_json AS barsJson, s.cooldowns_json AS cooldownsJson, s.networth_json AS networthJson, s.source_timestamps_json AS sourceTimestampsJson, k.include_networth AS includeNetworth, k.last_error AS lastError, COALESCE(pc.private_data_visibility, 'self') AS privateDataVisibility FROM faction_member_private_live_snapshots s JOIN member_private_live_keys k ON k.player_id = s.player_id AND k.faction_id = s.faction_id AND k.share_with_faction = 1 LEFT JOIN dashboard_member_status st ON st.player_id = s.player_id LEFT JOIN portal_user_consents pc ON pc.player_id = s.player_id WHERE s.faction_id = ? AND st.disabled_at IS NULL",
           ).bind(NAUGHTY_SOULS_FACTION_ID).all<Record<string, unknown>>(),
         ])
         const statsByUser = new Map((statRows.results ?? []).map((row) => [String(row.userId), row]))
         const gymByUser = new Map((gymRows.results ?? []).map((row) => [String(row.userId), row]))
-        const privateLiveByUser = new Map((privateLiveRows.results ?? []).map((row) => [String(row.userId), row]))
+        const candidatePrivateLiveRows = privateLiveRows.results ?? []
+        const needsFactionAccess = candidatePrivateLiveRows.some(row =>
+          String(row.userId) !== session.player_id && normalizePrivateDataVisibility(row.privateDataVisibility) === "faction_access",
+        )
+        const viewerHasFactionAccess = needsFactionAccess && await memberHasFactionApiAccess(env, session.player_id)
+        const visiblePrivateLiveRows = candidatePrivateLiveRows.filter(row => {
+          if (String(row.userId) === session.player_id) return true
+          const visibility = normalizePrivateDataVisibility(row.privateDataVisibility)
+          return visibility === "faction_members" || (visibility === "faction_access" && viewerHasFactionAccess)
+        })
+        const privateLiveByUser = new Map(visiblePrivateLiveRows.map((row) => [String(row.userId), row]))
         const members = (rosterRows.results ?? []).map((roster) => {
           const userId = String(roster.userId)
           let missingMetrics: unknown = []
