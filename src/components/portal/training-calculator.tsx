@@ -322,7 +322,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [manualModifier, setManualModifier] = useState("")
   const [manualModifierEnabled, setManualModifierEnabled] = useState(false)
   const [gymBookChoice, setGymBookChoice] = useState("auto")
-  const [manualHappyLossPercent, setManualHappyLossPercent] = useState("")
   const [waitHours, setWaitHours] = useState(0)
   const [xanaxCount, setXanaxCount] = useState(0)
   const [fhcCount, setFhcCount] = useState(0)
@@ -450,11 +449,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const bookCanCooldownFactor = plannedEnergyBooks.has("self-control") ? 0.5 : 1
   const canCooldownFactor = bookCanCooldownFactor * (1 - companyCooldownReduction)
   const autoHappyLossReduction = clamp(safeNumber(liveData?.factionBonuses?.gymHappyLossReductionPercent), 0, 100)
-  const autoHappyLossPercent = autoHappyLossReduction > 0 ? 25 : 50
-  const minHappyLossPercent = autoHappyLossReduction > 0 ? 20 : 40
-  const maxHappyLossPercent = autoHappyLossReduction > 0 ? 30 : 60
-  const happyLossPercent = manualHappyLossPercent.trim() === "" ? autoHappyLossPercent
-    : clamp(safeNumber(manualHappyLossPercent), minHappyLossPercent, maxHappyLossPercent)
+  // Use the midpoint of Torn's 40–60% per-train happy-loss range for an
+  // estimate, then apply any verified company reduction multiplicatively.
+  // The loss remains an internal sequential input and is not exposed in UI.
+  const happyLossPercent = 50 * (1 - autoHappyLossReduction / 100)
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
@@ -547,14 +545,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     stat: currentStat, happy: happyJump.finalHappy, energy: usableEnergy, dots: selectedDots,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
   }), [currentStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
-  const conservativeSession = useMemo(() => estimateGymSession({
-    stat: currentStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: 0.6,
-  }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier])
-  const optimisticSession = useMemo(() => estimateGymSession({
-    stat: currentStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: 0.4,
-  }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier])
 
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
@@ -826,12 +816,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <Metric label="Usable training energy" value={fmt(usableEnergy) + "E"} detail="Total energy spent through the planned sequence" />
               <Metric label="Energy per train" value={fmt(selectedGym.energyCost) + "E"} detail={fmt(session.energyUsed) + "E actually used"} />
             </div>
-            <div className="tc-compare-row">
-              <div><span>Conservative · 60% happy loss</span><strong>+{fmt(conservativeSession.statGain, 2)}</strong></div>
-              <div><span>Optimistic · 40% happy loss</span><strong>+{fmt(optimisticSession.statGain, 2)}</strong></div>
-            </div>
             <div className="tc-result-total"><span>Projected ending {currentStatLabel.toLowerCase()}</span><strong>{fmt(session.endingStat, 2)}</strong></div>
-            <div className="tc-result-total"><span>Happiness after planned trains</span><strong>{fmt(session.endingHappy, 0)}</strong></div>
           </Panel>
           <Panel title="Individual 1× train breakdown" eyebrow="STEP-BY-STEP GAINS" description="Each row recalculates using the stat and happiness left by the prior train.">
             {session.rows.length ? <div className="tc-train-table-scroll" role="region" aria-label="Individual gym train stat gains" tabIndex={0}>
@@ -924,7 +909,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Drug cooldown remaining</span><strong>{fmt(currentDrugCooldownHours, 1)}h</strong></div>
               <div><span>Maximum Xanax before planned train</span><strong>{fmt(maximumXanax)}</strong></div>
               <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {plannedEnergyBooks.has("self-control") ? "50% book" : "No book"}</strong></div>
-              <div><span>Gym happy loss reduction</span><strong>{autoHappyLossReduction > 0 ? fmt(autoHappyLossReduction) + "% company" : "No company reduction"}</strong></div>
             </div>
             <p className="tc-muted">Energy drinks and stat boosters share the booster cooldown. The planner subtracts existing cooldown and the items selected for this plan.</p>
           </Panel>
@@ -1089,7 +1073,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint={"Auto: " + fmt(naturalEnergyPerDay) + "E natural regeneration" + (pointRefillAvailable ? " + " + fmt(refillBarMaximum) + "E daily refill" : "") + ". Maximum 100,000E/day."} testId="training-daily-energy" />
               <div className="tc-readout-field"><span>Natural happy regeneration</span><strong>+{fmt(naturalHappyPerDay)} / day</strong><small>Calculated from your live happy bar interval.</small></div>
             </div>
-            <div className="tc-inline-note">Daily projection is based on the selected gym, battle stat, live perk modifier and assumed happy loss. It does not assume a 99K happy jump every day. Set a daily energy amount that is sustainable for your chosen supplies.</div>
+            <div className="tc-inline-note">Daily projection compounds the selected gym, battle stat and verified training modifiers. It does not assume a 99K happy jump every day. Set a daily energy amount that is sustainable for your chosen supplies.</div>
           </Panel>
         </div>
         <aside className="tc-results-column">
@@ -1106,7 +1090,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Current battle stat source</span><strong>{liveStatSource}</strong></div>
               <div><span>Current gym</span><strong>{selectedGym.name}</strong></div>
               <div><span>Gym gain modifier</span><strong>{fmt(effectiveModifier, 4)}×</strong></div>
-              <div><span>Happy loss assumption</span><strong>{happyLossPercent}% / train energy</strong></div>
             </div>
           </Panel>
         </aside>
