@@ -99,8 +99,11 @@ const halloweenYear = await api("/api/me/halloween/archive?year=2026");
 ok(halloweenYear, "Halloween year-specific archive");
 assert.equal(halloweenYear.payload?.event?.eventYear, 2026);
 assert.equal(halloweenYear.payload?.myCollection?.coverage, "complete");
-assert.equal(halloweenYear.payload?.eventTotals?.revitalizeProcs, 17, "The 2026 event totals should match the synthetic season fixtures.");
-assert.equal(halloweenYear.payload?.eventTotals?.revitalizeSuccessfulAttacks, 114, "The 2026 finishing-hit totals should match the synthetic season fixtures.");
+assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeProcs, 12, "The year-specific personal Revitalize metrics should match the synthetic season fixtures.");
+assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64, "The year-specific personal finishing-hit metrics should match the synthetic season fixtures.");
+assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80, "The year-specific personal reviewed-attack coverage should match the synthetic season fixtures.");
+assert.ok((halloweenYear.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "Year-filtered event totals retain the all-time faction aggregate.");
+assert.ok((halloweenYear.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "Year-filtered event totals retain the all-time faction aggregate.");
 assert.ok(halloweenYear.payload?.memberComparisons?.some(row => row.playerId === otherPlayerId));
 assert.equal(halloweenYear.payload?.leaderboard?.find(row => row.playerId === partialPlayerId)?.coverage, "partial");
 
