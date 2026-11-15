@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { type ReactNode, useMemo, useState } from "react"
 import "./training-calculator.css"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
@@ -177,7 +177,7 @@ function Metric({ label, value, detail, tone = "violet" }: { label: string; valu
     </article>
   )
 }
-function Panel({ title, eyebrow, description, children }: { title: string; eyebrow?: string; description?: string; children: React.ReactNode }) {
+function Panel({ title, eyebrow, description, children }: { title: string; eyebrow?: string; description?: string; children: ReactNode }) {
   return (
     <section className="tc-panel">
       {(eyebrow || title || description) && (
@@ -337,6 +337,7 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
   }, [statValue, happyCap, dailyEnergy, projectionDays, dots, energyPerTrain, modifier, happyLossRate])
 
   const selectedStatLabel = STAT_OPTIONS.find(option => option.value === stat)?.label ?? "Strength"
+  const selectedGymLabel = gymId === "custom" ? "Custom gym" : selectedGym.name
   const trainCount = jumpSession.trains
   const jumpDelta = jumpSession.statGain - normalSession.statGain
   const allTabs: Array<{ id: TabKey; label: string; short: string }> = [
@@ -363,7 +364,7 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
         <div className="tc-hero-stats">
           <span>ACTIVE MODEL</span>
           <strong>{selectedStatLabel}</strong>
-          <small>{selectedGym.name === "Custom" ? "Custom gym" : selectedGym.name} · {dots > 0 ? dots.toFixed(1) + " dots" : "stat unavailable"} · {energyPerTrain}E / train</small>
+          <small>{selectedGymLabel} · {dots > 0 ? dots.toFixed(1) + " dots" : "stat unavailable"} · {energyPerTrain}E / train</small>
         </div>
       </section>
 
@@ -386,8 +387,8 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
         <div className="tc-layout">
           <Panel title="Your training setup" eyebrow="01 · INPUTS" description="Choose the stat and gym you will actually use. All bonuses are combined into one multiplier.">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Battle stat</span><select value={stat} onChange={event => setStat(event.target.value as StatKey)}>{STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <label className="tc-field"><span>Gym</span><select value={gymId} onChange={event => setGymId(event.target.value)}><option value="custom">Custom gym / manual dots</option>{GYMS.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}</select></label>
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={stat} onChange={event => setStat(event.target.value as StatKey)}>{STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              <label className="tc-field"><span>Gym</span><select data-testid="training-gym-select" value={gymId} onChange={event => setGymId(event.target.value)}><option value="custom">Custom gym / manual dots</option>{GYMS.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}</select></label>
               <NumberField label="Current stat" value={statValue} onChange={setStatValue} step={1000} testId="training-stat-value" />
               {gymId === "custom" ? (
                 <>
@@ -399,8 +400,8 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
               )}
               <NumberField label="Total gym-gain modifier" value={modifier} onChange={setModifier} min={0} max={10} step={0.01} hint="1.15 means +15% total gym gains." />
               <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={setHappyLossPercent} min={40} max={60} suffix="%" hint="Torn's documented range is 40–60%; 50% is the midpoint." />
-              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} />
-              <NumberField label="Usable energy" value={energyPlan.total} onChange={() => setActiveTab("energy")} min={0} hint="Calculated from your Energy & cans tab. Select this field to edit the supply plan." />
+              <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} testId="training-current-happy" />
+              <div className="tc-readout-field"><span>Usable energy</span><strong>{fmt(energyPlan.total)}E</strong><small>Set cans, Xanax and refills in Energy & cans.</small></div>
             </div>
             {selectedGym.note && <p className="tc-inline-note"><strong>Gym requirement:</strong> {selectedGym.note}</p>}
             {gymId !== "custom" && dots <= 0 && <p className="tc-inline-warning">This gym does not train {selectedStatLabel}. Choose another gym or use a custom setup.</p>}
@@ -436,10 +437,10 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
           <Panel title="Build your happy jump" eyebrow="03 · HAPPINESS STACK" description="Choose the items in your jump. Xanax and FHC counts are shared with your Energy & cans plan.">
             <div className="tc-form-grid">
               <NumberField label="Starting happiness" value={currentHappy} onChange={setCurrentHappy} min={0} max={HAPPY_CAP} />
-              <label className="tc-check-field"><input type="checkbox" checked={ecstasy} onChange={event => setEcstasy(event.target.checked)} /><span><strong>Use Ecstasy</strong><small>Doubles the happiness you have before adding the flat happy items below.</small></span></label>
-              <NumberField label="Erotic DVDs" value={dvdCount} onChange={setDvdCount} min={0} max={100} />
-              <label className="tc-field"><span>Happy per DVD</span><select value={dvdHappy} onChange={event => setDvdHappy(Number(event.target.value))}><option value={2500}>2,500 · standard</option><option value={5000}>5,000 · 10★ Adult Novelties</option></select><small className="tc-hint">Use the value that applies to your company special.</small></label>
-              <NumberField label="Other flat happiness" value={otherHappy} onChange={setOtherHappy} min={0} max={HAPPY_CAP} hint="Candy, job specials, LSD, Shrooms or other boosts after Ecstasy." />
+              <label className="tc-check-field"><input data-testid="training-ecstasy" type="checkbox" checked={ecstasy} onChange={event => setEcstasy(event.target.checked)} /><span><strong>Use Ecstasy</strong><small>Doubles the happiness you have before adding the flat happy items below.</small></span></label>
+              <NumberField label="Erotic DVDs" value={dvdCount} onChange={setDvdCount} min={0} max={100} testId="training-dvd-count" />
+              <label className="tc-field"><span>Happy per DVD</span><select data-testid="training-dvd-happy" value={dvdHappy} onChange={event => setDvdHappy(Number(event.target.value))}><option value={2500}>2,500 · standard</option><option value={5000}>5,000 · 10★ Adult Novelties</option></select><small className="tc-hint">Use the value that applies to your company special.</small></label>
+              <NumberField label="Other flat happiness" value={otherHappy} onChange={setOtherHappy} min={0} max={HAPPY_CAP} testId="training-other-happy" hint="Candy, job specials, LSD, Shrooms or other boosts after Ecstasy." />
               <div className="tc-readout-field"><span>From your energy plan</span><strong>{fmt(xanaxCount)} Xanax · {fmt(fhcCount)} FHC</strong><small>+75 happy per Xanax · +500 per FHC</small></div>
             </div>
             <div className="tc-formula-note">Order assumed: starting happiness → Xanax happiness → Ecstasy doubles current happiness → FHC, DVDs and other flat boosts. The result is capped at 99,999. Time the jump around Torn's 15-minute happiness reset.</div>
@@ -465,19 +466,19 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
         <div className="tc-layout">
           <Panel title="Build your energy supply" eyebrow="05 · ENERGY INPUTS" description="Mix your current bar, Xanax, energy drinks, FHCs, refills and any other energy source.">
             <div className="tc-form-grid">
-              <NumberField label="Current energy" value={currentEnergy} onChange={setCurrentEnergy} min={0} max={10_000} />
+              <NumberField label="Current energy" value={currentEnergy} onChange={setCurrentEnergy} min={0} max={10_000} testId="training-current-energy" />
               <NumberField label="Energy bar capacity" value={energyCapacity} onChange={setEnergyCapacity} min={1} max={1_000} hint="Used for each full FHC or point refill. Standard / donator bars differ." />
-              <NumberField label="Xanax used for this plan" value={xanaxCount} onChange={setXanaxCount} min={0} max={20} hint="250 energy and 75 happiness each, provided no overdose." />
-              <label className="tc-field"><span>Energy drink</span><select value={canId} onChange={event => setCanId(event.target.value)}>{ENERGY_DRINKS.map(drink => <option key={drink.id} value={drink.id}>{drink.name} · {drink.energy} base E</option>)}</select></label>
-              <NumberField label="Energy drinks" value={canCount} onChange={setCanCount} min={0} max={100} />
-              <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={20} hint="Full energy refill +500 happiness +6h booster cooldown each." />
+              <NumberField label="Xanax used for this plan" value={xanaxCount} onChange={setXanaxCount} min={0} max={20} testId="training-xanax-count" hint="250 energy and 75 happiness each, provided no overdose." />
+              <label className="tc-field"><span>Energy drink</span><select data-testid="training-can-type" value={canId} onChange={event => setCanId(event.target.value)}>{ENERGY_DRINKS.map(drink => <option key={drink.id} value={drink.id}>{drink.name} · {drink.energy} base E</option>)}</select></label>
+              <NumberField label="Energy drinks" value={canCount} onChange={setCanCount} min={0} max={100} testId="training-can-count" />
+              <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={20} testId="training-fhc-count" hint="Full energy refill +500 happiness +6h booster cooldown each." />
               <NumberField label="Point / other full refills" value={pointRefills} onChange={setPointRefills} min={0} max={20} hint="Assumes the energy bar is spent down before each refill." />
               <NumberField label="Other energy" value={otherEnergy} onChange={setOtherEnergy} min={0} max={10_000} hint="Green Easter Eggs, company specials, MSC, event rewards, etc." />
             </div>
             <div className="tc-toggle-list">
-              <label><input type="checkbox" checked={factionVoracity} onChange={event => setFactionVoracity(event.target.checked)} /><span><strong>Faction Energy Drink Voracity</strong><small>×1.5 drink effect</small></span></label>
-              <label><input type="checkbox" checked={canBook} onChange={event => setCanBook(event.target.checked)} /><span><strong>Fuelling Your Way to Failure book</strong><small>×2 drink effect</small></span></label>
-              <label><input type="checkbox" checked={canEvent} onChange={event => setCanEvent(event.target.checked)} /><span><strong>Active event drink multiplier</strong><small>×2 drink effect when applicable</small></span></label>
+              <label><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity} onChange={event => setFactionVoracity(event.target.checked)} /><span><strong>Faction Energy Drink Voracity</strong><small>×1.5 drink effect</small></span></label>
+              <label><input data-testid="training-can-book" type="checkbox" checked={canBook} onChange={event => setCanBook(event.target.checked)} /><span><strong>Fuelling Your Way to Failure book</strong><small>×2 drink effect</small></span></label>
+              <label><input data-testid="training-can-event" type="checkbox" checked={canEvent} onChange={event => setCanEvent(event.target.checked)} /><span><strong>Active event drink multiplier</strong><small>×2 drink effect when applicable</small></span></label>
             </div>
             <div className="tc-formula-note">Drink bonuses multiply. Torn lists a 2-hour booster cooldown per energy drink and 6 hours per FHC. Check your own active cooldown reductions before planning a daily quantity.</div>
           </Panel>
@@ -516,8 +517,8 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
             <div className="tc-form-grid">
               <div className="tc-readout-field"><span>Selected stat</span><strong>{selectedStatLabel}</strong><small>Change the stat selector in Train Session to switch SE type.</small></div>
               <div className="tc-readout-field"><span>Current stat</span><strong>{fmt(statValue)}</strong><small>Shared with the gym-gain model.</small></div>
-              <NumberField label="Number of Stat Enhancers" value={seQuantity} onChange={setSeQuantity} min={0} max={1000} />
-              <NumberField label="Price per SE" value={sePrice} onChange={setSePrice} min={0} step={100_000} hint="Enter the current market or negotiated price." />
+              <NumberField label="Number of Stat Enhancers" value={seQuantity} onChange={setSeQuantity} min={0} max={1000} testId="training-se-quantity" />
+              <NumberField label="Price per SE" value={sePrice} onChange={setSePrice} min={0} step={100_000} testId="training-se-price" hint="Enter the current market or negotiated price." />
             </div>
             <div className="tc-formula-note">This estimate applies successive 1% increases to the updated stat value. Each item gain is capped at 5 trillion. It does not predict item-use failures, addiction or cooldown timing.</div>
           </Panel>
@@ -550,8 +551,8 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
         <div className="tc-layout">
           <Panel title="Repeatable training plan" eyebrow="11 · LONG-TERM MODEL" description="Project a sustainable daily energy allocation using your current stat, gym and modifier. This is not a one-off 99K jump repeated every day.">
             <div className="tc-form-grid">
-              <NumberField label="Energy trained per day" value={dailyEnergy} onChange={setDailyEnergy} min={0} max={20_000} step={10} />
-              <NumberField label="Projection length" value={projectionDays} onChange={setProjectionDays} min={1} max={3650} suffix="days" />
+              <NumberField label="Energy trained per day" value={dailyEnergy} onChange={setDailyEnergy} min={0} max={20_000} step={10} testId="training-daily-energy" />
+              <NumberField label="Projection length" value={projectionDays} onChange={setProjectionDays} min={1} max={3650} suffix="days" testId="training-projection-days" />
               <NumberField label="Sustainable happy ceiling" value={happyCap} onChange={setHappyCap} min={0} max={HAPPY_CAP} />
               <div className="tc-readout-field"><span>Daily happy regeneration</span><strong>+480</strong><small>Wiki baseline: 5 happiness every 15 minutes.</small></div>
             </div>
