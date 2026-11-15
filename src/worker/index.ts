@@ -7371,8 +7371,8 @@ export default {
       }
       const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy/i.test(text)) || ""
       const factionCooldownPerk = activeFactionPerks.find(text => /booster cooldown/i.test(text)) || ""
-      const factionEnergyPercentMatch = factionEnergyPerk.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
-      const factionCooldownHoursMatch = factionCooldownPerk.match(/(\\d+(?:\\.\\d+)?)\\s*(?:hours?|h)\\b/i)
+      const factionEnergyPercentMatch = factionEnergyPerk.match(/(\d+(?:\.\d+)?)\s*%/)
+      const factionCooldownHoursMatch = factionCooldownPerk.match(/(\d+(?:\.\d+)?)\s*(?:hours?|h)\b/i)
       const factionBonuses = {
         energyDrinkBonusPercent: factionEnergyPercentMatch ? Number(factionEnergyPercentMatch[1]) : 0,
         boosterCooldownBonusHours: factionCooldownHoursMatch ? Math.max(0, Math.min(24, Number(factionCooldownHoursMatch[1]))) : 0,
