@@ -9,8 +9,12 @@ const playerId = process.env.STAGING_FEATURE_PLAYER_ID || "999999005";
 const otherPlayerId = process.env.STAGING_TEST_OTHER_PLAYER_ID || "999999002";
 const privatePlayerId = process.env.STAGING_TEST_PLAYER_ID || "999999001";
 const partialPlayerId = "999999006";
+const consentToken = process.env.STAGING_CONSENT_SESSION_TOKEN || "";
+const consentPlayerId = process.env.STAGING_CONSENT_PLAYER_ID || "999999007";
 
 assert.ok(token, "Synthetic feature-walkthrough session is missing.");
+assert.ok(consentToken, "Synthetic unconsented first-login session is missing.");
+assert.equal(consentPlayerId, "999999007", "First-login consent walkthrough must use its dedicated staging member.");
 assert.equal(playerId, "999999005", "Feature walkthrough must use its dedicated synthetic staging member.");
 
 async function api(path, options = {}, bearer = token) {
@@ -30,6 +34,20 @@ const session = await api("/api/auth/session");
 ok(session, "Feature walkthrough session");
 assert.equal(String(session.payload?.player?.id), playerId);
 assert.equal(session.payload?.isAdmin, false, "Feature walkthrough member must remain an ordinary member.");
+
+// Verify that an unconsented member is routed into the consent form rather than
+// stranded behind the generic 428 privacy notice.
+const consentSession = await api("/api/auth/session", {}, consentToken);
+ok(consentSession, "Unconsented member session");
+assert.equal(String(consentSession.payload?.player?.id), consentPlayerId);
+assert.equal(consentSession.payload?.setupRequired, true, "New member must be told that setup is required.");
+const consentStatus = await api("/api/me/portal-consent", {}, consentToken);
+ok(consentStatus, "Unconsented member preference endpoint");
+assert.equal(consentStatus.payload?.required, true);
+assert.equal(consentStatus.payload?.policyAcknowledgementRequired, true);
+assert.equal(consentStatus.payload?.consent, null);
+const blockedBeforeConsent = await api("/api/me/companies", {}, consentToken);
+assert.equal(blockedBeforeConsent.response.status, 428, "Member portal API remains gated until the required form is saved.");
 
 // Torn calendar paths use fresh, synthetic cache rows. No request below is allowed
 // to validate a member key or call Torn; only the cached calendar response is read.
@@ -158,6 +176,42 @@ const consoleErrors = [];
 page.on("pageerror", error => consoleErrors.push(error.message));
 
 try {
+  const consentContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const consentPage = await consentContext.newPage();
+    const consentConsoleErrors = [];
+    consentPage.on("pageerror", error => consentConsoleErrors.push(error.message));
+    await consentPage.addInitScript(value => {
+      localStorage.setItem("ncd_session", value);
+      sessionStorage.removeItem("ncd_active_view");
+    }, consentToken);
+    const consentHome = await consentPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
+    assert.ok(consentHome?.ok(), "Consent walkthrough portal shell should load.");
+    await consentPage.getByRole("heading", { name: /Welcome to the Naughty Family/ }).waitFor({ state: "visible", timeout: 15000 });
+    await consentPage.getByRole("heading", { name: "Data policy & privacy" }).waitFor({ state: "visible" });
+    await consentPage.getByRole("heading", { name: "Primary Torn API key use & permissions" }).waitFor({ state: "visible" });
+    const customAccess = consentPage.getByRole("radio", { name: /Custom Access/ });
+    await customAccess.check();
+    const policyAcknowledgement = consentPage.locator("label.portal-setup-check").filter({ hasText: "I have read and acknowledge the current Naughty Family data policy" }).locator("input");
+    await policyAcknowledgement.check();
+    const primaryKeyAuthorization = consentPage.locator("label.portal-setup-check").filter({ hasText: "I own this primary Torn Custom Access key" }).locator("input");
+    await primaryKeyAuthorization.check();
+    const finishSetup = consentPage.getByRole("button", { name: "Save preferences & finish setup" });
+    await finishSetup.waitFor({ state: "visible" });
+    assert.equal(await finishSetup.isEnabled(), true, "The form should submit only after policy, key type and key-use choices are selected.");
+    await finishSetup.click();
+    await consentPage.getByRole("status").filter({ hasText: "Setup saved" }).waitFor({ state: "visible", timeout: 15000 });
+    const savedConsent = await api("/api/me/portal-consent", {}, consentToken);
+    ok(savedConsent, "Saved first-login consent");
+    assert.equal(savedConsent.payload?.required, false);
+    assert.equal(savedConsent.payload?.consent?.apiKeyUsageAccepted, true);
+    assert.equal(savedConsent.payload?.consent?.apiKeyAccessType, "custom");
+    assert.deepEqual(consentConsoleErrors, [], "First-login consent form should not create browser errors.");
+    console.log("PASS first-login route automatically opens privacy setup; policy acknowledgement, Custom Access declaration and primary-key authorization save successfully without Torn API calls.");
+  } finally {
+    await consentContext.close();
+  }
+
   await page.addInitScript(value => {
     localStorage.setItem("ncd_session", value);
     sessionStorage.removeItem("ncd_active_view");
@@ -237,4 +291,5 @@ console.log("- Per-member Halloween sharing boundary and Torn-calendar-derived e
 console.log("- Christmas Town cached calendar and retained personal archive.");
 console.log("- Private Gym Training history, completed-job idempotency and no duplicate queue submission.");
 console.log("- Synthetic Discord /link-code creation, redemption, replay rejection and disconnect.");
+console.log("- New: automatic first-login privacy form routing, required policy/key-use acknowledgement and persisted Custom Access key declaration.");
 console.log("NOTE: Real Torn API-key permission acceptance is not simulated; no real key or upstream Torn request was used.");
