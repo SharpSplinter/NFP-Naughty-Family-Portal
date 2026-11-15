@@ -212,7 +212,7 @@ function PriceField({ label, value, autoValue, onChange, hint, testId }: {
           onChange={event => onChange(event.target.value)} />
       </span>
       {hint && <small className="tc-hint">{hint}</small>}
-      {value !== "" && <small className="tc-hint">Manual override. Clear to return to the live Item Market average.</small>}
+      {value !== "" && <small className="tc-hint">Manual override. Maximum {fmt(MAX_STAT_INPUT)}. Clear to return to the live Item Market average.</small>}
     </label>
   )
 }
@@ -301,6 +301,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [projectionDays, setProjectionDays] = useState(30)
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
   const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const refreshInterval = window.setInterval(() => setRefreshKey(value => value + 1), 5 * 60 * 1000)
+    return () => window.clearInterval(refreshInterval)
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -593,7 +598,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         <div className="tc-hero-stats">
           <span>LIVE TORN CONNECTION</span>
           <strong>{loading ? "Syncing profile…" : liveData ? "Connected · " + currentStatLabel : "Manual planning mode"}</strong>
-          <small>{liveData?.fetchedAt ? "Updated " + new Date(liveData.fetchedAt).toLocaleTimeString() : apiError || "Connect your Torn key to load live values."}</small>
+          <small>{liveData?.fetchedAt ? "Updated " + new Date(liveData.fetchedAt).toLocaleTimeString() + " · auto-refresh every 5 min" : apiError || "Connect your Torn key to load live values."}</small>
           <button className="tc-refresh-button" onClick={() => setRefreshKey(value => value + 1)} disabled={!canRefresh}>↻ Refresh live data</button>
         </div>
       </header>
@@ -636,7 +641,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </select><small className="tc-hint">Defaults to your active Torn gym. Only gyms available to your account are listed.</small></label>
               <TextNumberField label={currentStatLabel + " battle stat"} value={statOverride} fallbackValue={liveStatValue}
                 onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
-                hint={liveStatSource + ". Clear the field to restore the live API value."} testId="training-stat-value" />
+                hint={liveStatSource + ". Maximum " + fmt(MAX_STAT_INPUT) + " (safe calculator integer). Clear the field to restore the live API value."} testId="training-stat-value" />
               <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(selectedGym.energyCost)} energy per individual train</small></div>
               <div className="tc-readout-field"><span>Live combat modifier</span><strong>{fmt(safeNumber(liveData?.battleStatModifiers?.[selectedStat]?.percent))}%</strong><small>Combat-only modifiers are not multiplied into the raw-stat gym gain formula.</small></div>
               <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
