@@ -7142,7 +7142,7 @@ export default {
       const memberKey = await savedKey(env, session.player_id)
       if (!memberKey) return jsonResponse({ error: "Your saved Torn API key is unavailable. Sign in again to refresh your connection." }, 409, origin)
 
-      const publicKey = workerServiceTornApiKey(env) || env.TORN_API_KEY_CUSTOM?.trim() || ""
+      const publicKey = memberKey || workerServiceTornApiKey(env) || env.TORN_API_KEY_CUSTOM?.trim() || ""
       const baseUrl = (env.TORN_API_BASE_URL || "https://api.torn.com/v2").replace(/\/+$/, "")
       const fetcher = env.TORN_API_FIXTURE?.fetch.bind(env.TORN_API_FIXTURE) || fetch
       const errors: Record<string, string> = {}
@@ -7270,11 +7270,8 @@ export default {
 
       const marketEntries = Object.entries(targets)
       const marketResults: Record<string, Record<string, unknown> | null> = {}
-      for (let offset = 0; offset < marketEntries.length; offset += 4) {
-        const batch = marketEntries.slice(offset, offset + 4)
-        const prices = await Promise.all(batch.map(([key, item]) => fetchMarketPrice(key, item)))
-        batch.forEach(([key], index) => { marketResults[key] = prices[index] })
-      }
+      const marketPrices = await Promise.all(marketEntries.map(([key, item]) => fetchMarketPrice(key, item)))
+      marketEntries.forEach(([key], index) => { marketResults[key] = marketPrices[index] })
       const root = (payload: Record<string, unknown> | null, key: string): Record<string, unknown> | null =>
         payload && isRecord(payload[key]) ? payload[key] as Record<string, unknown> : null
       const battles = root(battleStatsPayload, "battlestats")
