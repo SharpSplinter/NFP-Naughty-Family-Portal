@@ -1742,7 +1742,9 @@ try {
 
   await test("faction performance scheduler and queue use a dedicated Worker secret and bounded idempotent runs", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
-    assert.match(workerSource, /TORN_FACTION_API_KEY/)
+    assert.match(workerSource, /function workerServiceTornApiKey\(env: WorkerEnv\): string/)
+    assert.match(workerSource, /return env\.TORN_API_KEY_SERVICE\?\.trim\(\) \|\| ""/)
+    assert.doesNotMatch(workerSource, /TORN_FACTION_API_KEY/, "faction collections must use the shared Worker service secret rather than a separate legacy binding")
     assert.match(workerSource, /FACTION_PERFORMANCE_PAGE_SIZE = 5/)
     assert.match(workerSource, /collection_key/)
     assert.match(workerSource, /fiveMinuteBucket % 3 === 0/)
