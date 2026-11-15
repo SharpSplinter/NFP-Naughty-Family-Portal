@@ -419,19 +419,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const maximumMistletoeCount = targetHappy > 1 ? Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75))) : 0
   const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
   const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
-  useEffect(() => {
-    setXanaxCount(current => Math.min(current, maximumXanax))
-    setCanCount(current => Math.min(current, maximumCanCount))
-    setFhcCount(current => Math.min(current, maximumFhcCount))
-    setGreenEggCount(current => Math.min(current, maximumYellowEggCount))
-    setDvdCount(current => Math.min(current, maximumDvdCount))
-    setYellowEggCount(current => Math.min(current, maximumYellowEggCount))
-    setSeQuantity(current => Math.min(current, maxSeByCooldown))
-    setMistletoeCount(current => Math.min(current, maximumMistletoeCount))
-    setJobPointQuantity(current => Math.min(current, jobPointMax))
-    setPressPassQuantity(current => Math.min(current, pressPassMax))
-  }, [maximumXanax, maximumCanCount, maximumFhcCount, maximumDvdCount, maximumYellowEggCount, maxSeByCooldown, maximumMistletoeCount, jobPointMax, pressPassMax])
-
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
   const canPrice = getPrice(priceOverrides["can:" + canId] || "", liveData?.items?.energyDrinks?.[canId])
   const fhcPrice = getPrice(priceOverrides.fhc || "", liveData?.items?.fhc)
@@ -507,6 +494,19 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const hasPressPass = currentJob?.type === "company" && currentJobName.toLowerCase().includes("television network") && currentJobRating >= 10
   const jobPointMax = jobPointSpecial ? Math.max(0, currentJobPoints - pressPassQuantity * 25) : 0
   const pressPassMax = hasPressPass ? Math.max(0, Math.floor((currentJobPoints - jobPointQuantity) / 25)) : 0
+  useEffect(() => {
+    setXanaxCount(current => Math.min(current, maximumXanax))
+    setCanCount(current => Math.min(current, maximumCanCount))
+    setFhcCount(current => Math.min(current, maximumFhcCount))
+    setGreenEggCount(current => Math.min(current, maximumYellowEggCount))
+    setDvdCount(current => Math.min(current, maximumDvdCount))
+    setYellowEggCount(current => Math.min(current, maximumYellowEggCount))
+    setSeQuantity(current => Math.min(current, maxSeByCooldown))
+    setMistletoeCount(current => Math.min(current, maximumMistletoeCount))
+    setJobPointQuantity(current => Math.min(current, jobPointMax))
+    setPressPassQuantity(current => Math.min(current, pressPassMax))
+  }, [maximumXanax, maximumCanCount, maximumFhcCount, maximumDvdCount, maximumYellowEggCount, maxSeByCooldown, maximumMistletoeCount, jobPointMax, pressPassMax])
+
   const jobPointStat = jobPointSpecial?.stat || null
   const jobPointStartingStat = jobPointStat
     ? (manualStats[jobPointStat].trim() === "" ? safeNumber(liveData?.battleStats?.[jobPointStat]) : Math.max(0, safeNumber(manualStats[jobPointStat])))
