@@ -109,17 +109,14 @@ try {
   async function consentFixtureForMember(database, env, playerId) {
     const keyRow = await database.prepare("SELECT ciphertext, iv FROM api_keys WHERE player_id = ?")
       .bind(playerId).first()
-    if (!keyRow || !env?.KEY_ENCRYPTION_SECRET) return {
+    if (!keyRow?.ciphertext || !keyRow?.iv) return {
       consentVersion: "portal-data-policy-v3",
       apiKeyUsageAccepted: 0,
       apiKeyConsentFingerprint: null,
     }
-    const keyMaterial = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.KEY_ENCRYPTION_SECRET))
-    const encryptionKey = await crypto.subtle.importKey("raw", keyMaterial, { name: "AES-GCM" }, false, ["decrypt"])
-    const ciphertext = Uint8Array.from(Buffer.from(keyRow.ciphertext, "base64"))
-    const iv = Uint8Array.from(Buffer.from(keyRow.iv, "base64"))
-    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, encryptionKey, ciphertext)
-    const digest = await crypto.subtle.digest("SHA-256", plaintext)
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+      String(playerId) + ":" + keyRow.ciphertext + ":" + keyRow.iv,
+    ))
     const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
     return {
       consentVersion: "portal-data-policy-v3",
@@ -4340,9 +4337,12 @@ try {
         membership_check_status: member.checkStatus ?? null,
         created_at: new Date(Date.now() - 86400000).toISOString(),
       })
-      if (member.apiKey) apiKeys.set(playerId, await makeEncryptedTestKey(secret, member.apiKey))
-      const apiKeyDigest = member.apiKey
-        ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(member.apiKey))
+      const encryptedApiKey = member.apiKey ? await makeEncryptedTestKey(secret, member.apiKey) : null
+      if (encryptedApiKey) apiKeys.set(playerId, encryptedApiKey)
+      const apiKeyDigest = encryptedApiKey
+        ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+          playerId + ":" + encryptedApiKey.ciphertext + ":" + encryptedApiKey.iv,
+        ))
         : null
       const apiKeyConsentFingerprint = apiKeyDigest
         ? Array.from(new Uint8Array(apiKeyDigest), byte => byte.toString(16).padStart(2, "0")).join("")
