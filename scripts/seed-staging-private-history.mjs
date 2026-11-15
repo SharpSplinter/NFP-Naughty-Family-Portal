@@ -159,7 +159,8 @@ statements.push(
 
 
 function insertSql(table, columns, values) {
-  statements.push("INSERT INTO " + table + " (" + columns + ") VALUES (" + values.map(sqlQuote).join(", ") + ");");
+  statements.push("INSERT INTO " + table + " (" + columns + ") VALUES (" +
+    values.map(value => value === null ? "NULL" : sqlQuote(value)).join(", ") + ");");
 }
 const halloweenStart = "2026-10-25T12:00:00.000Z";
 const halloweenEnd = "2026-11-01T12:00:00.000Z";
