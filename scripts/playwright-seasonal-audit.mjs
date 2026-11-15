@@ -360,6 +360,21 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
   recordAssertion(`${pageName} ${viewportName}: year control is compact`, layout.select && layout.select.height <= 40 && layout.filter.height <= 64, JSON.stringify({ filter: layout.filter, select: layout.select }));
   if (pageName === "Halloween") {
     recordAssertion(`${pageName} ${viewportName}: selector precedes section tabs`, layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1, JSON.stringify({ filter: layout.filter, tabs: layout.nextSection }));
+    const liveRegion = page.locator(".halloween-live-leaderboard");
+    const liveControls = liveRegion.locator(".halloween-table-scroll-controls button");
+    const liveAccess = await liveRegion.evaluate(element => ({
+      tabIndex: element.tabIndex,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      controls: element.querySelectorAll(".halloween-table-scroll-controls button").length,
+    }));
+    recordAssertion(`${pageName} ${viewportName}: Live leaderboard has keyboard focus`, liveAccess.tabIndex === 0, JSON.stringify(liveAccess));
+    recordAssertion(`${pageName} ${viewportName}: Live leaderboard exposes both scroll controls`, liveAccess.controls === 2, JSON.stringify(liveAccess));
+    if (viewportName !== "desktop" && liveAccess.scrollWidth > liveAccess.clientWidth) {
+      await liveControls.nth(1).click();
+      const scrolled = await liveRegion.evaluate(element => element.scrollLeft > 0);
+      recordAssertion(`${pageName} ${viewportName}: right scroll button moves the Live leaderboard`, scrolled, `scrollLeft after click: ${await liveRegion.evaluate(element => element.scrollLeft)}`);
+    }
   } else {
     recordAssertion(`${pageName} ${viewportName}: selector precedes archive data`, layout.nextSection && layout.filter && layout.nextSection.y >= layout.filter.bottom - 1, JSON.stringify({ filter: layout.filter, data: layout.nextSection }));
   }
@@ -371,7 +386,7 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
     description: violation.description,
     help: violation.help,
     nodes: violation.nodes.length,
-    examples: violation.nodes.slice(0, 4).map(node => ({ target: node.target, summary: node.failureSummary })),
+    examples: violation.nodes.slice(0, 4).map(node => ({ target: node.target, html: node.html, summary: node.failureSummary })),
   }));
   audit.accessibility.push({ page: pageName, viewport: viewportName, passes: axe.passes.length, violations });
   const serious = violations.filter(violation => violation.impact === "critical" || violation.impact === "serious");

@@ -2133,7 +2133,12 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
               <div><small>MY TOTAL TREATS</small><strong>{live.mySnapshot.totalTreats?.toLocaleString() ?? "—"}</strong><span>Latest saved event total</span></div>
               <div><small>UPGRADES UNLOCKED</small><strong>{live.mySnapshot.upgradesUnlocked ?? "—"}</strong><span>{live.mySnapshot.capturedAt ? "Captured " + new Date(live.mySnapshot.capturedAt).toLocaleString() : "No snapshot timestamp"}</span></div>
             </div> : <div className="historical-empty"><strong>Your live snapshot has not been collected.</strong><span>Live snapshots use your own saved faction login key. Missing data remains unavailable, not zero.</span></div>}
-            <div className="historical-leaderboard">
+            <div className="historical-leaderboard halloween-live-leaderboard" tabIndex={0} role="region" aria-label="Halloween live leaderboard. Scroll horizontally to view all columns.">
+              <div className="halloween-table-scroll-controls" role="group" aria-label="Live leaderboard horizontal scrolling">
+                <span>Scroll table</span>
+                <button type="button" aria-label="Scroll live leaderboard left" onClick={event => event.currentTarget.parentElement?.parentElement?.scrollBy({ left: -360, behavior: "smooth" })}>←</button>
+                <button type="button" aria-label="Scroll live leaderboard right" onClick={event => event.currentTarget.parentElement?.parentElement?.scrollBy({ left: 360, behavior: "smooth" })}>→</button>
+              </div>
               {live.leaderboard.length ? <table><thead><tr><th>RANK</th><th>MEMBER</th><th>CURRENT TREATS</th><th>TOTAL TREATS</th><th>UPGRADES</th><th>COVERAGE</th></tr></thead><tbody>
                 {live.leaderboard.map((member, index) => <tr key={member.playerId}>
                   <td>{member.totalTreats === null ? "—" : index + 1}</td>
