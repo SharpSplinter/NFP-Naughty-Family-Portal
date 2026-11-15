@@ -148,10 +148,12 @@ try {
             return statement
           }
           let consentStatement
+          let boundValues = []
           consentStatement = new Proxy(statement, {
             get(statementTarget, statementProperty) {
               if (statementProperty === "bind") {
                 return (...args) => {
+                  boundValues = args
                   statementTarget.bind(...args)
                   return consentStatement
                 }
@@ -160,7 +162,7 @@ try {
                 return async (...args) => {
                   const existing = await statementTarget.first(...args)
                   if (existing) return existing
-                  return consentFixtureForMember(target, env, String(args[0] ?? ""))
+                  return consentFixtureForMember(target, env, String(boundValues[0] ?? ""))
                 }
               }
               const value = Reflect.get(statementTarget, statementProperty, statementTarget)
