@@ -2946,7 +2946,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
             </div>
             <div className="portal-setup-policy-grid">
               <article><strong>Identity and membership</strong><p>User → Profile and faction membership are used to verify that the key belongs to you and that you are an active Naughty Souls member.</p></article>
-              <article><strong>Personal feature data</strong><p>Depending on your choices and granted scopes, the member key may access User → Bars, Cooldowns, Networth, Personal Stats, Gym, Perks, Refills, Calendar, Halloween, Log and Attacks. Log and Attacks are needed for the respective private-history collectors.</p></article>
+              <article><strong>Personal feature data</strong><p>Depending on your choices and granted scopes, the member key may access User → Bars, Battlestats, Cooldowns, Job Points, Networth, Personal Stats, Gym, Perks, Refills, Calendar, Halloween, Log and Attacks. Log and Attacks are needed for the respective private-history collectors.</p></article>
               <article><strong>Company and reference data</strong><p>The recommended Custom Key Builder also selects Company → Companies, Employees, Profile and Stock, plus Torn → Companies, Gyms, Items, Log Categories and Log Types. These selections support your own company workspace and reference lookups.</p></article>
               <article><strong>Faction and sensitive-data selections</strong><p>The builder preselects Faction → Members, Stats and Contributors, and enables its sensitive-data option. Grant only the scopes you are comfortable authorizing. Actual access remains controlled by Torn's key settings.</p></article>
             </div>
