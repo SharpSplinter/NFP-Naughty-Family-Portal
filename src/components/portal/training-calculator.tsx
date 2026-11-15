@@ -104,17 +104,6 @@ function normalizeBook(value: string): string {
   if (key.includes("self control is for losers")) return "self-control"
   return ""
 }
-function activeBookChoice(data: LiveData | null): string {
-  const books = data?.perks?.book || []
-  for (const book of books) {
-    const match = normalizeBook(book)
-    if (match) return match
-  }
-  return "none"
-}
-function activeHasBook(data: LiveData | null, bookId: string): boolean {
-  return (data?.perks?.book || []).some(book => normalizeBook(book) === bookId)
-}
 function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: number): number {
   if (!bar || waitHours <= 0) return 0
   const current = Math.max(0, safeNumber(bar.current))
@@ -344,7 +333,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     return () => controller.abort()
   }, [apiBase, sessionToken, refreshKey])
 
-  const activeBook = bookChoice === "auto" ? activeBookChoice(liveData) : bookChoice
+  const activeEnergyBooks = (liveData?.perks?.book || []).map(normalizeBook).filter(Boolean)
+  const plannedEnergyBooks = new Set<string>(
+    bookChoice === "auto" ? activeEnergyBooks : bookChoice === "none" ? [] : [bookChoice],
+  )
+  const hasLiveUglyEnergy = activeEnergyBooks.includes("ugly-energy")
   const energyBar = getBar(liveData, "energy")
   const happyBar = getBar(liveData, "happy")
   const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
@@ -376,7 +369,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const energyDrinkBonusPercent = factionVoracity && !activeVoracity ? 50 : activeEnergyDrinkBonus
   const drink = ENERGY_DRINKS.find(item => item.id === canId) || ENERGY_DRINKS[3]
   const companyCooldownReduction = clamp(safeNumber(liveData?.factionBonuses?.companyCooldownReductionPercent), 0, 25) / 100
-  const bookCanCooldownFactor = activeBook === "self-control" ? 0.5 : 1
+  const bookCanCooldownFactor = plannedEnergyBooks.has("self-control") ? 0.5 : 1
   const canCooldownFactor = bookCanCooldownFactor * (1 - companyCooldownReduction)
   const autoHappyLossReduction = clamp(safeNumber(liveData?.factionBonuses?.gymHappyLossReductionPercent), 0, 100)
   const autoHappyLossPercent = autoHappyLossReduction > 0 ? 25 : 50
@@ -387,15 +380,15 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
-  const barMaximumBase = Math.max(0, safeNumber(energyBar?.maximum, 150) - (activeHasBook(liveData, "ugly-energy") ? 100 : 0))
-  const refillBarMaximum = activeBook === "ugly-energy" && !activeHasBook(liveData, "ugly-energy")
+  const barMaximumBase = Math.max(0, safeNumber(energyBar?.maximum, 150) - (hasLiveUglyEnergy ? 100 : 0))
+  const refillBarMaximum = plannedEnergyBooks.has("ugly-energy") && !hasLiveUglyEnergy
     ? barMaximumBase + 100
     : Math.max(0, safeNumber(energyBar?.maximum, 150))
-  const regenMultiplier = activeBook === "higher-daddy" ? 1.2 : 1
+  const regenMultiplier = plannedEnergyBooks.has("higher-daddy") ? 1.2 : 1
   const naturalEnergyBar = energyBar ? { ...energyBar, current: currentEnergy } : null
   const naturalEnergy = getNaturalEnergy(naturalEnergyBar, waitHours, regenMultiplier)
   const energyAfterNatural = currentEnergy + naturalEnergy
-  const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (activeBook === "fuelling" ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
+  const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (plannedEnergyBooks.has("fuelling") ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
   const pointRefillAvailable = liveData?.refills?.energy === true
   const pointRefillCount = pointRefillIncluded && pointRefillAvailable ? 1 : 0
@@ -771,7 +764,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="higher-daddy">Higher Daddy, Higher! · +20% natural energy</option>
                 <option value="ugly-energy">Ugly Energy · +100 refill/bar capacity</option>
                 <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
-              </select><small className="tc-hint">Auto detects your active book from /user/perks. Pick a future book to model a planned jump.</small></label>
+              </select><small className="tc-hint">Auto applies all active energy books returned by /user/perks. Choose one to compare a single-book scenario.</small></label>
               <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
                 hint="Maximum 168 hours. Natural energy is calculated from the starting energy you set and your live bar tick." suffix="hours" testId="training-energy-wait-hours" />
               <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
