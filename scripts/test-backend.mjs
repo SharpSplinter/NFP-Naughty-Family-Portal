@@ -22,6 +22,7 @@ const sourceFiles = [
   "src/lib/faction-performance/private-live.ts",
   "src/lib/halloween/metrics.ts",
   "src/lib/christmas-town/metrics.ts",
+   "src/lib/gym-training/logs.ts",
   "src/lib/torn/types.ts",
   "src/worker/index.ts",
   "src/worker/snapshot-provenance.ts",
@@ -58,6 +59,7 @@ try {
   const require = createRequire(import.meta.url)
   const { runEngine } = require(join(temp, "lib/company/engine.js"))
   const { TornApiClient, TornApiClientError } = require(join(temp, "lib/torn/client.js"))
+  const { isGymTrainingLog } = require(join(temp, "lib/gym-training/logs.js"))
   const { classifyFactionInactivity } = require(join(temp, "lib/faction-performance/activity.js"))
   const {
     parseFactionRosterResponse,
@@ -155,6 +157,30 @@ try {
     passed += 1
     console.log("PASS", name)
   }
+
+  await test("gym training historical log classifier accepts explicit gym sessions and excludes adjacent gym actions", () => {
+    assert.equal(isGymTrainingLog({
+      id: "gym-training-1", timestamp: 1_763_000_000,
+      details: { title: "Gym training", category: "Gym" }, data: { energy_used: 25 },
+    }), true)
+    assert.equal(isGymTrainingLog({
+      id: "gym-training-2", timestamp: 1_763_000_000,
+      details: { title: "Training in the gym", category: "Other" }, data: {},
+    }), true)
+    assert.equal(isGymTrainingLog({
+      id: "gym-training-3", timestamp: 1_763_000_000,
+      details: { title: "Energy used", category: "Gym" }, data: {},
+    }), true)
+    assert.equal(isGymTrainingLog({
+      id: "gym-training-4", timestamp: 1_763_000_000,
+      details: { title: "Unlocked a new gym", category: "Gym" }, data: {},
+    }), false)
+    assert.equal(isGymTrainingLog({
+      id: "gym-training-5", timestamp: 1_763_000_000,
+      details: { title: "Used a gym item", category: "Items" }, data: {},
+    }), false)
+    assert.equal(isGymTrainingLog(null), false)
+  })
 
   await test("faction inactivity classification uses UTC last-action timestamps and exact 24h/72h boundaries", () => {
     const lastAction = 1_800_000_000
