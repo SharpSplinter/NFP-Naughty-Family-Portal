@@ -16,6 +16,7 @@ const MEMBERS = [
   { id: "999999002", name: "Staging Private History Other Member", companyName: "Other Member Private History Company", adBudget: 120000, wages: 230000, orderQuantity: 7, unitCost: 450, stockBase: 20000, stockStep: 250, incomeBase: 987650000, incomeStep: 250000 },
 ];
 const ADMIN = { id: "999999004", name: "Staging Private History Admin" };
+const CONSENT_MEMBER = { id: "999999007", name: "Staging First Login Consent Member" };
 
 function sqlQuote(value) {
   return "'" + String(value).replace(/'/g, "''") + "'";
@@ -87,8 +88,10 @@ const nowIso = now.toISOString();
 const expiresAt = Math.floor(now.getTime() / 1000) + 3600;
 const tokens = MEMBERS.map(() => randomBytes(32).toString("hex"));
 const adminToken = randomBytes(32).toString("hex");
+const consentToken = randomBytes(32).toString("hex");
 const tokenHashes = tokens.map(sha256);
 const adminTokenHash = sha256(adminToken);
+const consentTokenHash = sha256(consentToken);
 const FEATURE_MEMBER = { id: "999999005", name: "Staging Feature Walkthrough Member" };
 const PARTIAL_MEMBER = { id: "999999006", name: "Staging Partial Archive Member" };
 const featureToken = randomBytes(32).toString("hex");
@@ -100,9 +103,9 @@ const incomeSeries = MEMBERS.map(member => Array.from({ length: 7 }, (_, index) 
 const statements = [
   "PRAGMA foreign_keys = ON;",
   // Only previously created fixture identities are removed. A colliding real member ID is never deleted.
-  "DELETE FROM admin_audit_log WHERE actor_player_id IN (" + [MEMBERS[0].id, MEMBERS[1].id, ADMIN.id].map(sqlQuote).join(", ") + ");",
-  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + "));",
-  "DELETE FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ");",
+  "DELETE FROM admin_audit_log WHERE actor_player_id IN (" + [MEMBERS[0].id, MEMBERS[1].id, ADMIN.id, CONSENT_MEMBER.id].map(sqlQuote).join(", ") + ");",
+  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ") OR (player_id = " + sqlQuote(CONSENT_MEMBER.id) + " AND player_name = " + sqlQuote(CONSENT_MEMBER.name) + "));",
+  "DELETE FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ") OR (player_id = " + sqlQuote(CONSENT_MEMBER.id) + " AND player_name = " + sqlQuote(CONSENT_MEMBER.name) + ");",
 ];
 for (let index = 0; index < MEMBERS.length; index += 1) {
   const member = MEMBERS[index];
@@ -176,6 +179,22 @@ statements.push(
 statements.push(
   "INSERT INTO administrators (player_id, granted_by, granted_at) VALUES (" +
   [ADMIN.id, ADMIN.id, nowIso].map(sqlQuote).join(", ") + ");"
+);
+
+// A dedicated unconsented account exercises the real login-to-setup flow.
+// Its key fields are synthetic encrypted-envelope metadata, never a Torn key.
+const consentFixtureKey = syntheticPrimaryKey(CONSENT_MEMBER.id);
+statements.push(
+  "INSERT INTO players (player_id, player_name, created_at, updated_at, faction_id, faction_verified_at) VALUES (" +
+  [CONSENT_MEMBER.id, CONSENT_MEMBER.name, nowIso, nowIso, "8317", nowIso].map(sqlQuote).join(", ") + ");"
+);
+statements.push(
+  "INSERT INTO api_keys (player_id, ciphertext, iv, last_four, created_at, updated_at) VALUES (" +
+  [CONSENT_MEMBER.id, consentFixtureKey.ciphertext, consentFixtureKey.iv, consentFixtureKey.lastFour, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+);
+statements.push(
+  "INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (" +
+  [consentTokenHash, CONSENT_MEMBER.id, expiresAt, nowIso].map(sqlQuote).join(", ") + ");"
 );
 
 
@@ -286,7 +305,8 @@ try {
   console.log("::add-mask::" + tokens[1]);
   console.log("::add-mask::" + adminToken);
   console.log("::add-mask::" + featureToken);
-  console.log("Seeding synthetic private-history, feature-walkthrough, partial-coverage and administrator fixtures in the isolated acceptance D1.");
+  console.log("::add-mask::" + consentToken);
+  console.log("Seeding synthetic first-login consent, private-history, feature-walkthrough, partial-coverage and administrator fixtures in the isolated acceptance D1.");
   execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
     "wrangler", "d1", "execute", DATABASE, "--remote", "--config", CONFIG, "--file", sqlPath,
   ], { stdio: "inherit", env: process.env });
@@ -296,6 +316,8 @@ try {
     STAGING_TEST_OTHER_SESSION_TOKEN: tokens[1],
     STAGING_FEATURE_SESSION_TOKEN: featureToken,
     STAGING_FEATURE_PLAYER_ID: FEATURE_MEMBER.id,
+    STAGING_CONSENT_SESSION_TOKEN: consentToken,
+    STAGING_CONSENT_PLAYER_ID: CONSENT_MEMBER.id,
     STAGING_TEST_ADMIN_SESSION_TOKEN: adminToken,
     STAGING_TEST_ADMIN_PLAYER_ID: ADMIN.id,
     STAGING_TEST_COMPANY_ID: COMPANY_ID,
@@ -305,7 +327,7 @@ try {
     STAGING_TEST_OTHER_INCOME_SERIES: JSON.stringify(incomeSeries[1]),
   };
   appendFileSync(process.env.GITHUB_ENV, Object.entries(envValues).map(([key, value]) => key + "=" + value).join("\n") + "\n");
-  console.log("PASS seeded synthetic sessions, private company history, Halloween/Christmas/Gym archives, Torn calendar cache rows, consent fixtures, and administrator access.");
+  console.log("PASS seeded synthetic sessions, unconsented first-login account, private company history, Halloween/Christmas/Gym archives, Torn calendar cache rows, consent fixtures, and administrator access.");
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
 }
