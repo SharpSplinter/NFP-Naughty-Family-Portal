@@ -115,7 +115,7 @@ try {
   // Capture the exact owner-scoped history request initiated by the real UI.
   const historyResponsePromise = page.waitForResponse(response => {
     const url = new URL(response.url());
-    return /^\\/api\\/me\\/companies\\/\\d+\\/history$/.test(url.pathname);
+    return url.pathname.startsWith("/api/me/companies/") && url.pathname.endsWith("/history");
   }, { timeout: 25000 }).catch(() => null);
 
   // Navigate as an authenticated member into the real private-history view.
