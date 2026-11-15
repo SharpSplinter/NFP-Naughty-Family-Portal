@@ -1905,7 +1905,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
         <label htmlFor="halloween-year-scope">Year
           <select id="halloween-year-scope" aria-label="Choose Halloween event year" value={tab === "live" ? "live" : historicalYear} onChange={event => selectHalloweenYearScope(event.target.value)}>
             <option value="live">Current · {eventYear}</option>
-            <option value="all">All recorded years</option>
+            <option value="all">All time</option>
             {availableEventYears.map(year => <option key={year} value={String(year)}>{year}</option>)}
           </select>
         </label>
