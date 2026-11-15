@@ -1,0 +1,167 @@
+name: Probe legacy Christmas Town v1 log arrays
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Optional historical start timestamp (Unix seconds)
+        required: false
+        type: string
+      to:
+        description: Optional historical end timestamp (Unix seconds)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe-legacy-logs:
+    name: Probe each legacy log selection separately
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TORN_API_KEY_SERVICE: ${{ secrets.TORN_API_KEY_SERVICE }}
+      LOG_FROM: ${{ inputs.from }}
+      LOG_TO: ${{ inputs.to }}
+    steps:
+      - name: Verify service key is available
+        shell: bash
+        run: |
+          if [[ -z "${TORN_API_KEY_SERVICE:-}" ]]; then
+            echo "::error::TORN_API_KEY_SERVICE is unavailable to this workflow. The secret value was not read or printed."
+            exit 1
+          fi
+          echo "TORN_API_KEY_SERVICE is configured; its value is withheld."
+
+      - name: Call each Torn API v1 log selection independently
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const selections = [
+            { id: 8932, label: "Christmas town chest open (legacy)" },
+            { id: 8937, label: "Christmas town ornament (deprecated)" },
+            { id: 8933, label: "Christmas town reward (legacy)" },
+          ];
+
+          const key = process.env.TORN_API_KEY_SERVICE;
+          const from = process.env.LOG_FROM?.trim();
+          const to = process.env.LOG_TO?.trim();
+
+          if (!key) {
+            console.error("Missing TORN_API_KEY_SERVICE.");
+            process.exit(1);
+          }
+          if ((from && !/^\\d+$/.test(from)) || (to && !/^\\d+$/.test(to))) {
+            console.error("Optional from/to values must be Unix timestamps in seconds.");
+            process.exit(1);
+          }
+          if (from && to && Number(from) > Number(to)) {
+            console.error("The from timestamp must not be later than the to timestamp.");
+            process.exit(1);
+          }
+
+          const isRecord = value =>
+            value !== null && typeof value === "object" && !Array.isArray(value);
+
+          function describeShape(value, depth = 0) {
+            if (Array.isArray(value)) {
+              return {
+                type: "array",
+                length: value.length,
+                firstItem: value.length && depth < 4
+                  ? describeShape(value[0], depth + 1)
+                  : undefined
+              };
+            }
+            if (isRecord(value)) {
+              const fields = Object.entries(value).slice(0, 60).map(([name, child]) => ({
+                name,
+                ...describeShape(child, depth + 1)
+              }));
+              return { type: "object", fields };
+            }
+            return { type: value === null ? "null" : typeof value };
+          }
+
+          function getRecords(collection) {
+            if (Array.isArray(collection)) return collection;
+            if (isRecord(collection)) return Object.values(collection);
+            return [];
+          }
+
+          let failed = false;
+          for (let index = 0; index < selections.length; index++) {
+            const selection = selections[index];
+            const url = new URL("https://api.torn.com/user/");
+            url.searchParams.set("selections", "log");
+            url.searchParams.set("log", String(selection.id));
+            url.searchParams.set("key", key);
+            if (from) url.searchParams.set("from", from);
+            if (to) url.searchParams.set("to", to);
+
+            let report;
+            try {
+              const response = await fetch(url, {
+                method: "GET",
+                headers: { accept: "application/json" },
+                signal: AbortSignal.timeout(20000)
+              });
+              const body = await response.text();
+              let payload = null;
+              let parseError = null;
+              try {
+                payload = JSON.parse(body);
+              } catch {
+                parseError = "Response body was not valid JSON.";
+              }
+
+              const apiError = isRecord(payload?.error)
+                ? { code: payload.error.code ?? null, message: payload.error.error ?? null }
+                : null;
+              const collectionKey = isRecord(payload) && Object.hasOwn(payload, "log")
+                ? "log"
+                : isRecord(payload) && Object.hasOwn(payload, "logs")
+                  ? "logs"
+                  : null;
+              const collection = collectionKey ? payload[collectionKey] : null;
+              const records = getRecords(collection);
+
+              report = {
+                selectionId: selection.id,
+                selection: selection.label,
+                apiVersion: "v1",
+                httpStatus: response.status,
+                httpOk: response.ok,
+                apiError,
+                parseError,
+                topLevelFields: isRecord(payload) ? Object.keys(payload) : [],
+                logCollectionField: collectionKey,
+                collectionType: collection === null
+                  ? "missing-or-null"
+                  : Array.isArray(collection) ? "array" : typeof collection,
+                recordCount: collection === null ? null : records.length,
+                sampleRecordShapes: records.slice(0, 2).map((record, sampleIndex) => ({
+                  sample: sampleIndex + 1,
+                  shape: describeShape(record)
+                }))
+              };
+              if (!response.ok || apiError || parseError) failed = true;
+            } catch (error) {
+              failed = true;
+              report = {
+                selectionId: selection.id,
+                selection: selection.label,
+                apiVersion: "v1",
+                requestError: error instanceof Error ? error.name + ": " + error.message : "Unknown request error"
+              };
+            }
+
+            console.log("TORN_V1_LOG_PROBE " + JSON.stringify(report));
+            if (index < selections.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1200));
+            }
+          }
+
+          if (failed) process.exitCode = 1;
+          NODE
