@@ -79,6 +79,17 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const failures = [];
+const browserDiagnostics = { pageErrors: [], consoleErrors: [], requestFailures: [] };
+page.on("pageerror", error => browserDiagnostics.pageErrors.push(error.message));
+page.on("console", message => {
+  if (message.type() === "error") browserDiagnostics.consoleErrors.push(message.text());
+});
+page.on("requestfailed", request => {
+  if (request.url().includes("/api/")) browserDiagnostics.requestFailures.push({
+    url: request.url(),
+    error: request.failure()?.errorText || "Request failed",
+  });
+});
 mkdirSync("test-results/staging-responsive", { recursive: true });
 
 try {
@@ -89,6 +100,8 @@ try {
 
   const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
   assert.ok(response?.ok(), "Staging portal returned HTTP " + response?.status());
+  // Do not race the app's asynchronous session restoration and saved-company lookup.
+  await page.getByText("TORN ID " + playerId, { exact: true }).waitFor({ state: "visible", timeout: 20000 });
   const companyWorkspaceCard = page.getByRole("button", { name: /Company Dashboard/ });
   await companyWorkspaceCard.waitFor({ state: "visible", timeout: 20000 });
   await companyWorkspaceCard.click();
@@ -98,6 +111,12 @@ try {
   const companyNav = page.getByRole("navigation", { name: "Company pages" });
   await primaryNav.waitFor({ state: "visible" });
   await companyNav.waitFor({ state: "visible" });
+
+  // Capture the exact owner-scoped history request initiated by the real UI.
+  const historyResponsePromise = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return /^\\/api\\/me\\/companies\\/\\d+\\/history$/.test(url.pathname);
+  }, { timeout: 25000 }).catch(() => null);
 
   // Navigate as an authenticated member into the real private-history view.
   await primaryNav.getByRole("button", { name: "Insights", exact: true }).click();
@@ -117,10 +136,40 @@ try {
   await historyWindow.waitFor({ state: "visible" });
   assert.equal(await historyWindow.inputValue(), "90", "Authenticated Trends should expose the default 90-day history selector.");
 
-  const historyPanel = page.locator(".insights-table-panel");
+  const historyResponse = await historyResponsePromise;
+  let historyResponseBody = null;
+  if (historyResponse) {
+    historyResponseBody = await historyResponse.json().catch(async () => ({
+      responseText: (await historyResponse.text().catch(() => "")).slice(0, 2000),
+    }));
+  }
+
+  const historyPanel = page.locator(".insights-table-panel").last();
   await historyPanel.waitFor({ state: "visible", timeout: 20000 });
   const historyRows = historyPanel.locator("tbody tr");
-  await historyRows.first().waitFor({ state: "visible", timeout: 20000 });
+  try {
+    await historyRows.first().waitFor({ state: "visible", timeout: 15000 });
+  } catch {
+    await page.screenshot({ path: "test-results/staging-responsive/historical-trends-load-failure.png", fullPage: true });
+    const companyBadge = await page.locator(".insights-intro-actions .count-chip").last().innerText().catch(() => "not rendered");
+    const visibleErrors = await page.locator(".insights-workspace [role='alert']").allInnerTexts().catch(() => []);
+    const emptyState = await historyPanel.locator(".empty-state").innerText().catch(() => "no empty state");
+    throw new Error("Authenticated Historical Trends did not render its seven private rows. " + JSON.stringify({
+      expectedCompanyId: companyId,
+      expectedPlayerId: playerId,
+      companyBadge,
+      historyResponse: historyResponse ? {
+        status: historyResponse.status(),
+        url: historyResponse.url(),
+        company: historyResponseBody?.company ?? null,
+        historyCount: Array.isArray(historyResponseBody?.history) ? historyResponseBody.history.length : null,
+        error: historyResponseBody?.error ?? null,
+      } : "No history request was issued",
+      visibleErrors,
+      emptyState,
+      browserDiagnostics,
+    }));
+  }
   assert.equal(await historyRows.count(), 7, "Authenticated private history table should render all seven saved reporting points.");
 
   const latestRowText = await historyRows.first().innerText();
