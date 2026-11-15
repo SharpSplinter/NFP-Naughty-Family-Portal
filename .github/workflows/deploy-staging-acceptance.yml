@@ -37,6 +37,8 @@ on:
       - "scripts/test-torn-event-calendar-windows.mjs"
       - "package.json"
       - "src/worker/index.ts"
+      - "src/worker/daily-read-cache.ts"
+      - "wrangler.acceptance.toml"
       - "src/components/portal/workspaces.tsx"
       - "src/components/portal/christmas-town.tsx"
       - "scripts/test-christmas-town-consent.mjs"
@@ -90,6 +92,9 @@ jobs:
           grep -F 'database_name = "naughtyfamily-acceptance-staging"' wrangler.acceptance.toml
           grep -F 'database_id = "02cca699-1232-495f-8a0a-de525058b92a"' wrangler.acceptance.toml
           grep -F 'ALLOWED_ORIGIN = "https://naughtyfamily-staging.pages.dev"' wrangler.acceptance.toml
+          grep -F 'binding = "NCD_DAILY_READ_CACHE"' wrangler.acceptance.toml
+          grep -F 'id = "fa61636ea2cf4a39b00e255024d0fc7d"' wrangler.acceptance.toml
+          ! grep -F 'id = "9587689089c04f37b28eb9c93156cc47"' wrangler.acceptance.toml
           ! grep -F 'bbbe128a-c5cc-46ec-b8ef-93860183e795' wrangler.acceptance.toml
           grep -F 'binding = "GLOBAL_RANKINGS_QUEUE"' wrangler.acceptance.toml
           grep -F 'queue = "ncd-naughtyfamily-staging-collection"' wrangler.acceptance.toml

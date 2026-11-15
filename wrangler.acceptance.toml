@@ -7,6 +7,7 @@ workers_dev = true
 # Isolated real-key acceptance Worker. D1, Queues and scheduled collectors are staging-only.
 [vars]
 ALLOWED_ORIGIN = "https://naughtyfamily-staging.pages.dev"
+NCD_DAILY_CACHE_NAMESPACE = "naughtyfamily-acceptance-staging"
 
 [observability]
 enabled = true
@@ -37,3 +38,7 @@ max_batch_size = 1
 max_batch_timeout = 1
 max_retries = 1
 max_concurrency = 1
+
+[[kv_namespaces]]
+binding = "NCD_DAILY_READ_CACHE"
+id = "fa61636ea2cf4a39b00e255024d0fc7d"

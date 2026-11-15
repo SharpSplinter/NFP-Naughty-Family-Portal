@@ -32,6 +32,7 @@ import { parsePrivateLiveBars, parsePrivateLiveCooldowns, parsePrivateLiveNetwor
 import { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } from "./snapshot-provenance"
 import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company-history"
 import { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible, type FactionDirectorRankingInput, type RankingCompanyInput } from "./ranking-snapshots"
+import { withDailySnapshotReadCache, type DailyReadCacheKV } from "./daily-read-cache"
 import { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isSnapshotStale, normalizeWebhookUrl, normalizeAlertThreshold, normalizeCooldownHours } from "../lib/automation/rules"
 
 type D1Result<T = Record<string, unknown>> = { results?: T[]; success?: boolean; meta?: { changes?: number } }
@@ -43,7 +44,7 @@ type D1Database = {
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
-type WorkerEnv = { ALLOWED_ORIGIN?: string; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
+type WorkerEnv = { ALLOWED_ORIGIN?: string; NCD_DAILY_CACHE_NAMESPACE?: string; NCD_DAILY_READ_CACHE?: DailyReadCacheKV; DB?: D1Database; KEY_ENCRYPTION_SECRET?: string; TORN_API_KEY_SERVICE?: string; TORN_API_KEY_FULL_ACCESS?: string; TORN_API_KEY_CUSTOM?: string; TORN_API_BASE_URL?: string; TORN_API_FIXTURE?: TornFixtureBinding; GLOBAL_RANKINGS_QUEUE?: QueueProducer }
 function serviceFullAccessApiKey(env: WorkerEnv): string {
   // SERVICE is the production master binding. FULL_ACCESS remains a compatibility
   // alias for the isolated acceptance Worker until its secret is renamed there.
@@ -187,7 +188,7 @@ async function decryptKey(env: WorkerEnv, ciphertext: string, iv: string): Promi
 }
 function requireDb(env: WorkerEnv): D1Database {
   if (!env.DB) throw new Error("Persistent storage is not configured.")
-  return env.DB
+  return withDailySnapshotReadCache(env.DB, env.NCD_DAILY_CACHE_NAMESPACE, env.NCD_DAILY_READ_CACHE)
 }
 async function readAdminSetting(env: WorkerEnv, key: string): Promise<unknown> {
   const row = await requireDb(env).prepare("SELECT value_json FROM admin_settings WHERE setting_key = ?").bind(key).first<{ value_json: string }>()
@@ -285,7 +286,18 @@ async function revalidateFactionMembershipBatch(env: WorkerEnv, scheduledTime: n
   return checked
 }
 
-async function authenticate(request: Request, env: WorkerEnv): Promise<Session | null> {
+const authenticationByRequest = new WeakMap<Request, { database: D1Database; result: Promise<Session | null> }>()
+
+function authenticate(request: Request, env: WorkerEnv): Promise<Session | null> {
+  if (!env.DB) return Promise.resolve(null)
+  const cached = authenticationByRequest.get(request)
+  if (cached?.database === env.DB) return cached.result
+  const result = authenticateUncached(request, env)
+  authenticationByRequest.set(request, { database: env.DB, result })
+  return result
+}
+
+async function authenticateUncached(request: Request, env: WorkerEnv): Promise<Session | null> {
   const token = request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim()
   if (!token || !env.DB) return null
   const hash = await sha256(token)

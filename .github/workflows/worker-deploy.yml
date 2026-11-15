@@ -54,6 +54,8 @@ jobs:
           grep -F 'name = "naughtyfamily-api"' wrangler.toml
           grep -F 'database_name = "naughty-company-dashboard"' wrangler.toml
           grep -F 'database_id = "bbbe128a-c5cc-46ec-b8ef-93860183e795"' wrangler.toml
+          grep -F 'binding = "NCD_DAILY_READ_CACHE"' wrangler.toml
+          grep -F 'id = "9587689089c04f37b28eb9c93156cc47"' wrangler.toml
           ! grep -F 'naughtyfamily-acceptance-staging' wrangler.toml
           ! grep -F '02cca699-1232-495f-8a0a-de525058b92a' wrangler.toml
           echo "Production target verified. An external pre-deployment backup reference was supplied; the workflow does not create or validate that backup." >> "$GITHUB_STEP_SUMMARY"

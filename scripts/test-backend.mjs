@@ -28,6 +28,7 @@ const sourceFiles = [
   "src/worker/snapshot-provenance.ts",
   "src/worker/company-history.ts",
   "src/worker/ranking-snapshots.ts",
+  "src/worker/daily-read-cache.ts",
   "src/components/floor/ranking-utils.ts",
   "src/components/floor/financial-utils.ts",
 ].map((file) => resolve(root, file))
@@ -93,6 +94,7 @@ try {
     "energydrinkused", "refills", "statenhancersused", "networth", "cantaken",
   ]
   const worker = require(join(temp, "worker/index.js")).default
+  const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
@@ -4818,6 +4820,201 @@ try {
       for (const table of Object.values(fixture.halloweenTables)) assert.equal(table.has("226"), false)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  await test("daily report cache follows the 18:00 UTC reporting boundary and fails closed for live tables", () => {
+    assert.equal(dailyReportingDay(Date.parse("2026-11-15T17:59:59.000Z")), "2026-11-14")
+    assert.equal(dailyReportingDay(Date.parse("2026-11-15T18:00:00.000Z")), "2026-11-15")
+    assert.equal(dailyCacheTtlSeconds(Date.parse("2026-11-15T17:59:59.000Z")), 1)
+    assert.equal(dailyCacheTtlSeconds(Date.parse("2026-11-15T18:00:00.000Z")), 86400)
+    assert.deepEqual(cacheableDailySnapshotTables("SELECT * FROM global_company_rank_snapshots WHERE reporting_day = ?"), ["global_company_rank_snapshots"])
+    assert.deepEqual(cacheableDailySnapshotTables("SELECT * FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ?"), ["faction_company_rank_snapshots"])
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM faction_weekly_reports r JOIN faction_weekly_member_results m ON m.faction_id = r.faction_id"), null, "weekly records use a different reporting boundary and stay outside the daily cache")
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM sessions s JOIN players p ON p.player_id = s.player_id"), null)
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM global_company_rank_snapshots r, sessions s WHERE s.player_id = r.company_id"), null, "comma joins cannot bypass the source-table allowlist")
+    assert.equal(cacheableDailySnapshotTables("SELECT company_id FROM global_company_rank_snapshots WHERE captured_at < datetime('now')"), null, "time-dependent expressions are not cached")
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM company_snapshots WHERE date(fetched_at, '-18 hours') = ?"), null, "manual catch-up/restore can still add historical rows")
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM faction_member_stat_snapshots ORDER BY captured_at DESC LIMIT 1"), null)
+  })
+
+  await test("daily D1 read-through cache waits for successful lock-in and avoids repeat reads afterwards", async () => {
+    const originalNow = Date.now
+    Date.now = () => Date.parse("2026-11-15T20:00:00.000Z")
+    try {
+    let ready = false
+    let readinessReads = 0
+    let snapshotReads = 0
+    const database = {
+      prepare(sql) {
+        let bindings = []
+        return {
+          bind(...values) { bindings = values; return this },
+          async first() {
+            if (sql.includes("FROM global_rankings_refresh_runs")) {
+              readinessReads += 1
+              return ready ? { ready: 1 } : null
+            }
+            snapshotReads += 1
+            return { companyId: String(bindings[0] ?? "unknown"), weeklyIncome: 123456 }
+          },
+          async all() {
+            if (sql.includes("FROM global_rankings_refresh_runs")) {
+              readinessReads += 1
+              return { results: ready ? [{ ready: 1 }] : [] }
+            }
+            snapshotReads += 1
+            return { results: [{ companyId: String(bindings[0] ?? "unknown"), weeklyIncome: 123456 }] }
+          },
+          async run() { return { success: true, meta: { changes: 1 } } },
+        }
+      },
+    }
+    const cachedDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-test")
+    const sql = "SELECT company_id AS companyId, weekly_income AS weeklyIncome FROM global_company_rank_snapshots WHERE reporting_day = ?"
+    const first = await cachedDb.prepare(sql).bind("2026-11-15").all()
+    const second = await cachedDb.prepare(sql).bind("2026-11-15").all()
+    assert.equal(snapshotReads, 2, "an incomplete daily capture must bypass the cache")
+    assert.equal(readinessReads, 1, "the negative readiness probe should be briefly memoized per isolate")
+    assert.equal(first.results.length, 1)
+    assert.equal(second.results.length, 1)
+
+    ready = true
+    // A new namespace models a different Worker deployment/isolated D1 cache scope.
+    const readyDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-ready-test")
+    const third = await readyDb.prepare(sql).bind("2026-11-15").all()
+    const fourth = await readyDb.prepare(sql).bind("2026-11-15").all()
+    assert.equal(snapshotReads, 3, "the second request after successful lock-in should be served from cache")
+    assert.equal(readinessReads, 2, "the ready marker should prevent a D1 readiness read on every request")
+    assert.deepEqual(fourth.results, third.results)
+
+    const differentPlayer = await readyDb.prepare(sql).bind("2026-11-16").all()
+    assert.equal(snapshotReads, 4, "different bound parameters must never share cached rows")
+    assert.equal(differentPlayer.results[0].companyId, "2026-11-16")
+    const firstSql = "SELECT company_id AS companyId FROM global_company_rank_snapshots WHERE reporting_day = ? AND company_id = ?"
+    const firstRead = await readyDb.prepare(firstSql).bind("2026-11-15", "first-company").first()
+    const firstCacheHit = await readyDb.prepare(firstSql).bind("2026-11-15", "first-company").first()
+    assert.equal(snapshotReads, 5, "first() results are cached as well as all() result sets")
+    assert.deepEqual(firstCacheHit, firstRead)
+
+    const kvValues = new Map()
+    const kvWrites = []
+    const kvReads = []
+    const kv = {
+      async get(key, options) {
+        assert.equal(options.cacheTtl, 30, "shared cache reads use a 30-second edge cache TTL")
+        kvReads.push(key)
+        return kvValues.get(key) ?? null
+      },
+      async put(key, value, options) {
+        kvWrites.push({ key, expiration: options.expiration })
+        kvValues.set(key, value)
+      },
+    }
+    const kvDatabase = {
+      prepare(query) {
+        let values = []
+        return {
+          bind(...args) { values = args; return this },
+          async first() {
+            if (query.includes("FROM global_rankings_refresh_runs")) return { ready: 1 }
+            snapshotReads += 1
+            return { companyId: String(values[0] ?? "global"), weeklyIncome: 654321 }
+          },
+          async all() {
+            if (query.includes("FROM global_rankings_refresh_runs")) return { results: [{ ready: 1 }] }
+            snapshotReads += 1
+            return { results: [{ companyId: String(values[0] ?? "global"), weeklyIncome: 654321 }] }
+          },
+          async run() { return { success: true, meta: { changes: 1 } } },
+        }
+      },
+    }
+    const kvBacked = withDailySnapshotReadCache(kvDatabase, "backend-cache-kv-persistence-test", kv)
+    await kvBacked.prepare(sql).bind("shared-report").all()
+    assert.ok(kvWrites.length >= 2, "a successful daily capture writes both the readiness marker and snapshot result to KV")
+    const nextBoundary = Date.parse(dailyReportingDay(Date.now()) + "T18:00:00.000Z") + 86400000
+    assert.ok(kvWrites.every(write => write.expiration === Math.floor(nextBoundary / 1000)), "KV keys expire exactly at the next 18:00 UTC reporting boundary")
+    assert.ok(kvWrites.some(write => write.key.includes("/ready")), "the daily readiness marker is shared across Worker locations")
+
+    // Reload the module to simulate a different Worker isolate with an empty
+    // in-memory cache. It must serve the saved result from shared KV, not D1.
+    const cacheModulePath = require.resolve(join(temp, "worker/daily-read-cache.js"))
+    delete require.cache[cacheModulePath]
+    const isolatedCacheModule = require(cacheModulePath)
+    let isolatedD1SnapshotReads = 0
+    let isolatedReadinessReads = 0
+    const isolatedDatabase = {
+      prepare(query) {
+        return {
+          bind() { return this },
+          async first() {
+            if (query.includes("FROM global_rankings_refresh_runs")) { isolatedReadinessReads += 1; return { ready: 1 } }
+            isolatedD1SnapshotReads += 1
+            return { companyId: "unexpected-d1", weeklyIncome: 0 }
+          },
+          async all() {
+            if (query.includes("FROM global_rankings_refresh_runs")) { isolatedReadinessReads += 1; return { results: [{ ready: 1 }] } }
+            isolatedD1SnapshotReads += 1
+            return { results: [{ companyId: "unexpected-d1", weeklyIncome: 0 }] }
+          },
+          async run() { return { success: true, meta: { changes: 1 } } },
+        }
+      },
+    }
+    const isolatedDb = isolatedCacheModule.withDailySnapshotReadCache(isolatedDatabase, "backend-cache-kv-persistence-test", kv)
+    const sharedHit = await isolatedDb.prepare(sql).bind("shared-report").all()
+    assert.equal(isolatedD1SnapshotReads, 0, "a fresh Worker isolate reads the global KV cache instead of D1")
+    assert.equal(isolatedReadinessReads, 0, "a fresh Worker isolate also reads the shared readiness marker")
+    assert.equal(sharedHit.results[0].companyId, "shared-report")
+    assert.ok(kvReads.some(key => key.includes("/all/")), "the cached snapshot result is read from shared KV")
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  await test("faction ranking cache waits for its complete daily snapshot row", async () => {
+    const originalNow = Date.now
+    Date.now = () => Date.parse("2026-11-15T20:00:00.000Z")
+    try {
+      let snapshotAvailable = false
+      let readinessReads = 0
+      let snapshotReads = 0
+      const database = {
+        prepare(sql) {
+          return {
+            bind() { return this },
+            async first() {
+              if (sql.startsWith("SELECT 1 AS ready FROM faction_company_rank_snapshots")) {
+                readinessReads += 1
+                return snapshotAvailable ? { ready: 1 } : null
+              }
+              snapshotReads += 1
+              return { companyId: "faction-company" }
+            },
+            async all() {
+              snapshotReads += 1
+              return { results: [{ companyId: "faction-company" }] }
+            },
+            async run() { return { success: true, meta: { changes: 1 } } },
+          }
+        },
+      }
+      const sql = "SELECT company_id AS companyId FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ?"
+      const pending = withDailySnapshotReadCache(database, "backend-faction-cache-pending-test")
+      await pending.prepare(sql).bind("2026-11-15", "8317").all()
+      await pending.prepare(sql).bind("2026-11-15", "8317").all()
+      assert.equal(snapshotReads, 2, "a pending faction directory must not cache yesterday's fallback")
+      assert.equal(readinessReads, 1)
+
+      snapshotAvailable = true
+      const complete = withDailySnapshotReadCache(database, "backend-faction-cache-complete-test")
+      await complete.prepare(sql).bind("2026-11-15", "8317").all()
+      await complete.prepare(sql).bind("2026-11-15", "8317").all()
+      assert.equal(snapshotReads, 3, "the current daily faction snapshot is cached after its complete row set exists")
+      assert.equal(readinessReads, 2)
+    } finally {
+      Date.now = originalNow
     }
   })
 
