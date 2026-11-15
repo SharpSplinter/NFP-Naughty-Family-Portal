@@ -7174,11 +7174,12 @@ export default {
 
       const userRequests = [
         getJson(
-          "/user?selections=battlestats%2Cperks%2Cgym%2Cbars%2Crefills%2Ccooldowns%2Cjob%2Cjobpoints",
+          "/user?selections=battlestats%2Cgym%2Cbars%2Crefills%2Ccooldowns%2Cjob%2Cjobpoints",
           memberKey,
           "training-calculator-live-profile",
           "liveProfile",
         ),
+        getJson("/user/perks", memberKey, "training-calculator-perks", "perks"),
       ]
       const publicRequests = [
         getJson("/torn/gyms", publicKey, "training-calculator-gym-catalogue", "gymCatalogue", false),
@@ -7189,10 +7190,9 @@ export default {
         getJson("/torn/items?cat=Special", publicKey, "training-calculator-item-catalogue", "specialItems", false),
         getJson("/torn/items?cat=Enhancer", publicKey, "training-calculator-item-catalogue", "enhancerItems", false),
       ]
-      const [liveProfilePayload, gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
+      const [liveProfilePayload, perksPayload, gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
         await Promise.all([...userRequests, ...publicRequests])
       const battleStatsPayload = liveProfilePayload
-      const perksPayload = liveProfilePayload
       const gymPayload = liveProfilePayload
       const barsPayload = liveProfilePayload
       const refillsPayload = liveProfilePayload
