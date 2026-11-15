@@ -99,6 +99,56 @@ try {
   const { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isWithinQuietHours, normalizeWebhookUrl, isSnapshotStale, normalizeAlertThreshold, normalizeCooldownHours } = require(join(temp, "lib/automation/rules.js"))
   const { evaluateDiscordPollHealth } = require(join(temp, "lib/automation/discord-poll-monitoring.js"))
 
+  // Existing backend route fixtures model members who have completed first-login
+  // setup. Keep the authentication and consent-management routes unmodified so
+  // their setupRequired behavior can still be tested with an unconsented record.
+  const workerImplementation = worker
+  const originalWorkerFetch = workerImplementation.fetch.bind(workerImplementation)
+  workerImplementation.fetch = (request, env, ctx) => {
+    const path = new URL(request instanceof Request ? request.url : String(request)).pathname
+    if (!env?.DB || env.TEST_WITHOUT_PORTAL_CONSENT === true ||
+        ["/api/auth/sign-in", "/api/auth/session", "/api/me/portal-consent"].includes(path)) {
+      return originalWorkerFetch(request, env, ctx)
+    }
+
+    const database = env.DB
+    const consentFixtureDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property !== "prepare") {
+          const value = Reflect.get(target, property, target)
+          return typeof value === "function" ? value.bind(target) : value
+        }
+        return (sql) => {
+          const statement = target.prepare(sql)
+          const normalizedSql = String(sql).trim().replace(/\\s+/g, " ").toLowerCase()
+          if (normalizedSql !== "select consent_version as consentversion from portal_user_consents where player_id = ?") {
+            return statement
+          }
+          let consentStatement
+          consentStatement = new Proxy(statement, {
+            get(statementTarget, statementProperty) {
+              if (statementProperty === "bind") {
+                return (...args) => {
+                  statementTarget.bind(...args)
+                  return consentStatement
+                }
+              }
+              if (statementProperty === "first") {
+                return async (...args) => (await statementTarget.first(...args)) ?? {
+                  consentVersion: "portal-data-policy-v1",
+                }
+              }
+              const value = Reflect.get(statementTarget, statementProperty, statementTarget)
+              return typeof value === "function" ? value.bind(statementTarget) : value
+            },
+          })
+          return consentStatement
+        }
+      },
+    })
+    return originalWorkerFetch(request, { ...env, DB: consentFixtureDatabase }, ctx)
+  }
+
   let passed = 0
   async function test(name, fn) {
     await fn()
