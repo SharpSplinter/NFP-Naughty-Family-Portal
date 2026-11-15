@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
-const [worker, migration, floor, workspace] = await Promise.all([
+const [worker, migration, keyConsentMigration, floor, workspace] = await Promise.all([
   readFile(new URL("../src/worker/index.ts", import.meta.url), "utf8"),
   readFile(new URL("../migrations/auth/0032_portal_first_login_consent.sql", import.meta.url), "utf8"),
+  readFile(new URL("../migrations/auth/0034_portal_api_key_usage_consent.sql", import.meta.url), "utf8"),
   readFile(new URL("../src/components/floor/floor-app.tsx", import.meta.url), "utf8"),
   readFile(new URL("../src/components/portal/workspaces.tsx", import.meta.url), "utf8"),
 ])
@@ -24,15 +25,29 @@ assert.match(migration, /share_networth INTEGER NOT NULL DEFAULT 0/)
 assert.ok(worker.includes('url.pathname === "/api/me/portal-consent" && request.method === "GET"'))
 assert.ok(worker.includes('url.pathname === "/api/me/portal-consent" && request.method === "POST"'))
 assert.ok(worker.includes('consent_version AS consentVersion'))
-assert.ok(worker.includes('const PORTAL_CONSENT_VERSION = "portal-data-policy-v2"'), "gym-training history changes require a new central consent version")
-assert.ok(worker.includes('const PORTAL_POLICY_VERSION = "2026-11-14-v2"'))
-assert.ok(workspace.includes('consentVersion: "portal-data-policy-v2"'), "the setup page must submit the updated central policy version")
+assert.ok(worker.includes('const PORTAL_CONSENT_VERSION = "portal-data-policy-v3"'), "API-key permission consent must advance the central consent version")
+assert.ok(worker.includes('const PORTAL_POLICY_VERSION = "2026-11-15-v1"'))
+assert.ok(workspace.includes('consentVersion: "portal-data-policy-v3"'), "the setup page must submit the updated central policy version")
+assert.match(keyConsentMigration, /api_key_usage_accepted INTEGER NOT NULL DEFAULT 0/)
+assert.match(keyConsentMigration, /api_key_consent_acknowledged_at TEXT/)
+assert.match(keyConsentMigration, /api_key_consent_fingerprint TEXT/)
 assert.ok(workspace.includes("setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)") && workspace.includes("setShareHalloweenHistory(consent.shareHalloweenHistory === true)") && workspace.includes("setSharePrivateLive(consent.sharePrivateLive === true)") && workspace.includes("setShareNetworth(consent.shareNetworth === true)"), "policy upgrades must prefill existing optional choices")
-assert.ok(workspace.includes("setPolicyAccepted(props.isEdit === true)"), "existing members upgrading a policy version must re-acknowledge the revised notice")
-assert.ok(workspace.includes("disabled={!policyAccepted || busy || !preferencesLoaded}"), "setup must not submit until existing preferences have loaded")
-assert.ok(worker.includes('setupRequired: portalConsent?.consentVersion !== PORTAL_CONSENT_VERSION'), "sign-in and session restoration must report incomplete central setup")
-assert.ok(worker.includes('required: consent?.consentVersion !== PORTAL_CONSENT_VERSION'), "the preference endpoint must report whether central setup is required")
-assert.ok(worker.includes('428, origin'), "member API requests must be gated until initial setup is complete")
+assert.ok(workspace.includes("setPolicyAccepted(!policyRequired)"), "the setup form must follow the server's policy acknowledgement requirement rather than auto-accept edit mode")
+assert.ok(workspace.includes("disabled={!policyAcknowledgementRequired || busy || saved}"), "members must explicitly acknowledge policy updates, including from Settings")
+assert.ok(workspace.includes("apiKeyUsageAccepted: true"), "the setup form must persist explicit primary API-key use authorization")
+assert.ok(workspace.includes("checked={apiKeyUsageAccepted}"), "the form must display the primary API-key consent checkbox")
+assert.ok(workspace.includes("secondaryCompanyKeyConsent"), "an optional secondary company key must have its own authorization")
+assert.ok(workspace.includes("Custom Access key or a"), "the consent form must explain Custom and Full Access scope differences")
+assert.ok(workspace.includes("PRIVACY, DATA & API KEY CONSENTS"), "Account Settings must display the complete consent card")
+assert.ok(workspace.includes("Primary API key use"), "Account Settings must show primary-key authorization status")
+assert.ok(worker.includes("portalConsentIsCurrent"), "the API gate must enforce the current policy and primary-key consent")
+assert.ok(worker.includes("api_key_usage_accepted AS apiKeyUsageAccepted"), "auth responses and the API gate must read the key-consent state")
+assert.ok(worker.includes("api_key_consent_fingerprint AS apiKeyConsentFingerprint"), "API-key consent must be bound to the exact saved primary key")
+assert.ok(worker.includes("body.apiKeyUsageAccepted !== true"), "the API must reject setup without primary-key use consent")
+assert.ok(worker.includes("policyAcknowledgementRequired"), "the preference endpoint must distinguish policy updates from optional preference edits")
+assert.ok(worker.includes("428, origin"), "member API requests must be gated until initial setup is complete")
+assert.ok(floor.includes("portalSetupIsRequired"), "login and restored sessions must check the consent endpoint before portal navigation")
+assert.ok(floor.includes('placeholder="Input Custom or Full Access API Key"'), "the login API-key field must explain the accepted key types")
 assert.ok(worker.includes("function workerServiceTornApiKey(env: WorkerEnv): string"), "shared market and faction data must have a strict service-secret credential helper")
 assert.ok(worker.includes("return env.TORN_API_KEY_SERVICE?.trim() || \"\""), "the shared-data key helper must use only TORN_API_KEY_SERVICE")
 assert.ok(worker.includes("const apiKey = workerServiceTornApiKey(env)"), "faction collectors and market lookups must use the strict Worker service key")
