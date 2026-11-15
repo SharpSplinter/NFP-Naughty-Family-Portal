@@ -7334,30 +7334,36 @@ export default {
         return total
       }
       const activeJobPerks = perks && Array.isArray(perks.job) ? perks.job.filter(value => typeof value === "string") : []
+      const activePropertyPerks = perks && Array.isArray(perks.property) ? perks.property.filter(value => typeof value === "string") : []
       const activeEnhancerPerks = perks && Array.isArray(perks.enhancer) ? perks.enhancer.filter(value => typeof value === "string") : []
       const gymHappyLossReductionPercent = activeJobPerks.some(text => /goal oriented/i.test(text)) ? 50 : 0
       const companyCooldownReductionPercent = activeJobPerks.some(text => /professional metabolism/i.test(text)) ? 25
         : activeJobPerks.some(text => /fast metabolism/i.test(text)) ? 10 : 0
       const gymModifierFor = (stat: string): { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] } => {
-        let bonusPercent = 0
-        let bookBonusPercent = 0
+        const groupMultipliers: Record<string, number> = {
+          property: 1, job: 1, book: 1, enhancer: 1, faction: 1,
+          educationGeneral: 1, educationSpecific: 1, other: 1,
+        }
         const bonuses: string[] = []
         const seen = new Set<string>()
-        const add = (label: string, percent: number, isBook = false, dedupeKey = label) => {
+        const add = (group: string, label: string, percent: number, dedupeKey = group + ":" + label) => {
           if (seen.has(dedupeKey) || percent <= 0 || !Number.isFinite(percent)) return
           seen.add(dedupeKey)
-          bonusPercent += percent
-          if (isBook) bookBonusPercent += percent
+          groupMultipliers[group] = (groupMultipliers[group] || 1) * (1 + percent / 100)
           bonuses.push(label + " +" + percent + "%")
         }
-        const educationMap: Array<[RegExp, number, string[]]> = [
-          [/sports science bachelors/i, 1, ["strength", "defense", "speed", "dexterity"]],
-          [/strength and conditioning/i, 1, ["strength"]],
-          [/human movement analysis/i, 1, ["defense"]],
-          [/physiological testing/i, 1, ["speed"]],
-          [/bio mechanical determinants of skill/i, 1, ["dexterity"]],
+        const educationMap: Array<[RegExp, number, string[], string]> = [
+          [/sports science bachelors/i, 1, ["strength", "defense", "speed", "dexterity"], "educationGeneral"],
+          [/strength and conditioning/i, 1, ["strength"], "educationSpecific"],
+          [/human movement analysis/i, 1, ["defense"], "educationSpecific"],
+          [/physiological testing/i, 1, ["speed"], "educationSpecific"],
+          [/bio mechanical determinants of skill/i, 1, ["dexterity"], "educationSpecific"],
         ]
-        for (const text of activeEducationPerks) for (const [pattern, percent, stats] of educationMap) if (pattern.test(text) && stats.includes(stat)) add("Education: " + text, percent, false, "education:" + text)
+        for (const text of activeEducationPerks) {
+          for (const [pattern, percent, stats, group] of educationMap) {
+            if (pattern.test(text) && stats.includes(stat)) add(group, "Education: " + text, percent, group + ":" + text)
+          }
+        }
         const bookMap: Array<[RegExp, number, string[]]> = [
           [/get hard or go home/i, 20, ["strength", "defense", "speed", "dexterity"]],
           [/gym grunting/i, 30, ["strength"]],
@@ -7365,39 +7371,47 @@ export default {
           [/speed 3.*rejected script/i, 30, ["speed"]],
           [/limbo lovers 101/i, 30, ["dexterity"]],
         ]
-        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent, true, "book:" + text)
+        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) {
+          if (pattern.test(text) && stats.includes(stat)) add("book", "Book: " + text, percent, "book:" + text)
+        }
         for (const text of activeJobPerks) {
-          if (/training regime/i.test(text)) add("Company: " + text, 3, false, "job:" + text)
-          if (/boxercise/i.test(text) && stat === "defense") add("Company: " + text, 10, false, "job:" + text)
-          if (/pilates/i.test(text) && stat === "dexterity") add("Company: " + text, 10, false, "job:" + text)
+          if (/training regime/i.test(text)) add("job", "Company: " + text, 3, "job:" + text)
+          if (/boxercise/i.test(text) && stat === "defense") add("job", "Company: " + text, 10, "job:" + text)
+          if (/pilates/i.test(text) && stat === "dexterity") add("job", "Company: " + text, 10, "job:" + text)
         }
         for (const text of activeEnhancerPerks) {
-          if (/sports sneakers/i.test(text) && stat === "speed") add("Enhancer: " + text, 5, false, "enhancer:" + text)
+          if (/sports sneakers/i.test(text) && stat === "speed") add("enhancer", "Enhancer: " + text, 5, "enhancer:" + text)
         }
         for (const text of activeFactionPerks) {
-          const steadfast = text.match(/\b(strength|defense|speed|dexterity)\s+(?:gym\s+)?train(?:ing|s)\s+([IVXLCDM]+)\b/i)
+          const steadfast = text.match(/\\b(strength|defense|speed|dexterity)\\s+(?:gym\\s+)?train(?:ing|s)\\s+([IVXLCDM]+)\\b/i)
           if (steadfast && /steadfast/i.test(text)) {
             const targetStat = steadfast[1].toLowerCase()
-            if (targetStat === stat) add("Faction: " + text, romanNumber(steadfast[2]), false, "faction:" + text)
+            if (targetStat === stat) add("faction", "Faction: " + text, romanNumber(steadfast[2]), "faction:" + text)
           }
         }
-        const allPerks = [
-          ...activeFactionPerks.map(text => ({ group: "Faction", text })),
-          ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction", "job", "enhancer"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
+        const perkGroups: Array<[string, string[], string]> = [
+          ["property", activePropertyPerks, "property"],
+          ["job", activeJobPerks, "job"],
+          ["book", activeBooks, "book"],
+          ["enhancer", activeEnhancerPerks, "enhancer"],
+          ["faction", activeFactionPerks, "faction"],
+          ["educationGeneral", activeEducationPerks, "education"],
         ]
-        for (const entry of allPerks) {
-          const match = entry.text.match(/(\d+(?:\.\d+)?)\s*%/)
-          if (!match || !/(gym|training|steadfast)/i.test(entry.text)) continue
-          const statMention = entry.text.match(/\b(strength|defense|speed|dexterity)\b/i)
-          if (statMention && statMention[1].toLowerCase() !== stat) continue
-          const percent = Number(match[1])
-          const dedupeKey = entry.group.toLowerCase() + ":" + entry.text
-          add(entry.group + ": " + entry.text, percent, false, dedupeKey)
+        for (const [group, entries, label] of perkGroups) {
+          for (const text of entries) {
+            const match = text.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
+            if (!match || !/(gym|training)/i.test(text)) continue
+            const statMention = text.match(/\\b(strength|defense|speed|dexterity)\\b/i)
+            if (statMention && statMention[1].toLowerCase() !== stat) continue
+            add(group, label + ": " + text, Number(match[1]), group + ":" + text)
+          }
         }
+        const allKnownMultipliers = Object.values(groupMultipliers).reduce((total, value) => total * value, 1)
+        const bookMultiplier = groupMultipliers.book
         return {
-          multiplier: 1 + bonusPercent / 100,
-          baseMultiplier: 1 + (bonusPercent - bookBonusPercent) / 100,
-          bookBonusPercent,
+          multiplier: allKnownMultipliers,
+          baseMultiplier: bookMultiplier > 0 ? allKnownMultipliers / bookMultiplier : allKnownMultipliers,
+          bookBonusPercent: (bookMultiplier - 1) * 100,
           bonuses,
         }
       }
