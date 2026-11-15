@@ -1362,11 +1362,23 @@ try {
     const primaryKeyCrypto = await crypto.subtle.importKey("raw", primaryKeyDigest, { name: "AES-GCM" }, false, ["encrypt"])
     const primaryKeyIv = crypto.getRandomValues(new Uint8Array(12))
     const primaryKeyCiphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: primaryKeyIv }, primaryKeyCrypto, new TextEncoder().encode(apiKey))
+    const encryptedKeyEnvelope = {
+      ciphertext: Buffer.from(primaryKeyCiphertext).toString("base64"),
+      iv: Buffer.from(primaryKeyIv).toString("base64"),
+    }
+    const fingerprintSource = "77:" + encryptedKeyEnvelope.ciphertext + ":" + encryptedKeyEnvelope.iv
+    const fingerprintDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fingerprintSource))
+    const keyConsentFingerprint = Array.from(new Uint8Array(fingerprintDigest), byte => byte.toString(16).padStart(2, "0")).join("")
     const state = { key: null, snapshot: null, throttleAt: null, writes: [], centralPreferences: {
-      consentVersion: "portal-data-policy-v4", privateDataVisibility: "self", sharePrivateLive: 0, shareNetworth: 0,
-    }, primaryKey: {
-      ciphertext: Buffer.from(primaryKeyCiphertext).toString("base64"), iv: Buffer.from(primaryKeyIv).toString("base64"),
-    } }
+      consentVersion: "portal-data-policy-v4",
+      policyVersion: "2026-11-15-v2",
+      apiKeyUsageAccepted: 1,
+      apiKeyAccessType: "custom",
+      apiKeyConsentFingerprint: keyConsentFingerprint,
+      privateDataVisibility: "self",
+      sharePrivateLive: 0,
+      shareNetworth: 0,
+    }, primaryKey: encryptedKeyEnvelope }
     const db = {
       prepare(sql) {
         const normalized = sql.toLowerCase().replace(/\s+/g, " ").trim()
@@ -1379,8 +1391,14 @@ try {
               if (!session || session.expires_at <= Number(values[1])) return null
               return { ...player }
             }
-            if (normalized.startsWith("select consent_version as consentversion from portal_user_consents")) {
-              return { consentVersion: state.centralPreferences.consentVersion }
+            if (normalized.startsWith("select consent_version as consentversion")) {
+              return {
+                consentVersion: state.centralPreferences.consentVersion,
+                policyVersion: state.centralPreferences.policyVersion,
+                apiKeyUsageAccepted: state.centralPreferences.apiKeyUsageAccepted,
+                apiKeyAccessType: state.centralPreferences.apiKeyAccessType,
+                apiKeyConsentFingerprint: state.centralPreferences.apiKeyConsentFingerprint,
+              }
             }
             if (normalized.startsWith("select private_data_visibility as privatedatavisibility, share_networth as sharenetworth from portal_user_consents")) {
               return {
