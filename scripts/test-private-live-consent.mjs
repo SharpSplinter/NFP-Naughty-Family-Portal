@@ -44,9 +44,9 @@ assert.ok(worker.includes("st.disabled_at IS NULL"), "disabled accounts must not
 
 assert.ok(workspace.includes('request("/api/me/private-live/key", "POST")'), "the setup flow must connect using saved central preferences without a second feature consent payload")
 assert.ok(workspace.includes("sharePrivateLive,"), "central setup must submit the private-live sharing preference")
-assert.ok(workspace.includes("I have read and acknowledge the Naughty Family data policy and privacy notice."), "the central setup page must capture the required policy acknowledgement")
+assert.ok(workspace.includes("I have read and acknowledge the current Naughty Family data policy and privacy notice."), "the central setup page must capture the required policy acknowledgement")
 assert.ok(workspace.includes("Also share my detailed networth breakdown."), "detailed networth remains a separate opt-in")
-assert.ok(workspace.includes("No company key is required to finish setup."))
+assert.ok(workspace.includes("No secondary company key is required to finish setup."))
 assert.doesNotMatch(workspace, /settings-private-live-key|privateLiveKey\.trim\(\)/)
 assert.ok(workspace.includes("Disconnect & delete snapshot"))
 assert.ok(workspace.includes("Your API key is not shared."))
