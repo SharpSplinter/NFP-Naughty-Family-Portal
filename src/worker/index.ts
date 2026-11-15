@@ -6529,8 +6529,11 @@ export default {
         "SELECT consent_version AS consentVersion, policy_version AS policyVersion, policy_acknowledged_at AS acknowledgedAt, api_key_usage_accepted AS apiKeyUsageAccepted, api_key_consent_acknowledged_at AS apiKeyConsentAcknowledgedAt, api_key_consent_fingerprint AS apiKeyConsentFingerprint, historical_collection_enabled AS historicalCollectionEnabled, share_halloween_history AS shareHalloweenHistory, share_private_live AS sharePrivateLive, share_networth AS shareNetworth, created_at AS createdAt, updated_at AS updatedAt FROM portal_user_consents WHERE player_id = ?",
       ).bind(session.player_id).first<Record<string, unknown> & PortalConsentRecord>()
       const consentCurrent = await portalConsentIsCurrent(env, session.player_id, consent)
+      const policyAcknowledgementRequired = consent?.consentVersion !== PORTAL_CONSENT_VERSION ||
+        consent?.policyVersion !== PORTAL_POLICY_VERSION
       return jsonResponse({
-        required: !consentCurrent,
+        required: policyAcknowledgementRequired || !consentCurrent,
+        policyAcknowledgementRequired,
         consent: consent ? {
           ...consent,
           apiKeyUsageAccepted: consentCurrent,
