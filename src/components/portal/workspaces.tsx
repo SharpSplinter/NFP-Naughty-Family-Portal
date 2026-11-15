@@ -2585,6 +2585,7 @@ type PortalSetupResponse = Record<string, unknown> & { error?: string }
 
 export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [policyAccepted, setPolicyAccepted] = useState(props.isEdit === true)
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
   const [shareHalloweenHistory, setShareHalloweenHistory] = useState(false)
   const [sharePrivateLive, setSharePrivateLive] = useState(false)
@@ -2598,6 +2599,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
   useEffect(() => {
     let cancelled = false
+    setPreferencesLoaded(false)
     void fetch(props.apiBase + "/api/me/portal-consent", {
       headers: { Authorization: "Bearer " + props.sessionToken },
     }).then(async response => {
@@ -2618,6 +2620,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         setShareNetworth(consent.shareNetworth === true)
       }
       setPolicyAccepted(props.isEdit === true)
+      setPreferencesLoaded(true)
     }).catch(caught => {
       if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load your data preferences.")
     })
@@ -2851,7 +2854,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           {!saved ? (
             <div className="portal-setup-actions">
-              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || busy}>
+              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || busy || !preferencesLoaded}>
                 {busy ? "Saving preferences & starting eligible collections…" : props.isEdit ? "Save data preferences" : "Save preferences & finish setup"}
               </button>
               <small>Optional choices can remain off. You can update them later in Account Settings.</small>
