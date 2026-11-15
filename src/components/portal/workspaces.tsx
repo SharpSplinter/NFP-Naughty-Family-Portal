@@ -2601,7 +2601,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           <div className="settings-private-live-disclosure">
             <table><tbody>
               <tr><th>Data storage</th><td>Only the latest bars, cooldowns and optionally networth snapshot are retained while connected. No historical live-data archive is created.</td></tr>
-              <tr><th>Data sharing</th><td>Latest snapshot is visible to authenticated current Naughty Souls faction members. Your API key is not shared.</td></tr>
+              <tr><th>Data sharing</th><td>Latest snapshot follows your central Self / Faction Leaders-Staff-Council / All Members visibility level. Your API key is not shared.</td></tr>
               <tr><th>Purpose</th><td>Faction live-status display and member coordination. Detailed networth is a separate central preference.</td></tr>
               <tr><th>Key storage & sharing</th><td>Encrypted at rest; used by the API Worker only to request data belonging to your own Torn account.</td></tr>
               <tr><th>Key access level</th><td>The key must successfully return your own bars and cooldowns. Detailed networth is requested only when centrally enabled and Torn confirms access.</td></tr>
