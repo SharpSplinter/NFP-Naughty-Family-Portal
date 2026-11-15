@@ -177,18 +177,18 @@ try {
     const tab = adminNav.getByRole("button", { name: label, exact: true });
     await tab.click();
     await adminPage.getByRole("heading", { name: heading, exact: true }).waitFor({ state: "visible", timeout: 15000 });
+    if (label === "Administrators") {
+      assert.equal(await adminPage.getByRole("button", { name: "Grant administrator", exact: true }).isDisabled(), true, "Role grants must remain disabled in read-only mode.");
+    }
+    if (label === "Operations") {
+      assert.equal(await adminPage.getByRole("button", { name: "Queue selected endpoint refresh ↻", exact: true }).isDisabled(), true, "Refresh jobs must remain disabled in read-only mode.");
+      await adminPage.screenshot({ path: "test-results/admin-acceptance/admin-operations-readonly.png", fullPage: true });
+    }
     const activeCount = await adminNav.locator('[aria-current="page"]').count();
     assert.equal(activeCount, 1, "Exactly one admin section should expose aria-current=page after selecting " + label);
     const scan = await new AxeBuilder({ page: adminPage }).withTags(axeTags).analyze();
     accessibility.push({ view: "admin-" + label.toLowerCase().replace(/[^a-z0-9]+/g, "-"), violations: scan.violations });
   }
-  await adminNav.getByRole("button", { name: "Administrators", exact: true }).click();
-  await adminPage.getByRole("heading", { name: "Administrator management", exact: true }).waitFor({ state: "visible" });
-  assert.equal(await adminPage.getByRole("button", { name: "Grant administrator", exact: true }).isDisabled(), true, "Role grants must remain disabled in read-only mode.");
-  await adminNav.getByRole("button", { name: "Operations", exact: true }).click();
-  await adminPage.getByRole("heading", { name: "Refresh and maintenance jobs", exact: true }).waitFor({ state: "visible" });
-  assert.equal(await adminPage.getByRole("button", { name: "Queue selected endpoint refresh ↻", exact: true }).isDisabled(), true, "Refresh jobs must remain disabled in read-only mode.");
-  await adminPage.screenshot({ path: "test-results/admin-acceptance/admin-operations-readonly.png", fullPage: true });
 
   // Keyboard-only and screen-reader-semantics proxy review. This is browser automation,
   // not a substitute for a real TalkBack/VoiceOver session on a handset.
