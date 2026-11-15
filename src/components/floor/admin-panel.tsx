@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-type AdminTab = "overview" | "members" | "private-live" | "administrators" | "operations" | "history" | "settings" | "weekly-boundaries" | "audit"
+type AdminTab = "overview" | "members" | "private-live" | "data-governance" | "administrators" | "operations" | "history" | "settings" | "weekly-boundaries" | "audit"
 type AdminSettings = { maintenanceMode: boolean; manualRefreshEnabled: boolean; historyImportEnabled: boolean }
 type AdminWeeklyRunDiagnostic = {
   runId: string
@@ -75,6 +75,47 @@ type AdminPrivateLivePayload = {
   connections: AdminPrivateLiveConnection[]
   truncated: boolean
 }
+type AdminDataGovernanceMember = {
+  playerId: string
+  playerName: string
+  consentVersion: string | null
+  policyVersion: string | null
+  policyAcknowledgedAt: string | null
+  preferencesUpdatedAt: string | null
+  historicalCollectionEnabled: number
+  shareHalloweenHistory: number
+  sharePrivateLive: number
+  shareNetworth: number
+  halloweenKeyConnected: number
+  christmasTownKeyConnected: number
+  gymTrainingKeyConnected: number
+  halloweenJobStatus: string | null
+  halloweenJobYear: number | null
+  halloweenPagesCollected: number | null
+  halloweenLogsCollected: number | null
+  halloweenStoredLogs: number
+  christmasTownJobStatus: string | null
+  christmasTownJobYear: number | null
+  christmasTownPagesCollected: number | null
+  christmasTownLogsCollected: number | null
+  christmasTownStoredLogs: number
+  gymTrainingJobStatus: string | null
+  gymTrainingPagesCollected: number | null
+  gymTrainingLogsCollected: number | null
+  gymTrainingStoredLogs: number
+}
+type AdminDataGovernancePayload = {
+  currentPolicyVersion: string
+  consentVersion: string
+  sharedServiceKeyConfigured: boolean
+  summary: Record<string, unknown>
+  members: AdminDataGovernanceMember[]
+  total: number
+  limit: number
+  truncated: boolean
+  generatedAt: string
+}
+type DataGovernanceFilter = "all" | "policy-review" | "history-enabled" | "sharing-enabled" | "collection-errors"
 
 type Props = { apiBase: string; sessionToken: string; playerId: string; playerName: string }
 
@@ -145,6 +186,11 @@ export function AdminPanel({ apiBase, sessionToken, playerId, playerName }: Prop
   const [privateLiveDiagnostics, setPrivateLiveDiagnostics] = useState<AdminPrivateLivePayload | null>(null)
   const [privateLiveDiagnosticsLoading, setPrivateLiveDiagnosticsLoading] = useState(false)
   const [privateLiveDiagnosticsError, setPrivateLiveDiagnosticsError] = useState("")
+  const [dataGovernance, setDataGovernance] = useState<AdminDataGovernancePayload | null>(null)
+  const [dataGovernanceLoading, setDataGovernanceLoading] = useState(false)
+  const [dataGovernanceError, setDataGovernanceError] = useState("")
+  const [dataGovernanceQuery, setDataGovernanceQuery] = useState("")
+  const [dataGovernanceFilter, setDataGovernanceFilter] = useState<DataGovernanceFilter>("all")
   const [jobs, setJobs] = useState<AdminJob[]>([])
   const [refreshEndpoints, setRefreshEndpoints] = useState<AdminRefreshEndpoint[]>(["company-profile", "company-employees", "company-stock"])
   const [refreshScope, setRefreshScope] = useState<AdminRefreshScope>("all")
@@ -173,6 +219,24 @@ export function AdminPanel({ apiBase, sessionToken, playerId, playerName }: Prop
   const [historyBusy, setHistoryBusy] = useState(false)
 
   const selectedMember = useMemo(() => members.find((m) => m.playerId === selectedMemberId) ?? null, [members, selectedMemberId])
+  const filteredGovernanceMembers = useMemo(() => {
+    const rows = dataGovernance?.members ?? []
+    const currentPolicy = dataGovernance?.currentPolicyVersion
+    return rows.filter((member) => {
+      const hasSharing = Number(member.shareHalloweenHistory) === 1
+        || Number(member.sharePrivateLive) === 1
+        || Number(member.shareNetworth) === 1
+      const hasCollectionError = [member.halloweenJobStatus, member.christmasTownJobStatus, member.gymTrainingJobStatus]
+        .some((status) => status === "failed")
+      switch (dataGovernanceFilter) {
+        case "policy-review": return !member.policyVersion || member.policyVersion !== currentPolicy
+        case "history-enabled": return Number(member.historicalCollectionEnabled) === 1
+        case "sharing-enabled": return hasSharing
+        case "collection-errors": return hasCollectionError
+        default: return true
+      }
+    })
+  }, [dataGovernance?.members, dataGovernance?.currentPolicyVersion, dataGovernanceFilter])
   const refreshAll = useCallback(async () => {
     setLoading(true)
     setError("")
@@ -219,6 +283,22 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
     } finally { setPrivateLiveDiagnosticsLoading(false) }
   }, [apiBase, sessionToken])
 
+  const loadDataGovernance = useCallback(async (query = dataGovernanceQuery) => {
+    setDataGovernanceLoading(true)
+    setDataGovernanceError("")
+    try {
+      const payload = await adminFetch<AdminDataGovernancePayload>(
+        apiBase,
+        sessionToken,
+        `/api/admin/data-governance?limit=200&q=${encodeURIComponent(query)}`,
+      )
+      setDataGovernance(payload)
+    } catch (caught) {
+      setDataGovernanceError(caught instanceof Error ? caught.message : "Could not load data governance diagnostics.")
+      setDataGovernance(null)
+    } finally { setDataGovernanceLoading(false) }
+  }, [apiBase, sessionToken, dataGovernanceQuery])
+
   const loadJobs = useCallback(async () => {
     try {
       const payload = await adminFetch<{ jobs: AdminJob[] }>(apiBase, sessionToken, "/api/admin/jobs?limit=30")
@@ -260,6 +340,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
   useEffect(() => { void refreshAll() }, [refreshAll])
   useEffect(() => { if (tab === "administrators") void loadAdministrators() }, [tab])
   useEffect(() => { if (tab === "private-live") void loadPrivateLiveDiagnostics() }, [tab, loadPrivateLiveDiagnostics])
+  useEffect(() => { if (tab === "data-governance") void loadDataGovernance() }, [tab, loadDataGovernance])
   useEffect(() => { if (tab === "weekly-boundaries") void loadWeeklyBoundaries() }, [tab])
   useEffect(() => { if (tab === "operations") void loadAutomationRuns() }, [tab, loadAutomationRuns])
   useEffect(() => { if (tab === "operations") void loadRefreshCandidates(refreshMemberSearch, refreshMemberOffset) }, [tab, loadRefreshCandidates, refreshMemberSearch, refreshMemberOffset])
@@ -475,7 +556,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
   const historyStats = (historySummary?.stats || {}) as Record<string, unknown>
   const filteredAutomationRuns = useMemo(() => automationStatusFilter === "all" ? automationRuns : automationRuns.filter((run) => run.status === automationStatusFilter), [automationRuns, automationStatusFilter])
   const tabItems: Array<{ key: AdminTab; label: string; icon: string }> = [
-    { key: "overview", label: "Overview", icon: "◫" }, { key: "members", label: "Members", icon: "♙" }, { key: "private-live", label: "Private Live", icon: "◉" }, { key: "administrators", label: "Administrators", icon: "♛" },
+    { key: "overview", label: "Overview", icon: "◫" }, { key: "members", label: "Members", icon: "♙" }, { key: "private-live", label: "Private Live", icon: "◉" }, { key: "data-governance", label: "Data & Consent", icon: "◈" }, { key: "administrators", label: "Administrators", icon: "♛" },
     { key: "operations", label: "Operations", icon: "↻" }, { key: "history", label: "History & Backups", icon: "▤" },
     { key: "settings", label: "Global Settings", icon: "⚙" }, { key: "weekly-boundaries", label: "Weekly Boundaries", icon: "◷" }, { key: "audit", label: "Audit Log", icon: "≡" },
   ]
@@ -544,6 +625,67 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
         {privateLiveDiagnostics?.truncated && <p className="field-hint">Showing the 200 most recently attempted connections. Narrowing by member is not available in this read-only summary.</p>}
         {privateLiveDiagnostics && <p className="field-hint">Generated {prettyDate(privateLiveDiagnostics.generatedAt)} · freshness thresholds: fresh through {privateLiveDiagnostics.freshnessPolicy.freshThroughMinutes} minutes, ageing through {privateLiveDiagnostics.freshnessPolicy.ageingThroughMinutes} minutes. Collection mode: member-triggered.</p>}
       </section>
+    </div>}
+    {tab === "data-governance" && <div className="admin-section-stack">
+      <div className="admin-section-heading"><div><h2>Data & consent governance</h2><p>Central policy status, independent sharing choices, and private historical-collection progress across Naughty Family accounts.</p></div><button type="button" className="secondary-button" onClick={() => void loadDataGovernance()} disabled={dataGovernanceLoading}>{dataGovernanceLoading ? "Refreshing…" : "Refresh governance ↻"}</button></div>
+      <p className="admin-readonly-note"><strong>Privacy boundary.</strong> This is an operational metadata view. It does not expose API keys, key suffixes, private bars, networth values, or raw event logs. Historical collection consent is separate from Halloween sharing; Christmas Town and Gym Training archives remain member-private.</p>
+      {dataGovernanceError && <div className="error-banner" role="alert">{dataGovernanceError}</div>}
+      {dataGovernance && <>
+        <div className="admin-metric-grid">
+          {[
+            ["Dashboard members", dataGovernance.total],
+            ["Policy review required", dataGovernance.summary.policyReviewRequired],
+            ["Current policy accepted", dataGovernance.summary.currentPolicyAccepted],
+            ["Historical collection opt-ins", dataGovernance.summary.historicalCollectionOptIns],
+            ["Halloween sharing opt-ins", dataGovernance.summary.halloweenSharingOptIns],
+            ["Private-live sharing opt-ins", dataGovernance.summary.privateLiveSharingOptIns],
+            ["Detailed networth opt-ins", dataGovernance.summary.networthSharingOptIns],
+            ["Gym Training connections", dataGovernance.summary.gymTrainingKeyConnections],
+            ["Gym Training logs stored", dataGovernance.summary.gymTrainingStoredLogs],
+            ["Shared market prices cached", dataGovernance.summary.sharedMarketPriceCacheItems],
+          ].map(([label, value]) => <article className="admin-metric-card" key={String(label)}><small>{String(label)}</small><strong>{value == null ? "—" : Number(value).toLocaleString()}</strong></article>)}
+        </div>
+        <div className="admin-two-column">
+          <section className="panel admin-subpanel"><div className="panel-heading"><div><h3>Shared-data service</h3><p>Market-price and faction-wide data use the Worker-owned service credential, never a member key.</p></div><span className={dataGovernance.sharedServiceKeyConfigured ? "admin-status good" : "admin-status danger"}>{dataGovernance.sharedServiceKeyConfigured ? "Service key configured" : "Service key missing"}</span></div><p className="field-hint">Shared market-price cache items: {Number(dataGovernance.summary.sharedMarketPriceCacheItems ?? 0).toLocaleString()}. The credential itself is never returned to the browser.</p></section>
+          <section className="panel admin-subpanel"><div className="panel-heading"><div><h3>Historical collection queue</h3><p>Queued, running, and failed jobs by member-private collector.</p></div></div><div className="admin-activity-list">
+            <div className="admin-activity-row"><strong>Halloween</strong><span>Queued {Number(dataGovernance.summary.halloweenQueuedJobs ?? 0)} · Running {Number(dataGovernance.summary.halloweenRunningJobs ?? 0)} · Failed {Number(dataGovernance.summary.halloweenFailedJobs ?? 0)}</span></div>
+            <div className="admin-activity-row"><strong>Christmas Town</strong><span>Queued {Number(dataGovernance.summary.christmasTownQueuedJobs ?? 0)} · Running {Number(dataGovernance.summary.christmasTownRunningJobs ?? 0)} · Failed {Number(dataGovernance.summary.christmasTownFailedJobs ?? 0)}</span></div>
+            <div className="admin-activity-row"><strong>Gym Training</strong><span>Queued {Number(dataGovernance.summary.gymTrainingQueuedJobs ?? 0)} · Running {Number(dataGovernance.summary.gymTrainingRunningJobs ?? 0)} · Failed {Number(dataGovernance.summary.gymTrainingFailedJobs ?? 0)}</span></div>
+          </div></section>
+        </div>
+      </>}
+      <section className="panel admin-subpanel">
+        <div className="panel-heading"><div><h3>Member policy and collection status</h3><p>Showing {filteredGovernanceMembers.length.toLocaleString()} of {(dataGovernance?.total ?? 0).toLocaleString()} matched accounts{dataGovernance?.truncated ? " · result capped at 200; search to narrow the list" : ""}.</p></div></div>
+        <form className="admin-search-row" onSubmit={(event) => { event.preventDefault(); void loadDataGovernance(dataGovernanceQuery) }}>
+          <input value={dataGovernanceQuery} onChange={(event) => setDataGovernanceQuery(event.target.value)} placeholder="Search member name or Torn ID" aria-label="Search data governance members" />
+          <select value={dataGovernanceFilter} onChange={(event) => setDataGovernanceFilter(event.target.value as DataGovernanceFilter)} aria-label="Filter data governance members">
+            <option value="all">All accounts</option>
+            <option value="policy-review">Policy review required</option>
+            <option value="history-enabled">Historical collection enabled</option>
+            <option value="sharing-enabled">Any sharing enabled</option>
+            <option value="collection-errors">Collection errors</option>
+          </select>
+          <button className="primary-button" type="submit" disabled={dataGovernanceLoading}>{dataGovernanceLoading ? "Searching…" : "Search"}</button>
+        </form>
+        {dataGovernanceLoading && !dataGovernance ? <div className="empty-state">Loading policy and collection metadata…</div> : filteredGovernanceMembers.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable member data governance table"><table className="admin-table">
+          <thead><tr><th>MEMBER</th><th>POLICY</th><th>COLLECTION</th><th>SHARING</th><th>KEY CONNECTIONS</th><th>HISTORICAL ARCHIVE / LATEST JOB</th></tr></thead>
+          <tbody>{filteredGovernanceMembers.map((member) => {
+            const policyCurrent = member.policyVersion === dataGovernance?.currentPolicyVersion
+            const collectionEnabled = Number(member.historicalCollectionEnabled) === 1
+            const halloweenSharing = Number(member.shareHalloweenHistory) === 1
+            const privateLiveSharing = Number(member.sharePrivateLive) === 1
+            const networthSharing = Number(member.shareNetworth) === 1
+            return <tr key={member.playerId}>
+              <td><strong>{member.playerName}</strong><small>#{member.playerId}</small><small>Updated {prettyDate(member.preferencesUpdatedAt)}</small></td>
+              <td><span className={policyCurrent ? "admin-status good" : "admin-status warning"}>{policyCurrent ? "Current policy" : "Review required"}</span><small>{member.policyVersion || "No acknowledgement"}</small><small>{prettyDate(member.policyAcknowledgedAt)}</small></td>
+              <td><span className={collectionEnabled ? "admin-status good" : "admin-status neutral"}>{collectionEnabled ? "Opted in" : "Off"}</span><small>Central member choice</small></td>
+              <td><small>Halloween {halloweenSharing ? "shared" : "private"}</small><small>Private live {privateLiveSharing ? "shared" : "private"}</small><small>Networth {networthSharing ? "shared" : "private"}</small></td>
+              <td><small>Halloween {Number(member.halloweenKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Christmas Town {Number(member.christmasTownKeyConnected) === 1 ? "connected" : "not connected"}</small><small>Gym Training {Number(member.gymTrainingKeyConnected) === 1 ? "connected" : "not connected"}</small></td>
+              <td><small>Halloween {member.halloweenJobStatus ? prettyStatus(member.halloweenJobStatus) : "no job"}{member.halloweenJobYear ? ` · ${member.halloweenJobYear}` : ""} · {Number(member.halloweenStoredLogs ?? 0)} logs</small><small>Christmas Town {member.christmasTownJobStatus ? prettyStatus(member.christmasTownJobStatus) : "no job"}{member.christmasTownJobYear ? ` · ${member.christmasTownJobYear}` : ""} · {Number(member.christmasTownStoredLogs ?? 0)} logs</small><small>Gym Training {member.gymTrainingJobStatus ? prettyStatus(member.gymTrainingJobStatus) : "no job"} · {Number(member.gymTrainingStoredLogs ?? 0)} logs · {Number(member.gymTrainingPagesCollected ?? 0)} pages</small></td>
+            </tr>
+          })}</tbody></table></div> : <div className="empty-state">{dataGovernanceLoading ? "Loading member governance…" : "No accounts match this filter. Try another search or filter."}</div>}
+      </section>
+      <p className="field-hint">Collector connection flags indicate validated feature connection metadata only. They do not prove ongoing Torn availability or reveal credentials. Job status and stored-record counts are informational and do not grant access to member-private records.</p>
     </div>}
     {tab === "administrators" && <div className="admin-section-stack">
       <div className="admin-section-heading"><div><h2>Administrator management</h2><p>Privileges are attached to a verified Torn player ID and checked by the Worker on every administration request.</p></div><button type="button" className="secondary-button" onClick={() => void loadAdministrators()}>Refresh roles ↻</button></div>
