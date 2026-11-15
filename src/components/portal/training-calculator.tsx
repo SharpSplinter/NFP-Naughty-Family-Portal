@@ -377,15 +377,15 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
   const maximumCanCount = Math.min(48, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
   const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
-  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / 6)))
+  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / (6 * cooldownFactor))))
   const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6))
-  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / 6)))
+  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / (6 * cooldownFactor))))
   const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6))
-  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / 6)))
+  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / (6 * cooldownFactor))))
   const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
   const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75)))) : 0
   const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
-  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
+  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / (6 * cooldownFactor))))
   const maxPointRefill = pointRefillAvailable ? 1 : 0
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
@@ -546,7 +546,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <TextNumberField label={currentStatLabel + " battle stat"} value={statOverride} fallbackValue={liveStatValue}
                 onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
                 hint={liveStatSource + ". Clear the field to restore the live API value."} testId="training-stat-value" />
-              <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small>{fmt(selectedGym.energyCost)} energy per individual train</small></div>
+              <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(selectedGym.energyCost)} energy per individual train</small></div>
               <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
                 <option value="auto">Use active book from API</option><option value="none">No gym-gain book</option>
                 <option value="get-hard">Get Hard Or Go Home · +20% all stats</option>
@@ -556,6 +556,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="limbo-lovers">Limbo Lovers 101 · +30% Dexterity</option>
               </select><small className="tc-hint">Auto uses the live /user/perks book. Choose a planned book to replace the active book bonus for this scenario.</small></label>
               <div className="tc-readout-field"><span>Automatic gym-gain modifier</span><strong>{fmt(autoModifier, 4)}×</strong><small>Calculated from current /user/perks bonuses for {currentStatLabel.toLowerCase()}</small></div>
+              <div className="tc-readout-field"><span>Modifier used in this scenario</span><strong data-testid="training-effective-modifier">{fmt(effectiveModifier, 4)}×</strong><small>{gymBookChoice === "auto" ? "Active perk and book values" : "Planned gym book replaces the active book bonus"}</small></div>
               <label className="tc-check-field"><input type="checkbox" checked={manualModifierEnabled} onChange={event => setManualModifierEnabled(event.target.checked)} />
                 <span><strong>Override API gym modifier</strong><small>Leave off to use the live modifier calculated from Torn perks.</small></span>
               </label>
@@ -638,11 +639,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
                 <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
               </label>
-              <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
+              <label className="tc-check-field"><input type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
                 <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Applies the maximum +50% energy-drink branch."}</small></span>
               </label>
-              <label className="tc-check-field"><input data-testid="training-event-drink-bonus" type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
+              <label className="tc-check-field"><input type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
                 <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
               </label>
             </div>
