@@ -2957,7 +2957,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>03</span><div><h2>Historical data collection</h2><small>Automatic after setup · No additional collection opt-in</small></div></div>
-            <p>Once you acknowledge this policy and authorize your primary key, the portal automatically validates the permissions it needs and queues supported history imports. Gym training and Christmas Town require unrestricted User → Log access. Halloween requires User → Log and User → Attacks. Missing scopes are reported as pending and are never silently treated as successful imports. Gym-training and Christmas Town records remain private to your account.</p>
+            <p>Once you acknowledge this policy and authorize your primary key, the portal automatically validates the permissions it needs and queues supported history imports. Gym training and Christmas Town need unrestricted User → Log access. Halloween needs User → Log and User → Attacks. Missing scopes are reported as pending and are never silently treated as successful imports. Gym-training and Christmas Town records remain private to your account.</p>
             <div className="portal-setup-info-note"><strong>What happens after saving?</strong><small>The portal checks your key, starts eligible historical backfills, and continues processing them in the background. Collection is not a separate sharing permission: the visibility choice below controls who may view supported faction-facing private data.</small></div>
           </section>
 
