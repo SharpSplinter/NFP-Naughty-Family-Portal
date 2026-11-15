@@ -2586,7 +2586,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
               <tr><th>Key access model</th><td>Custom Access is limited to the scopes selected in Torn. Full Access is broader. The portal checks required permissions before enabling each optional dataset.</td></tr>
             </tbody></table>
           </div>
-          <p className="settings-form-hint">The recommended Custom Key Builder requests User profile/faction, personal stats, bars, cooldowns, gym, Halloween, perks, refills, attacks, networth and logs; Company profile/companies/employees/stock; Faction members/stats/contributors; and Torn companies/gyms/items/log categories/types. It also selects sensitive-data access. Only enable a scope you are comfortable granting. Shared faction and market requests use the Worker service key, not your member key.</p>
+          <p className="settings-form-hint">The recommended Custom Key Builder requests User profile/faction, personal stats, battlestats, job points, bars, cooldowns, gym, Halloween, perks, refills, attacks, networth and logs; Company profile/companies/employees/stock; Faction members/stats/contributors; and Torn companies/gyms/items/log categories/types. It also selects sensitive-data access. Only enable a scope you are comfortable granting. Shared faction and market requests use the Worker service key, not your member key.</p>
           <button type="button" onClick={() => props.onNavigate("/setup")}>Review privacy policy, API-key consent & data selections →</button>
         </article>
         <article className="settings-card settings-card-wide settings-private-live-card">
