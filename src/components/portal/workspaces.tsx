@@ -2198,6 +2198,20 @@ type GymTrainingHistoryStatus = {
   logs: Array<{ logId: string; timestamp: number; category: string | null; title: string | null; record: unknown }>
 }
 
+type PortalConsentSnapshot = {
+  required: boolean
+  consent: {
+    policyVersion?: string
+    acknowledgedAt?: string
+    apiKeyUsageAccepted?: boolean
+    apiKeyConsentAcknowledgedAt?: string | null
+    historicalCollectionEnabled?: boolean
+    shareHalloweenHistory?: boolean
+    sharePrivateLive?: boolean
+    shareNetworth?: boolean
+  } | null
+}
+
 type AccountSettingsProps = WorkspaceProps & {
   apiBase: string
   sessionToken: string
@@ -2218,7 +2232,18 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
   const [halloweenHistoryStatus, setHalloweenHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
   const [christmasTownHistoryStatus, setChristmasTownHistoryStatus] = useState<EventHistoryConsentStatus | null>(null)
   const [gymTrainingHistory, setGymTrainingHistory] = useState<GymTrainingHistoryStatus | null>(null)
+  const [portalConsentStatus, setPortalConsentStatus] = useState<PortalConsentSnapshot | null>(null)
   const [eventHistoryBusy, setEventHistoryBusy] = useState(false)
+
+  const loadPortalConsentStatus = async () => {
+    const response = await fetch(props.apiBase + "/api/me/portal-consent", {
+      headers: { Authorization: "Bearer " + props.sessionToken },
+    })
+    const payload = await response.json() as PortalConsentSnapshot & { error?: string }
+    if (!response.ok) throw new Error(payload.error || "Could not load your privacy and API-key consents.")
+    setPortalConsentStatus(payload)
+    return payload
+  }
 
   const loadHalloweenHistoryStatus = async () => {
     const response = await fetch(props.apiBase + "/api/me/halloween/key", {
@@ -2304,6 +2329,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     void loadPrivateLiveStatus().catch(caught => {
       setAccountError(caught instanceof Error ? caught.message : "Could not load your private live connection status.")
     })
+    void loadPortalConsentStatus().catch(caught => {
+      setAccountError(caught instanceof Error ? caught.message : "Could not load your privacy and API-key consents.")
+    })
     void Promise.all([loadHalloweenHistoryStatus(), loadChristmasTownHistoryStatus(), loadGymTrainingHistory()]).catch(caught => {
       setAccountError(caught instanceof Error ? caught.message : "Could not load historical collection settings.")
     })
@@ -2365,7 +2393,8 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
       if (!response.ok) throw new Error(payload.error || "Could not update your faction login key.")
       setLoginKey("")
       props.onLoginKeyChanged(true)
-      setAccountNotice("Your faction login key was validated and replaced.")
+      setAccountNotice("Your faction login key was validated and replaced. Confirm its updated Custom Access or Full Access permissions before continuing.")
+      props.onNavigate("/setup")
     } catch (caught) { setAccountError(caught instanceof Error ? caught.message : "Could not update your faction login key.") }
     finally { setLoginBusy(false) }
   }
@@ -2484,9 +2513,22 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           <button type="button" className="settings-link-button" onClick={() => props.onNavigate("/company")}>Open Company Dashboard →</button>
         </article>
         <article className="settings-card settings-card-wide">
-          <div className="settings-card-icon">◈</div><small>PRIVACY & COLLECTION</small><h2>Central data preferences</h2>
-          <p>Your initial policy acknowledgement, historical collection permission, and optional faction-sharing choices are managed in one place. Supported history backfills begin automatically when enabled.</p>
-          <button type="button" onClick={() => props.onNavigate("/setup")}>Review privacy & data preferences →</button>
+          <div className="settings-card-icon">◈</div><small>PRIVACY, DATA & API KEY CONSENTS</small><h2>Central data preferences</h2>
+          <p>This is the consent record that controls portal access, primary-key use, historical collection, and optional sharing. The primary key must be your own Torn Custom Access or Full Access key. Changing that key requires fresh authorization.</p>
+          <span className={portalConsentStatus && !portalConsentStatus.required ? "settings-connection good" : "settings-connection"}><i /> {!portalConsentStatus ? "Loading privacy consents…" : portalConsentStatus.required ? "Consent or primary-key authorization required" : "Current policy and primary API key authorized"}</span>
+          <div className="settings-private-live-disclosure">
+            <table><tbody>
+              <tr><th>Privacy policy</th><td>{portalConsentStatus?.consent?.policyVersion ? "Acknowledged · " + portalConsentStatus.consent.policyVersion : portalConsentStatus ? "Acknowledgement required" : "Checking…"}</td></tr>
+              <tr><th>Primary API key use</th><td>{portalConsentStatus?.consent?.apiKeyUsageAccepted ? "Authorized for the current saved key" : "Custom Access or Full Access key consent required"}</td></tr>
+              <tr><th>Historical collection</th><td>{portalConsentStatus?.consent?.historicalCollectionEnabled ? "Enabled for supported private history collectors" : "Off"}</td></tr>
+              <tr><th>Halloween sharing</th><td>{portalConsentStatus?.consent?.shareHalloweenHistory ? "Opted in · faction-visible" : "Off · private to you"}</td></tr>
+              <tr><th>Bars & cooldown sharing</th><td>{portalConsentStatus?.consent?.sharePrivateLive ? "Opted in · latest snapshot only" : "Off"}</td></tr>
+              <tr><th>Detailed networth</th><td>{portalConsentStatus?.consent?.shareNetworth ? "Opted in, subject to Torn key permissions" : "Off"}</td></tr>
+              <tr><th>Key access model</th><td>Custom Access is limited to the scopes selected in Torn. Full Access is broader. The portal checks required permissions before enabling each optional dataset.</td></tr>
+            </tbody></table>
+          </div>
+          <p className="settings-form-hint">The recommended Custom Key Builder requests User profile/faction, personal stats, bars, cooldowns, gym, Halloween, perks, refills, attacks, networth and logs; Company profile/companies/employees/stock; Faction members/stats/contributors; and Torn companies/gyms/items/log categories/types. It also selects sensitive-data access. Only enable a scope you are comfortable granting. Shared faction and market requests use the Worker service key, not your member key.</p>
+          <button type="button" onClick={() => props.onNavigate("/setup")}>Review privacy policy, API-key consent & data selections →</button>
         </article>
         <article className="settings-card settings-card-wide settings-private-live-card">
           <div className="settings-card-icon">◉</div><small>FACTION LIVE MEMBER STATUS</small><h2>Private live Torn connection</h2>
@@ -2584,13 +2626,16 @@ type PortalSetupWorkspaceProps = {
 type PortalSetupResponse = Record<string, unknown> & { error?: string }
 
 export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
-  const [policyAccepted, setPolicyAccepted] = useState(props.isEdit === true)
+  const [policyAccepted, setPolicyAccepted] = useState(false)
+  const [policyAcknowledgementRequired, setPolicyAcknowledgementRequired] = useState(true)
+  const [apiKeyUsageAccepted, setApiKeyUsageAccepted] = useState(false)
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
   const [shareHalloweenHistory, setShareHalloweenHistory] = useState(false)
   const [sharePrivateLive, setSharePrivateLive] = useState(false)
   const [shareNetworth, setShareNetworth] = useState(false)
   const [secondaryCompanyKey, setSecondaryCompanyKey] = useState("")
+  const [secondaryCompanyKeyConsent, setSecondaryCompanyKeyConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
@@ -2610,16 +2655,21 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         ? payload.consent as Record<string, unknown>
         : null
 
-      // Existing members upgrading to a new policy version must explicitly
-      // acknowledge the revised notice, but retain their previous optional
-      // choices rather than having the upgrade silently revoke or enable them.
+      // The API's required flag is authoritative. Existing preferences are
+      // retained on a policy upgrade, but the updated notice and primary-key
+      // authorization must be acknowledged in the form before the gate opens.
+      const policyRequired = payload.policyAcknowledgementRequired === true
       if (consent) {
         setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
         setShareHalloweenHistory(consent.shareHalloweenHistory === true)
         setSharePrivateLive(consent.sharePrivateLive === true)
         setShareNetworth(consent.shareNetworth === true)
+        setApiKeyUsageAccepted(consent.apiKeyUsageAccepted === true)
+      } else {
+        setApiKeyUsageAccepted(false)
       }
-      setPolicyAccepted(props.isEdit === true)
+      setPolicyAcknowledgementRequired(policyRequired)
+      setPolicyAccepted(!policyRequired)
       setPreferencesLoaded(true)
     }).catch(caught => {
       if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load your data preferences.")
@@ -2649,7 +2699,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
   const completeSetup = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!policyAccepted || busy || saved) return
+    if (!policyAccepted || !apiKeyUsageAccepted || (secondaryCompanyKey.trim() && !secondaryCompanyKeyConsent) || busy || saved) return
     setBusy(true)
     setError("")
     setNotices([])
@@ -2660,7 +2710,8 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
     try {
       await request("/api/me/portal-consent", "POST", {
         policyAccepted: true,
-        consentVersion: "portal-data-policy-v2",
+        apiKeyUsageAccepted: true,
+        consentVersion: "portal-data-policy-v3",
         historicalCollectionEnabled,
         shareHalloweenHistory: historicalCollectionEnabled && shareHalloweenHistory,
         sharePrivateLive,
@@ -2803,19 +2854,34 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>01</span><div><h2>Data policy & privacy</h2><small>{props.isEdit ? "Previously acknowledged" : "Required acknowledgement"}</small></div></div>
             <div className="portal-setup-policy-grid">
-              <article><strong>Your member API key</strong><p>Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions. The encrypted key is stored by the portal API, not in this browser's local storage.</p></article>
-              <article><strong>Shared faction and market data</strong><p>Shared faction information and public market prices are requested by the portal Worker using its own server-side Torn service key. Your personal API key is not used for these shared requests.</p></article>
-              <article><strong>Historical collections & sharing</strong><p>When enabled below, supported personal archives including gym-training log entries, Halloween activity, and Christmas Town activity are imported using your own member key. Gym training and Christmas Town records remain private to your account. Halloween event metrics are shared with authenticated Naughty Souls members only when you separately enable the Halloween sharing option.</p></article>
-              <article><strong>Retention & revocation</strong><p>You can turn off collection and sharing later. Revocation stops future collection and removes the stored collection credential or shared live snapshot. Previously collected historical event records are retained under the portal's data-retention policy.</p></article>
+              <article><strong>Your member API key</strong><p>Your primary key verifies your Torn identity and is used only for data tied to your account or features that require your personal Torn permissions. It is encrypted at rest by the portal API and is never stored in this browser's local storage.</p></article>
+              <article><strong>Shared faction and market data</strong><p>Shared faction rosters/statistics and public market prices are requested with the portal Worker's own server-side service key. Your member key is not used for those shared requests.</p></article>
+              <article><strong>Personal and historical data</strong><p>When you opt in, supported private archives include gym-training User → Log entries and Christmas Town activity. Halloween event activity requires User → Log and User → Attacks. Gym training and Christmas Town stay private; Halloween history is faction-visible only with the separate sharing choice below.</p></article>
+              <article><strong>Retention & revocation</strong><p>You can turn off collection or sharing later. Revocation stops future collection and removes collection credentials or the current shared live snapshot. Previously collected history is retained under the portal retention policy.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
-              <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={props.isEdit || busy || saved} />
-              <span><strong>I have read and acknowledge the Naughty Family data policy and privacy notice.</strong><small>This acknowledgement is required to enter the portal. It does not enable optional historical collection or data sharing by itself.</small></span>
+              <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={!policyAcknowledgementRequired || busy || saved} />
+              <span><strong>I have read and acknowledge the current Naughty Family data policy and privacy notice.</strong><small>{policyAcknowledgementRequired ? "Required to enter the portal or continue after a policy update. This does not enable optional collection or sharing." : "The current policy acknowledgement is already on file. Review it here at any time."}</small></span>
             </label>
           </section>
 
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>02</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
+            <div className="portal-setup-section-heading"><span>02</span><div><h2>Primary Torn API key use & permissions</h2><small>Required · Applies to your current primary key</small></div></div>
+            <p>The portal accepts either a <strong>Custom Access</strong> key or a <strong>Full Access</strong> key. Custom Access is recommended because you choose its scopes in Torn; Full Access grants broader permissions. The portal can use only the access Torn actually grants and checks permissions before turning on optional features. Replacing your primary key requires this consent again.</p>
+            <div className="portal-setup-policy-grid">
+              <article><strong>Identity and membership</strong><p>User → Profile and faction membership are used to verify that the key belongs to you and that you are an active Naughty Souls member.</p></article>
+              <article><strong>Personal feature data</strong><p>Depending on your choices and granted scopes, the member key may access User → Bars, Cooldowns, Networth, Personal Stats, Gym, Perks, Refills, Calendar, Halloween, Log and Attacks. Log and Attacks are needed for the respective private-history collectors.</p></article>
+              <article><strong>Company and reference data</strong><p>The recommended Custom Key Builder also selects Company → Companies, Employees, Profile and Stock, plus Torn → Companies, Gyms, Items, Log Categories and Log Types. These selections support your own company workspace and reference lookups.</p></article>
+              <article><strong>Faction and sensitive-data selections</strong><p>The builder preselects Faction → Members, Stats and Contributors, and enables its sensitive-data option. Grant only the scopes you are comfortable authorizing. Actual access remains controlled by Torn's key settings.</p></article>
+            </div>
+            <label className="portal-setup-check portal-setup-required">
+              <input type="checkbox" checked={apiKeyUsageAccepted} onChange={event => setApiKeyUsageAccepted(event.target.checked)} disabled={busy || saved} />
+              <span><strong>I own this primary Torn key and authorize Naughty Family to store and use it for the member-specific portal features I enable.</strong><small>I understand that Custom Access is limited to its selected permissions and Full Access is broader. I can replace or delete my key in Account Settings; replacement requires fresh consent.</small></span>
+            </label>
+          </section>
+
+          <section className="portal-setup-section">
+            <div className="portal-setup-section-heading"><span>03</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
             <p>Allow the portal to import historical records supported by your Torn key. Supported backfills include private gym-training logs, Halloween event activity, and Christmas Town activity. Gym training and Christmas Town need unrestricted User → Log access; Halloween needs User → Log and User → Attacks. An unrestricted User → Log selection avoids silently incomplete imports. Other historical datasets will be listed here as their collectors become available.</p>
             <label className="portal-setup-check">
               <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => { setHistoricalCollectionEnabled(event.target.checked); if (!event.target.checked) setShareHalloweenHistory(false) }} disabled={busy || saved} />
@@ -2841,11 +2907,15 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           </section>
 
           <section className="portal-setup-section">
-            <div className="portal-setup-section-heading"><span>04</span><div><h2>Secondary company API key</h2><small>Optional · Can be added later</small></div></div>
-            <p>Members with another company may add a separate key for that company. It is validated against the company profile and used only for the returned company connection. It does not need to belong to the signed-in member.</p>
+            <div className="portal-setup-section-heading"><span>05</span><div><h2>Secondary company API key</h2><small>Optional · Can be added later</small></div></div>
+            <p>You may add a separate key for another company connection. It is used only for the company returned by Torn and is not used for portal login, member identity, faction collection or market requests.</p>
             <label className="portal-setup-input-label" htmlFor="portal-setup-company-key">Additional company API key</label>
-            <input id="portal-setup-company-key" className="portal-setup-input" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => setSecondaryCompanyKey(event.target.value)} placeholder="Leave blank to skip" disabled={busy || saved} />
-            <small className="portal-setup-field-hint">Your primary portal key remains your member identity key. No company key is required to finish setup.</small>
+            <input id="portal-setup-company-key" className="portal-setup-input" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => { setSecondaryCompanyKey(event.target.value); if (!event.target.value) setSecondaryCompanyKeyConsent(false) }} placeholder="Leave blank to skip" disabled={busy || saved} />
+            {secondaryCompanyKey.trim() && <label className="portal-setup-check portal-setup-subcheck">
+              <input type="checkbox" checked={secondaryCompanyKeyConsent} onChange={event => setSecondaryCompanyKeyConsent(event.target.checked)} disabled={busy || saved} />
+              <span><strong>I am authorized to connect this secondary company key and consent to its use for that company only.</strong><small>The key is validated and stored separately from your primary portal key.</small></span>
+            </label>}
+            <small className="portal-setup-field-hint">Your primary portal key remains your member identity key. No secondary company key is required to finish setup.</small>
           </section>
 
           {error && <div className="portal-setup-alert is-error" role="alert">{error}</div>}
@@ -2854,7 +2924,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           {!saved ? (
             <div className="portal-setup-actions">
-              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || busy || !preferencesLoaded}>
+              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || !apiKeyUsageAccepted || (secondaryCompanyKey.trim().length > 0 && !secondaryCompanyKeyConsent) || busy || !preferencesLoaded}>
                 {busy ? "Saving preferences & starting eligible collections…" : props.isEdit ? "Save data preferences" : "Save preferences & finish setup"}
               </button>
               <small>Optional choices can remain off. You can update them later in Account Settings.</small>
