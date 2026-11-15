@@ -26,6 +26,8 @@ on:
       - "scripts/test-staging-responsive.mjs"
       - "scripts/test-staging-features.mjs"
       - "migrations/auth/0033_gym_training_history.sql"
+      - "migrations/auth/0034_portal_api_key_usage_consent.sql"
+      - "src/components/floor/floor-app.tsx"
       - "src/lib/gym-training/logs.ts"
       - "scripts/test-gym-training-history.mjs"
       - "scripts/test-backend.mjs"
