@@ -1,6 +1,9 @@
-name = "naughty-company-api"
+name = "naughtyfamily-api"
 main = "src/worker/index.ts"
 compatibility_date = "2026-10-08"
+
+[vars]
+ALLOWED_ORIGIN = "https://naughtyfamily.pages.dev"
 
 [observability]
 enabled = true
