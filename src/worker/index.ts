@@ -6079,6 +6079,8 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
           COALESCE(c.share_halloween_history, 0) AS shareHalloweenHistory,
           COALESCE(c.share_private_live, 0) AS sharePrivateLive,
           COALESCE(c.share_networth, 0) AS shareNetworth,
+          EXISTS(SELECT 1 FROM api_keys pk WHERE pk.player_id = p.player_id) AS primaryKeySaved,
+          (SELECT COUNT(*) FROM company_api_keys sec WHERE sec.player_id = p.player_id) AS secondaryCompanyKeyCount,
           EXISTS(SELECT 1 FROM halloween_historical_keys hk WHERE hk.player_id = p.player_id) AS halloweenKeyConnected,
           EXISTS(SELECT 1 FROM christmas_town_historical_keys ck WHERE ck.player_id = p.player_id) AS christmasTownKeyConnected,
           EXISTS(SELECT 1 FROM gym_training_historical_keys gk WHERE gk.player_id = p.player_id) AS gymTrainingKeyConnected,
