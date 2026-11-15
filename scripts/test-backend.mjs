@@ -106,14 +106,15 @@ try {
   // their setupRequired behavior can still be tested with an unconsented record.
   const workerImplementation = worker
   const originalWorkerFetch = workerImplementation.fetch.bind(workerImplementation)
+  function syntheticConsentKeyEnvelope(playerId) {
+    return {
+      ciphertext: "test-only-consent-envelope-" + playerId,
+      iv: "test-only-consent-iv-" + playerId,
+    }
+  }
   async function consentFixtureForMember(database, env, playerId) {
     const keyRow = await database.prepare("SELECT ciphertext, iv FROM api_keys WHERE player_id = ?")
-      .bind(playerId).first()
-    if (!keyRow?.ciphertext || !keyRow?.iv) return {
-      consentVersion: "portal-data-policy-v3",
-      apiKeyUsageAccepted: 0,
-      apiKeyConsentFingerprint: null,
-    }
+      .bind(playerId).first() ?? syntheticConsentKeyEnvelope(playerId)
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
       String(playerId) + ":" + keyRow.ciphertext + ":" + keyRow.iv,
     ))
@@ -141,6 +142,24 @@ try {
         return (sql) => {
           const statement = target.prepare(sql)
           const normalizedSql = String(sql).trim().replace(/\s+/g, " ").toLowerCase()
+          if (normalizedSql.startsWith("select ciphertext, iv from api_keys where player_id = ? and last_four is not null")) {
+            let boundKeyValues = []
+            let keyStatement
+            keyStatement = new Proxy(statement, {
+              get(statementTarget, property) {
+                if (property === "bind") return (...args) => {
+                  boundKeyValues = args
+                  statementTarget.bind(...args)
+                  return keyStatement
+                }
+                if (property === "first") return async (...args) =>
+                  (await statementTarget.first(...args)) ?? syntheticConsentKeyEnvelope(String(boundKeyValues[0] ?? ""))
+                const value = Reflect.get(statementTarget, property, statementTarget)
+                return typeof value === "function" ? value.bind(statementTarget) : value
+              },
+            })
+            return keyStatement
+          }
           if (!normalizedSql.startsWith("select consent_version as consentversion, api_key_usage_accepted as apikeyusageaccepted, api_key_consent_fingerprint as apikeyconsentfingerprint from portal_user_consents where player_id = ?")) {
             return statement
           }
