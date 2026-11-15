@@ -788,11 +788,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 min={0} max={100} step={0.0001} hint={"Maximum 100×. Live API modifier is " + fmt(autoModifier, 4) + "×."} />}
               <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : null}
                 onChange={setManualHappy} max={HAPPY_CAP} hint="Live from your Torn bars. A cleared field returns to your current API value." testId="training-session-happy" />
-              <NumberField label="Happy lost per energy" value={happyLossPercent} onChange={value => setManualHappyLossPercent(String(value))}
-                min={minHappyLossPercent} max={maxHappyLossPercent} step={1} suffix="%"
-                hint={autoHappyLossReduction > 0
-                  ? "Your live Goal Oriented company perk halves gym happiness loss. Torn's 40–60% range becomes 20–30%; default 25%."
-                  : "Torn's current best-estimate range is 40–60%. Default 50%; adjust for a conservative or optimistic model."} />
             </div>
             {modifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {modifierBonuses.join(" · ")}</div>}
             {selectedGym.note && <div className="tc-inline-note">{selectedGym.note}</div>}
