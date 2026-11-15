@@ -45,7 +45,8 @@ assert.doesNotMatch(worker, /env\.TORN_FACTION_API_KEY\?\.trim\(\)/)
 assert.doesNotMatch(worker, /SELECT player_id FROM api_keys ORDER BY updated_at DESC LIMIT 1/)
 
 assert.ok(floor.includes("PortalSetupWorkspace"))
-assert.ok(floor.includes("sensitiveData=1&title=NaughtyFamily"))
+const customKeyUrl = "https://www.torn.com/preferences.php?utm_source=chatgpt.com#tab=api?step=addNewKey&user=faction,job,personalstats,profile,bars,calendar,cooldowns,gym,halloween,perks,refills,attacks,networth,log&company=companies,employees,profile,stock&faction=members,stats,contributors&torn=companies,gyms,items,logcategories,logtypes&sensitiveData=1&title=NaughtyFamily"
+assert.ok(floor.includes(`href="${customKeyUrl}"`), "the login key builder must preserve the supplied Torn URL exactly")
 assert.ok(floor.includes("setupToken"))
 assert.ok(workspace.includes("export function PortalSetupWorkspace"))
 assert.ok(workspace.includes("/api/me/portal-consent"))
