@@ -3264,10 +3264,8 @@ async function continueAdminFactionDirectoryRefresh(env: WorkerEnv, jobId: strin
   const globalResults = isRecord(rawResult.globalResults) ? { ...rawResult.globalResults } : {}
   const previous = isRecord(globalResults["faction-directory"]) ? globalResults["faction-directory"] : {}
   const previousBatches = Number(previous.batches ?? 1)
-  const row = await db.prepare("SELECT player_id, ciphertext, iv FROM api_keys ORDER BY updated_at DESC LIMIT 1")
-    .first<{ player_id: string; ciphertext: string; iv: string }>()
-  if (!row) throw new Error("No saved Torn API key is available for the faction-directory refresh.")
-  const apiKey = await decryptKey(env, row.ciphertext, row.iv)
+  const apiKey = workerServiceTornApiKey(env)
+  if (!apiKey) throw new Error("Worker TORN_API_KEY_SERVICE is not configured for faction-directory refresh.")
   const batch = await syncFactionDirectorDirectory(env, apiKey, ADMIN_FACTION_DIRECTORY_BATCH_SIZE, true)
   const batches = Math.max(1, Number.isSafeInteger(previousBatches) ? previousBatches : 1) + 1
   const processed = Math.max(0, Number(previous.processed) || 0) + batch.processed
@@ -3924,14 +3922,13 @@ async function getWeeklyFactionStarCounts(env: WorkerEnv): Promise<{ weeklyStarC
   return { weeklyStarCounts: rows.results ?? [], weeklyStarCountsCapturedAt: latest.capturedAt }
 }
 
-async function refreshFactionDirectoryFromAnyKey(env: WorkerEnv, limit = 35, forceRefresh = false): Promise<void> {
-  if (!env.DB || !env.KEY_ENCRYPTION_SECRET) return
-  const row = await requireDb(env).prepare("SELECT player_id, ciphertext, iv FROM api_keys ORDER BY updated_at DESC LIMIT 1").first<{ player_id: string; ciphertext: string; iv: string }>()
-  if (!row) return
+async function refreshFactionDirectoryFromServiceKey(env: WorkerEnv, limit = 35, forceRefresh = false): Promise<void> {
+  if (!env.DB) return
+  const apiKey = workerServiceTornApiKey(env)
+  if (!apiKey) return
   try {
-    const apiKey = await decryptKey(env, row.ciphertext, row.iv)
     await syncFactionDirectorDirectory(env, apiKey, limit, forceRefresh)
-  } catch { /* Keep scheduled sync resilient to a revoked key or temporary Torn failure. */ }
+  } catch { /* Keep scheduled sync resilient to a Torn outage or service-key issue. */ }
 }
 
 async function refreshRankingProfiles(env: WorkerEnv, captureHistory = false, snapshotSchedule?: { cron: string; scheduledTime: number }): Promise<{ companiesChecked: number; companiesFailed: number; snapshotsAdded: number; snapshotsSkipped: number; snapshotsRejected: number }> {
@@ -4583,7 +4580,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   const isRankingCaptureWindow = controller.cron.trim() === "10 18 * * *"
   const isOfficialVerificationWindow = controller.cron.trim() === "10 0 * * *"
   try { await ensureAutomationSchema(env) } catch {
-    const fallbackTasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromAnyKey(env, 35)]
+    const fallbackTasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromServiceKey(env, 35)]
     if (isRankingCaptureWindow) fallbackTasks.push(refreshGlobalRankingCache(env, true))
     if (isOfficialVerificationWindow) fallbackTasks.push(verifyGlobalRankingsAgainstOfficialSnapshot(env, controller.scheduledTime))
     await Promise.allSettled(fallbackTasks)
@@ -4593,7 +4590,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   const startedAt = new Date(controller.scheduledTime).toISOString()
   await db.prepare("INSERT INTO automation_runs (run_id, trigger_name, status, started_at) VALUES (?, ?, 'running', ?)").bind(runId, controller.cron || "scheduled", startedAt).run()
   const isWeeklyLock = new Date(controller.scheduledTime).getUTCDay() === 0
-  const tasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromAnyKey(env, isWeeklyLock ? 250 : 35)]
+  const tasks: Promise<unknown>[] = [refreshRankingProfiles(env, isRankingCaptureWindow, { cron: controller.cron, scheduledTime: controller.scheduledTime }), refreshFactionDirectoryFromServiceKey(env, isWeeklyLock ? 250 : 35)]
   if (isRankingCaptureWindow) tasks.push(refreshGlobalRankingCache(env, true))
   if (isOfficialVerificationWindow) tasks.push(verifyGlobalRankingsAgainstOfficialSnapshot(env, controller.scheduledTime))
   if (isWeeklyLock) tasks.push(captureWeeklyFactionStarCounts(env, startedAt))
@@ -4691,9 +4688,8 @@ async function runAdminEndpointRefresh(env: WorkerEnv, config: AdminEndpointRefr
           globalResults[endpoint] = { message: "Shared rankings cache refreshed from type-specific company lists.", fetchedAt: after.fetchedAt }
         }
       } else {
-        const row = await db.prepare("SELECT player_id, ciphertext, iv FROM api_keys ORDER BY updated_at DESC LIMIT 1").first<{ player_id: string; ciphertext: string; iv: string }>()
-        if (!row) throw new Error("No saved Torn API key is available for the faction-directory refresh.")
-        const apiKey = await decryptKey(env, row.ciphertext, row.iv)
+        const apiKey = workerServiceTornApiKey(env)
+        if (!apiKey) throw new Error("Worker TORN_API_KEY_SERVICE is not configured for faction-directory refresh.")
         const directoryBatch = await syncFactionDirectorDirectory(env, apiKey, ADMIN_FACTION_DIRECTORY_BATCH_SIZE, true)
         globalResults[endpoint] = {
           ...directoryBatch,
@@ -4849,7 +4845,7 @@ async function runAdminJob(env: WorkerEnv, jobId: string): Promise<void> {
       result = { companyId: String(validated.companyId), companyName: typeof root.name === "string" ? root.name : `Company #${validated.companyId}` }
     } else if (job.job_type === "global-refresh") {
       const rankings = await refreshRankingProfiles(env, false)
-      await refreshFactionDirectoryFromAnyKey(env, 35, true)
+      await refreshFactionDirectoryFromServiceKey(env, 35, true)
       result = { ...rankings, message: "Live company ranking profiles and a forced faction-directory batch refreshed without adding historical snapshots. Global company rankings remain sourced from the dedicated endpoint refresh; the official /company/snapshot endpoint is verification-only." }
     } else if (job.job_type === "endpoint-refresh") {
       const rawConfig = parseStoredJson(job.job_payload_json)
@@ -8178,9 +8174,9 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       try {
         if (request.method === "POST") {
-          const userKey = await savedKey(env, session.player_id).catch(() => null)
-          if (!userKey) return jsonResponse({ error: "Save a Torn API key to refresh the faction directory." }, 400, origin)
-          const synced = await syncFactionDirectorDirectory(env, userKey, 20)
+          const serviceKey = workerServiceTornApiKey(env)
+          if (!serviceKey) return jsonResponse({ error: "The Worker TORN_API_KEY_SERVICE secret is required to refresh the shared faction directory." }, 503, origin)
+          const synced = await syncFactionDirectorDirectory(env, serviceKey, 20)
           const weeklyCounts = await getWeeklyFactionStarCounts(env)
           return jsonResponse({ ...synced, syncing: false, ...weeklyCounts, generatedAt: new Date().toISOString(), source: "Live Torn API directory refresh" }, 200, origin)
         }
