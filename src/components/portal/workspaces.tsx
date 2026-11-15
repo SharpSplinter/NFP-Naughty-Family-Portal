@@ -2597,7 +2597,6 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [warnings, setWarnings] = useState<string[]>([])
 
   useEffect(() => {
-    if (!props.isEdit) return
     let cancelled = false
     void fetch(props.apiBase + "/api/me/portal-consent", {
       headers: { Authorization: "Bearer " + props.sessionToken },
@@ -2607,12 +2606,18 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
       if (cancelled) return
       const consent = payload.consent && typeof payload.consent === "object"
         ? payload.consent as Record<string, unknown>
-        : {}
-      setPolicyAccepted(true)
-      setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
-      setShareHalloweenHistory(consent.shareHalloweenHistory === true)
-      setSharePrivateLive(consent.sharePrivateLive === true)
-      setShareNetworth(consent.shareNetworth === true)
+        : null
+
+      // Existing members upgrading to a new policy version must explicitly
+      // acknowledge the revised notice, but retain their previous optional
+      // choices rather than having the upgrade silently revoke or enable them.
+      if (consent) {
+        setHistoricalCollectionEnabled(consent.historicalCollectionEnabled === true)
+        setShareHalloweenHistory(consent.shareHalloweenHistory === true)
+        setSharePrivateLive(consent.sharePrivateLive === true)
+        setShareNetworth(consent.shareNetworth === true)
+      }
+      setPolicyAccepted(props.isEdit === true)
     }).catch(caught => {
       if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load your data preferences.")
     })
@@ -2652,7 +2657,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
     try {
       await request("/api/me/portal-consent", "POST", {
         policyAccepted: true,
-        consentVersion: "portal-data-policy-v1",
+        consentVersion: "portal-data-policy-v2",
         historicalCollectionEnabled,
         shareHalloweenHistory: historicalCollectionEnabled && shareHalloweenHistory,
         sharePrivateLive,
