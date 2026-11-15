@@ -6031,6 +6031,95 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
     }
     return jsonResponse({ runs: rows.results ?? [], insights, range }, 200, origin)
   }
+  if (url.pathname === "/api/admin/data-governance" && request.method === "GET") {
+    // Governance diagnostics are intentionally metadata-only. Never select
+    // ciphertext, IVs, API-key suffixes, private snapshots, or raw event logs.
+    const query = (url.searchParams.get("q") ?? "").trim().slice(0, 100)
+    const like = `%${query}%`
+    const requestedLimit = Number(url.searchParams.get("limit") || 100)
+    const limit = Math.max(1, Math.min(200, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 100))
+    const [summary, members, total] = await Promise.all([
+      db.prepare(
+        `SELECT
+          (SELECT COUNT(*) FROM players) AS totalMembers,
+          (SELECT COUNT(*) FROM portal_user_consents) AS setupComplete,
+          (SELECT COUNT(*) FROM players p LEFT JOIN portal_user_consents c ON c.player_id = p.player_id WHERE c.player_id IS NULL) AS setupNotStarted,
+          (SELECT COUNT(*) FROM players p LEFT JOIN portal_user_consents c ON c.player_id = p.player_id WHERE c.player_id IS NULL OR c.policy_version <> ?) AS policyReviewRequired,
+          (SELECT COUNT(*) FROM portal_user_consents WHERE policy_version = ?) AS currentPolicyAccepted,
+          (SELECT COUNT(*) FROM portal_user_consents WHERE historical_collection_enabled = 1) AS historicalCollectionOptIns,
+          (SELECT COUNT(*) FROM portal_user_consents WHERE share_halloween_history = 1) AS halloweenSharingOptIns,
+          (SELECT COUNT(*) FROM portal_user_consents WHERE share_private_live = 1) AS privateLiveSharingOptIns,
+          (SELECT COUNT(*) FROM portal_user_consents WHERE share_networth = 1) AS networthSharingOptIns,
+          (SELECT COUNT(*) FROM halloween_historical_keys) AS halloweenKeyConnections,
+          (SELECT COUNT(*) FROM christmas_town_historical_keys) AS christmasTownKeyConnections,
+          (SELECT COUNT(*) FROM gym_training_historical_keys) AS gymTrainingKeyConnections,
+          (SELECT COUNT(*) FROM halloween_collection_jobs WHERE status = 'queued') AS halloweenQueuedJobs,
+          (SELECT COUNT(*) FROM halloween_collection_jobs WHERE status = 'running') AS halloweenRunningJobs,
+          (SELECT COUNT(*) FROM halloween_collection_jobs WHERE status = 'failed') AS halloweenFailedJobs,
+          (SELECT COUNT(*) FROM christmas_town_collection_jobs WHERE status = 'queued') AS christmasTownQueuedJobs,
+          (SELECT COUNT(*) FROM christmas_town_collection_jobs WHERE status = 'running') AS christmasTownRunningJobs,
+          (SELECT COUNT(*) FROM christmas_town_collection_jobs WHERE status = 'failed') AS christmasTownFailedJobs,
+          (SELECT COUNT(*) FROM gym_training_collection_jobs WHERE status = 'queued') AS gymTrainingQueuedJobs,
+          (SELECT COUNT(*) FROM gym_training_collection_jobs WHERE status = 'running') AS gymTrainingRunningJobs,
+          (SELECT COUNT(*) FROM gym_training_collection_jobs WHERE status = 'failed') AS gymTrainingFailedJobs,
+          (SELECT COUNT(*) FROM halloween_event_logs) AS halloweenStoredLogs,
+          (SELECT COUNT(*) FROM christmas_town_event_logs) AS christmasTownStoredLogs,
+          (SELECT COUNT(*) FROM gym_training_event_logs) AS gymTrainingStoredLogs,
+          (SELECT COUNT(*) FROM halloween_exchange_market_price_cache) AS sharedMarketPriceCacheItems`
+      ).bind(PORTAL_POLICY_VERSION, PORTAL_POLICY_VERSION).first<Record<string, unknown>>(),
+      db.prepare(
+        `SELECT
+          p.player_id AS playerId,
+          p.player_name AS playerName,
+          c.consent_version AS consentVersion,
+          c.policy_version AS policyVersion,
+          c.policy_acknowledged_at AS policyAcknowledgedAt,
+          c.updated_at AS preferencesUpdatedAt,
+          COALESCE(c.historical_collection_enabled, 0) AS historicalCollectionEnabled,
+          COALESCE(c.share_halloween_history, 0) AS shareHalloweenHistory,
+          COALESCE(c.share_private_live, 0) AS sharePrivateLive,
+          COALESCE(c.share_networth, 0) AS shareNetworth,
+          EXISTS(SELECT 1 FROM halloween_historical_keys hk WHERE hk.player_id = p.player_id) AS halloweenKeyConnected,
+          EXISTS(SELECT 1 FROM christmas_town_historical_keys ck WHERE ck.player_id = p.player_id) AS christmasTownKeyConnected,
+          EXISTS(SELECT 1 FROM gym_training_historical_keys gk WHERE gk.player_id = p.player_id) AS gymTrainingKeyConnected,
+          (SELECT h.status FROM halloween_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS halloweenJobStatus,
+          (SELECT h.event_year FROM halloween_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS halloweenJobYear,
+          (SELECT h.pages_collected FROM halloween_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS halloweenPagesCollected,
+          (SELECT h.logs_collected FROM halloween_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS halloweenLogsCollected,
+          (SELECT COUNT(*) FROM halloween_event_logs hl WHERE hl.player_id = p.player_id) AS halloweenStoredLogs,
+          (SELECT h.status FROM christmas_town_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS christmasTownJobStatus,
+          (SELECT h.event_year FROM christmas_town_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS christmasTownJobYear,
+          (SELECT h.pages_collected FROM christmas_town_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS christmasTownPagesCollected,
+          (SELECT h.logs_collected FROM christmas_town_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC, h.event_year DESC LIMIT 1) AS christmasTownLogsCollected,
+          (SELECT COUNT(*) FROM christmas_town_event_logs cl WHERE cl.player_id = p.player_id) AS christmasTownStoredLogs,
+          (SELECT h.status FROM gym_training_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC LIMIT 1) AS gymTrainingJobStatus,
+          (SELECT h.pages_collected FROM gym_training_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC LIMIT 1) AS gymTrainingPagesCollected,
+          (SELECT h.logs_collected FROM gym_training_collection_jobs h WHERE h.player_id = p.player_id ORDER BY h.updated_at DESC LIMIT 1) AS gymTrainingLogsCollected,
+          (SELECT COUNT(*) FROM gym_training_event_logs gl WHERE gl.player_id = p.player_id) AS gymTrainingStoredLogs
+        FROM players p
+        LEFT JOIN portal_user_consents c ON c.player_id = p.player_id
+        WHERE (? = '' OR p.player_id LIKE ? OR p.player_name LIKE ?)
+        ORDER BY CASE WHEN c.player_id IS NULL OR c.policy_version <> ? THEN 0 ELSE 1 END,
+                 p.player_name COLLATE NOCASE
+        LIMIT ?`
+      ).bind(query, like, like, PORTAL_POLICY_VERSION, limit).all<Record<string, unknown>>(),
+      db.prepare(
+        "SELECT COUNT(*) AS total FROM players p WHERE (? = '' OR p.player_id LIKE ? OR p.player_name LIKE ?)"
+      ).bind(query, like, like).first<{ total: number }>(),
+    ])
+    const totalMembers = Number(total?.total ?? 0)
+    return jsonResponse({
+      currentPolicyVersion: PORTAL_POLICY_VERSION,
+      consentVersion: PORTAL_CONSENT_VERSION,
+      sharedServiceKeyConfigured: Boolean(workerServiceTornApiKey(env)),
+      summary: summary ?? {},
+      members: members.results ?? [],
+      total: totalMembers,
+      limit,
+      truncated: totalMembers > (members.results?.length ?? 0),
+      generatedAt: new Date().toISOString(),
+    }, 200, origin, { "cache-control": "private, no-store" })
+  }
   if (url.pathname === "/api/admin/overview" && request.method === "GET") {
     const metrics = await db.prepare("SELECT (SELECT COUNT(*) FROM players) AS members, (SELECT COUNT(*) FROM companies) AS companies, (SELECT COUNT(*) FROM company_api_keys) AS companyKeys, (SELECT COUNT(*) FROM company_snapshots) AS companySnapshots, (SELECT COUNT(*) FROM faction_director_snapshots) AS directorSnapshots, (SELECT COUNT(*) FROM dashboard_member_status WHERE disabled_at IS NOT NULL) AS disabledMembers, (SELECT COUNT(*) FROM admin_jobs WHERE status IN ('queued','running')) AS activeJobs, (SELECT COUNT(*) FROM admin_jobs WHERE status = 'failed') AS failedJobs, (SELECT MAX(fetched_at) FROM companies) AS latestCompanyRefresh").first<Record<string, unknown>>()
     const recent = await db.prepare("SELECT id, actor_player_id AS actorPlayerId, actor_player_name AS actorPlayerName, action, target_type AS targetType, target_id AS targetId, outcome, summary, created_at AS createdAt FROM admin_audit_log ORDER BY id DESC LIMIT 8").all<Record<string, unknown>>()
