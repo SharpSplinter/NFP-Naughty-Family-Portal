@@ -20,10 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Check out staging branch
+      - name: Check out staging changes
         uses: actions/checkout@v4
-        with:
-          ref: portal-rebuild
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

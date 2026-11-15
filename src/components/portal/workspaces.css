@@ -216,6 +216,7 @@
 .historical-collect-banner button{border:1px solid #6cae8c;border-radius:7px;background:linear-gradient(135deg,#286b52,#1d4e42);color:#e4fff1;padding:10px 12px;font-size:9px;font-weight:700;white-space:nowrap}
 .historical-collect-banner button:disabled,.historical-collection-toolbar button:disabled{opacity:.45;cursor:not-allowed}
 .historical-leaderboard{overflow-x:auto;border:1px solid #33434a;border-radius:10px;background:#0f1921}
+.historical-leaderboard:focus-visible{outline:2px solid #9ccbb6;outline-offset:3px}
 .historical-leaderboard table{width:100%;border-collapse:collapse;min-width:650px}
 .historical-leaderboard th,.historical-leaderboard td{padding:11px 12px;border-bottom:1px solid #ffffff10;text-align:left;vertical-align:middle;font-size:9px}
 .historical-leaderboard th{color:#7f98a1;font-size:8px;letter-spacing:.13em;background:#17232c}
