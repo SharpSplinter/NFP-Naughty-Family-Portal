@@ -7450,12 +7450,25 @@ export default {
         dexterity: battleValue("dexterity"),
         total: battles && typeof battles.total === "number" ? battles.total : null,
       }
+      const battleStatModifiers = Object.fromEntries(["strength", "defense", "speed", "dexterity"].map(stat => {
+        const detail = battles && isRecord(battles[stat]) ? battles[stat] as Record<string, unknown> : null
+        const modifiers = detail && Array.isArray(detail.modifiers) ? detail.modifiers.filter(isRecord).map(entry => ({
+          effect: typeof entry.effect === "string" ? entry.effect : "",
+          value: typeof entry.value === "number" ? entry.value : 0,
+          type: typeof entry.type === "string" ? entry.type : "",
+        })) : []
+        return [stat, {
+          percent: detail && typeof detail.modifier === "number" ? detail.modifier : 0,
+          modifiers,
+        }]
+      }))
       if (!battleStats.strength && !battleStats.defense && !battleStats.speed && !battleStats.dexterity) {
         errors.battleStats = errors.battleStats || "Torn did not return battle stats. Check your API key's User → Battlestats selection."
       }
       return jsonResponse({
         fetchedAt: new Date().toISOString(),
         battleStats,
+        battleStatModifiers,
         perks: perks || {},
         gym: activeGym ? { id: String(activeGym.id), name: activeGym.name, unlockedGyms: unlockedRows } : null,
         gyms: normalizedGyms,
