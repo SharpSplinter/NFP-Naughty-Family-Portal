@@ -1862,7 +1862,7 @@ try {
     assert.match(refreshBody, /startGlobalRankingRefresh/, "production ranking refreshes must use the durable queue workflow")
     assert.doesNotMatch(refreshBody, /fetchOfficialCompanySnapshot/, "official snapshot must not be used to refresh ranking data")
     assert.match(workerSource, /No Worker-owned Torn service API key is configured for shared company-ranking requests/, "missing ranking credentials must be surfaced as a failed refresh")
-    assert.doesNotMatch(workerSource, /savedKey\(env, [^)]+\).*global-company-ranking/s, "shared ranking requests must never borrow a member's personal API key")
+    assert.doesNotMatch(rankingKeyBody, /savedKey|api_keys/, "shared ranking requests must never borrow a member's personal API key")
     assert.match(workerSource, /maxPagesPerInvocation = 3/, "each queue invocation must have a hard page-fetch bound")
     assert.match(workerSource, /global_rankings_refresh_pages/, "in-progress pages must be staged separately from the published cache")
     assert.match(workerSource, /finalizeGlobalRankingRefresh/, "staged rows must pass final validation before cache publication")
