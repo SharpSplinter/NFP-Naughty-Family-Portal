@@ -806,3 +806,58 @@
 .christmas-town-year-filter{margin:0 auto 16px;max-width:1140px}
 .christmas-town-year-filter>div span{display:block;margin-top:5px;color:#91aaa3;font-size:9px}
 @media(max-width:680px){.christmas-town-year-filter{margin:0 0 14px}.christmas-town-year-filter select{width:100%;min-width:0}}
+
+
+
+/* First-login privacy and data preferences */
+.portal-setup-page{padding-bottom:32px}
+.portal-setup-shell{width:min(100%,1040px);margin:36px auto 0}
+.portal-setup-heading{max-width:760px;margin:0 auto 22px;text-align:center}
+.portal-setup-heading h1{margin:12px 0 10px;color:#f2f6f8;font:700 clamp(30px,5vw,46px)/1.08 'Space Grotesk',sans-serif;letter-spacing:-.04em}
+.portal-setup-heading h1 em{color:#7ed6c4;font-style:normal}
+.portal-setup-heading>p{max-width:700px;margin:0 auto;color:#a4b4c0;font-size:13px;line-height:1.75}
+.portal-setup-card{display:grid;gap:0;border:1px solid #344454;border-radius:17px;background:linear-gradient(155deg,#172331f2,#0e1722f5);box-shadow:0 22px 70px #0005;overflow:hidden}
+.portal-setup-section{padding:24px 28px;border-bottom:1px solid #ffffff12}
+.portal-setup-section-heading{display:flex;align-items:center;gap:13px;margin-bottom:14px}
+.portal-setup-section-heading>span{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border:1px solid #5bbba155;border-radius:10px;background:#1b665b30;color:#9ae6d5;font:700 11px 'Space Grotesk',sans-serif}
+.portal-setup-section-heading h2{margin:0;color:#edf5f5;font:650 17px 'Space Grotesk',sans-serif}
+.portal-setup-section-heading small{display:block;margin-top:4px;color:#94a8b5;font-size:10px}
+.portal-setup-section>p{margin:0 0 13px;color:#a4b4c0;font-size:12px;line-height:1.7}
+.portal-setup-policy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 17px}
+.portal-setup-policy-grid article{padding:13px 14px;border:1px solid #ffffff14;border-radius:10px;background:#0d1722a8}
+.portal-setup-policy-grid strong{display:block;color:#e7f0f0;font-size:11px}
+.portal-setup-policy-grid p{margin:6px 0 0;color:#9dafba;font-size:10px;line-height:1.65}
+.portal-setup-check{display:flex;align-items:flex-start;gap:11px;padding:13px;border:1px solid #6cae9b48;border-radius:10px;background:#184d4320;cursor:pointer}
+.portal-setup-check input{width:16px;height:16px;flex:0 0 16px;margin:2px 0 0;accent-color:#62c4a8}
+.portal-setup-check>span{display:block;min-width:0}
+.portal-setup-check strong{display:block;color:#e5f1ed;font-size:11px;line-height:1.5}
+.portal-setup-check small{display:block;margin-top:4px;color:#9cb2b5;font-size:10px;line-height:1.6}
+.portal-setup-required{border-color:#75c9ad72;background:#1b5a4933}
+.portal-setup-subcheck{margin:9px 0 0 28px;background:#121f2b;border-color:#ffffff16}
+.portal-setup-subcheck.is-disabled{opacity:.5;cursor:not-allowed}
+.portal-setup-input-label{display:block;margin:14px 0 6px;color:#c7d7d8;font-size:10px;font-weight:650}
+.portal-setup-input{width:100%;min-height:42px;padding:10px 12px;border:1px solid #384b5b;border-radius:8px;background:#09131f;color:#edf4f5;font:inherit;font-size:12px;outline:none}
+.portal-setup-input:focus{border-color:#63c9ad;box-shadow:0 0 0 3px #63c9ad20}
+.portal-setup-field-hint{display:block;margin-top:6px;color:#8fa5b1;font-size:9px}
+.portal-setup-alert{margin:18px 24px 0;padding:13px 15px;border:1px solid #ffffff18;border-radius:10px;font-size:11px;line-height:1.6}
+.portal-setup-alert strong{display:block;margin-bottom:4px}
+.portal-setup-alert p{margin:5px 0 0}
+.portal-setup-alert.is-error{border-color:#db77775c;background:#6b25252b;color:#ffc4c4}
+.portal-setup-alert.is-warning{border-color:#d5a65b55;background:#6f4b1d29;color:#f2d59a}
+.portal-setup-alert.is-success{border-color:#62c4a855;background:#1a68532a;color:#b8f1db}
+.portal-setup-actions{display:grid;justify-items:center;gap:10px;padding:23px 26px 26px}
+.portal-setup-primary{min-height:46px;padding:0 22px;border:1px solid #79d8bb;border-radius:9px;background:linear-gradient(135deg,#187d6e,#245f69);color:#f2fffa;font:700 12px 'Space Grotesk',sans-serif;cursor:pointer;box-shadow:0 9px 25px #1b796333}
+.portal-setup-primary:disabled{opacity:.5;cursor:not-allowed}
+.portal-setup-actions>small{color:#8fa5b1;font-size:9px;text-align:center;line-height:1.6}
+.portal-setup-page .portal-user button{padding:7px 10px;border:1px solid #ffffff20;border-radius:7px;background:#ffffff08;color:#c7d5d9;font-size:10px;cursor:pointer}
+.portal-setup-page .portal-footer{display:flex;justify-content:space-between;gap:14px;max-width:1040px;margin:26px auto 0;padding-top:15px;border-top:1px solid #ffffff12;color:#718994;font-size:8px;letter-spacing:.14em}
+@media(max-width:680px){
+  .portal-setup-shell{margin-top:25px}
+  .portal-setup-section{padding:19px 16px}
+  .portal-setup-policy-grid{grid-template-columns:minmax(0,1fr)}
+  .portal-setup-subcheck{margin-left:0}
+  .portal-setup-actions{padding:19px 16px 22px}
+  .portal-setup-primary{width:100%}
+  .portal-setup-page .portal-user>span:not(.portal-user-avatar){display:none}
+  .portal-setup-page .portal-topbar{height:66px}
+}
