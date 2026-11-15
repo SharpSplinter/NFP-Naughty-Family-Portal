@@ -6,6 +6,7 @@ on:
     paths:
       - "bot/**"
       - ".github/workflows/bot-quality-gates.yml"
+      - ".github/workflows/production-bot-deploy.yml"
 
 permissions:
   contents: read
@@ -25,6 +26,10 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Validate production deployment trigger guard
+        run: |
+          node --check bot/test-production-deploy-trigger.mjs
+          node bot/test-production-deploy-trigger.mjs
       - name: Validate production Worker syntax
         run: node --check bot/production-worker.js
       - name: Validate financial helper syntax
