@@ -359,7 +359,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     "speed-script": selectedStat === "speed" ? 30 : 0,
     "limbo-lovers": selectedStat === "dexterity" ? 30 : 0,
   }
-  const plannedModifier = gymBookChoice === "auto" ? autoModifier : baseModifier + (plannedGymBookPercent[gymBookChoice] || 0) / 100
+  const plannedModifier = gymBookChoice === "auto" ? autoModifier : baseModifier * (1 + (plannedGymBookPercent[gymBookChoice] || 0) / 100)
   const effectiveModifier = manualModifierEnabled && manualModifier.trim() !== "" ? clamp(safeNumber(manualModifier), 0, 100) : plannedModifier
   const liveStatSource = statOverride.trim() === "" && liveStatValue !== null ? "Live Torn API" : "Manual scenario"
   const selectedDots = safeNumber(selectedGym.dots[selectedStat])
@@ -500,7 +500,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   }
   const jobPointModifier = !jobPointStat ? 1 : gymBookChoice === "auto"
     ? safeNumber(jobPointProfile?.multiplier, 1)
-    : safeNumber(jobPointProfile?.baseMultiplier, 1) + (jobPointBookBonus[gymBookChoice] || 0) / 100
+    : safeNumber(jobPointProfile?.baseMultiplier, 1) * (1 + (jobPointBookBonus[gymBookChoice] || 0) / 100)
   const jobPointDots = jobPointStat ? safeNumber(selectedGym.dots[jobPointStat]) : 0
   const jobPointGain = (() => {
     if (!jobPointSpecial || !jobPointStat) return { gain: 0, endingStat: 0, perPoint: 0 }
