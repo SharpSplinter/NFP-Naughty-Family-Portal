@@ -173,8 +173,9 @@ try {
   const halloweenTabs = page.getByRole("navigation", { name: "Halloween dashboard sections" });
   await halloweenTabs.getByRole("button", { name: /Live \/ Current Year/ }).waitFor({ state: "visible" });
   await page.getByText("MY CURRENT TREATS", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  const liveText = await page.locator(".halloween-panel").first().innerText();
-  assert.ok(liveText.includes("35") && liveText.includes("500"), "Live/current-year view should render the seeded personal snapshot.");
+  const liveSnapshotGrid = page.getByText("MY CURRENT TREATS", { exact: true }).locator("xpath=../..");
+  const liveSnapshotText = await liveSnapshotGrid.innerText();
+  assert.ok(liveSnapshotText.includes("35") && liveSnapshotText.includes("500"), "Live/current-year view should render the seeded personal snapshot in the personal metrics grid.");
   await halloweenTabs.getByRole("button", { name: "Historical", exact: true }).click();
   await page.getByRole("heading", { name: "Historical event records" }).waitFor({ state: "visible", timeout: 15000 });
   await page.locator("#halloween-compare-member option[value='" + otherPlayerId + "']").waitFor({ state: "attached", timeout: 15000 });
