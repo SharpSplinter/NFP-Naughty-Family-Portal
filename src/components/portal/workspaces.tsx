@@ -2793,8 +2793,6 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           nextWarnings.push("The selected faction visibility was saved, but live bars/cooldowns could not be connected: " +
             (caught instanceof Error ? caught.message : "Torn did not accept the required member-key permissions."))
         }
-      } else {
-        try { await request("/api/me/private-live/key", "DELETE") } catch { /* no prior live connection to remove */ }
       }
 
       {
