@@ -676,8 +676,10 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   const yellowEggMarketAuto = await page.getByTestId("training-yellow-egg-price").inputValue();
   recordAssertion("Training Calculator " + viewportName + ": untradeable Yellow Egg does not invent a market price", yellowEggMarketAuto === "", JSON.stringify(yellowEggMarketAuto));
   await page.getByTestId("training-ecstasy").check();
+  await tab("energy").click();
   const xanaxWithEcstasyMax = await page.getByTestId("training-xanax-count").getAttribute("max");
   recordAssertion("Training Calculator " + viewportName + ": Ecstasy reserves six hours after Xanax", xanaxWithEcstasyMax === "3", xanaxWithEcstasyMax);
+  await tab("happy").click();
   const happyTotal = await page.locator(".tc-happy-meter-top strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": happiness items apply before Ecstasy and cap at 99,999", happyTotal === "99,999", happyTotal);
   const jumpGain = await page.locator(".tc-metric").nth(3).locator("strong").innerText();
