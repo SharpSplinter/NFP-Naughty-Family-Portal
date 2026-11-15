@@ -263,10 +263,20 @@ try {
       "Tab from Members should reach Private Live in the administration navigation.");
     await keyboardPage.keyboard.press("Enter");
     await keyboardPage.getByRole("heading", { name: "Private-live diagnostics", exact: true }).waitFor({ state: "visible" });
+    const governanceResponsePromise = keyboardPage.waitForResponse(response =>
+      response.url().startsWith(apiUrl + "/api/admin/data-governance")
+      && response.request().method() === "GET"
+    );
     await keyboardPage.getByRole("navigation", { name: "Administration sections" })
       .getByRole("button", { name: "Data & Consent", exact: true }).click();
     await keyboardPage.getByRole("heading", { name: "Data & consent governance", exact: true }).waitFor({ state: "visible" });
+    const governanceResponse = await governanceResponsePromise;
+    assert.equal(governanceResponse.status(), 200, "Data governance metadata should load for the authenticated administrator.");
+    const governancePayload = await governanceResponse.json();
+    assert.ok(governancePayload.members?.some(member => String(member.playerId) === adminPlayerId),
+      "Data governance should include the seeded administrator metadata row.");
     const governanceTableRegion = keyboardPage.getByRole("region", { name: "Scrollable member data governance table" });
+    await governanceTableRegion.waitFor({ state: "visible", timeout: 15000 });
     assert.ok(await governanceTableRegion.count() === 1, "Data governance member table should be exposed as a named scroll region.");
     assert.ok(await governanceTableRegion.getAttribute("tabindex") === "0", "Data governance table should be keyboard-scrollable.");
     const governanceHeadingVisible = await keyboardPage.getByRole("heading", { name: "Data & consent governance", exact: true }).isVisible();
