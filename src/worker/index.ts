@@ -441,8 +441,10 @@ type PortalConsentRecord = {
 async function currentPortalApiKeyFingerprint(env: WorkerEnv, playerId: string): Promise<string | null> {
   // Hash the encrypted credential envelope rather than decrypting the key on
   // each portal request. A replacement produces a new ciphertext/IV pair.
+  // Keep this metadata lookup distinct from savedKey(), which decrypts the
+  // credential only for routes that actually need to make a member Torn call.
   const row = await requireDb(env).prepare(
-    "SELECT ciphertext, iv FROM api_keys WHERE player_id = ?",
+    "SELECT ciphertext, iv FROM api_keys WHERE player_id = ? AND last_four IS NOT NULL",
   ).bind(playerId).first<{ ciphertext: string; iv: string }>()
   if (!row?.ciphertext || !row?.iv) return null
   return sha256(playerId + ":" + row.ciphertext + ":" + row.iv)
