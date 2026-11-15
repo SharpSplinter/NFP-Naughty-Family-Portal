@@ -2346,38 +2346,20 @@ async function throttleHalloweenRequest(env: WorkerEnv, playerId: string): Promi
 
 async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: string, requireUpdatedConsent = false): Promise<string | null> {
   const db = requireDb(env)
-  const [existingKey, portalConsent] = await Promise.all([
-    db.prepare("SELECT player_id FROM halloween_historical_keys WHERE player_id = ?")
-      .bind(playerId).first<{ player_id: string }>(),
+  const [keyRegistration, portalConsent] = await Promise.all([
+    db.prepare("SELECT consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?")
+      .bind(playerId).first<{ consentVersion: string }>(),
     db.prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
       .bind(playerId).first<{ enabled: number }>(),
   ])
-  if (!existingKey || Number(portalConsent?.enabled) !== 1) return null
+  if (!keyRegistration || Number(portalConsent?.enabled) !== 1) return null
 
-  // The service-owned Full Access secret is used only for its verified owner,
-  // and only after the owner has accepted the current Halloween data-sharing terms.
-  // Detailed attacks require the current consent version for every member.
-  if (playerId === ADMIN_PLAYER_ID || requireUpdatedConsent) {
-    const consent = await db.prepare(
-      "SELECT access_level AS accessLevel, consent_version AS consentVersion FROM halloween_historical_keys WHERE player_id = ?"
-    ).bind(playerId).first<{ accessLevel: string; consentVersion: string }>()
-    if (!consent || consent.consentVersion !== "halloween-history-v2") return null
-    if (playerId === ADMIN_PLAYER_ID) {
-      const apiKey = serviceFullAccessApiKey(env)
-      if (!apiKey || consent.accessLevel !== "Full Access") return null
-    const response = await trackedTornFetch("halloween-owner-key-validation", "https://api.torn.com/v2/key/info", {
-      headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
-    }, fetch, playerId)
-    const payload: unknown = await response.json().catch(() => null)
-    const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null
-    const info = isRecord(payload) && isRecord(payload.info) ? payload.info : null
-    const owner = isRecord(info?.user) ? String(info.user.id ?? "") : ""
-    const access = isRecord(info?.access) ? String(info.access.type ?? "") : ""
-      if (!response.ok || error || owner !== playerId || access !== "Full Access") return null
-      return apiKey
-    }
-  }
-
+  // Historical logs and attack details are member-specific. Always use the
+  // authenticated member's saved primary key, never the Worker's shared
+  // service key, even for the service-key owner / administrator account.
+  // The registration version is connection metadata; central portal consent
+  // remains the sole collection authorization.
+  if (requireUpdatedConsent && keyRegistration.consentVersion !== "halloween-history-v2") return null
   return savedKey(env, playerId)
 }
 
@@ -6389,7 +6371,7 @@ export default {
         if (Number(centralPreferences?.sharePrivateLive) !== 1) {
           return jsonResponse({ error: "Enable private live faction sharing in your central portal data preferences first." }, 409, origin)
         }
-        const includeNetworth = Number(centralPreferences?.shareNetworth) === 1
+        let includeNetworth = Number(centralPreferences?.shareNetworth) === 1
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling private live data." }, 409, origin)
         if (!await claimPrivateLiveRequest(env, session.player_id)) {
           return jsonResponse({ error: "A private live Torn request was made recently. Please wait 30 seconds before connecting or refreshing again." }, 429, origin, { "retry-after": "30" })
