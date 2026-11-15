@@ -60,8 +60,8 @@ const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-
 const DAY = 86400
 const ADMIN_PLAYER_ID = "351311"
 const NAUGHTY_SOULS_FACTION_ID = "8317"
-const PORTAL_CONSENT_VERSION = "portal-data-policy-v1"
-const PORTAL_POLICY_VERSION = "2026-11-14"
+const PORTAL_CONSENT_VERSION = "portal-data-policy-v2"
+const PORTAL_POLICY_VERSION = "2026-11-14-v2"
 const FACTION_DIRECTOR_ADMIN_QUEUE_KIND = "faction-director-admin-refresh"
 const ADMIN_FACTION_DIRECTORY_BATCH_SIZE = 35
 const ADMIN_FACTION_DIRECTORY_MAX_BATCHES = 6
