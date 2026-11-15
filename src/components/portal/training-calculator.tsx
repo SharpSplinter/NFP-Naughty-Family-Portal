@@ -124,7 +124,7 @@ function estimateGymSession({
   stat: number; happy: number; energy: number; dots: number; energyPerTrain: number; modifier: number; happyLossRate: number
 }): SessionResult {
   const stepEnergy = Math.max(1, Math.floor(energyPerTrain))
-  const trains = Math.min(200, Math.max(0, Math.floor(Math.max(0, energy) / stepEnergy)))
+  const trains = Math.min(20_000, Math.max(0, Math.floor(Math.max(0, energy) / stepEnergy)))
   let currentStat = Math.max(0, stat)
   let currentHappy = clamp(happy, 0, HAPPY_CAP)
   let statGain = 0
@@ -267,6 +267,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [otherEnergy, setOtherEnergy] = useState(0)
   const [bookChoice, setBookChoice] = useState("auto")
   const [factionVoracity, setFactionVoracity] = useState(false)
+  const [eventDrinkBonus, setEventDrinkBonus] = useState(false)
   const [dvdCount, setDvdCount] = useState(0)
   const [dvdHappy, setDvdHappy] = useState(2500)
   const [yellowEggCount, setYellowEggCount] = useState(0)
@@ -335,8 +336,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const activeVoracity = (liveData?.perks?.faction || []).some(value => /voracity/i.test(value))
   const voracityEnabled = factionVoracity || activeVoracity
   const drink = ENERGY_DRINKS.find(item => item.id === canId) || ENERGY_DRINKS[3]
-  const activeSelfControl = activeHasBook(liveData, "self-control")
-  const cooldownFactor = activeBook === "self-control" && !activeSelfControl ? 0.5 : 1
+  const cooldownFactor = activeBook === "self-control" ? 0.5 : 1
   const cooldownCapHours = voracityEnabled ? 48 : 24
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
@@ -347,7 +347,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const regenMultiplier = activeBook === "higher-daddy" && !activeHasBook(liveData, "higher-daddy") ? 1.2 : 1
   const naturalEnergy = getNaturalEnergy(energyBar, waitHours, regenMultiplier)
   const energyAfterNatural = currentEnergy + naturalEnergy
-  const drinkMultiplier = (voracityEnabled ? 1.5 : 1) * (activeBook === "fuelling" ? 2 : 1)
+  const drinkMultiplier = (voracityEnabled ? 1.5 : 1) * (activeBook === "fuelling" ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
   const pointRefillAvailable = liveData?.refills?.energy === true
   const pointRefillCount = pointRefillIncluded && pointRefillAvailable ? 1 : 0
@@ -600,7 +600,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
                 onChange={setManualEnergy} max={ENERGY_HARD_CAP} hint="Live Torn bar value. Maximum energy held at once is 1,000." testId="training-current-energy" />
               <div className="tc-readout-field"><span>Natural energy by training time</span><strong>+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
-              <NumberField label="Xanax for this train" value={xanaxCount} onChange={setXanaxCount} min={0} max={maximumXanax}
+              <NumberField label="Xanax per full train cycle" value={xanaxCount} onChange={setXanaxCount} min={0} max={maximumXanax}
                 hint={"Maximum " + maximumXanax + " doses in a 1,000E Xanax stack. Each gives +250E and +75 happy; overdose risk is not modeled."} testId="training-xanax-count" />
               <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={maximumFhcCount}
                 hint={"Maximum " + maximumFhcCount + " at the remaining booster-cooldown budget. Each refills the bar to " + fmt(refillBarMaximum) + "E and gives +500 happy."} testId="training-fhc-count" />
@@ -619,7 +619,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </label>
               <label className="tc-check-field"><input type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
-                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks." : "Scenario toggle. Increases energy drinks by 50% and may extend the booster cooldown budget."}</small></span>
+                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks." : "Scenario toggle. Increases energy drinks by 50%."}</small></span>
+              </label>
+              <label className="tc-check-field"><input type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
+                <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
               </label>
             </div>
             <div className="tc-inline-note"><strong>Supply order modeled:</strong> natural energy → current bar → point refill / FHC full-bar refills → Xanax and energy drinks. Full-bar refills assume you train down before each refill. Torn's 1,000E limit is the amount you can hold at once, not a limit on total energy spent after sequential refills.</div>
