@@ -1435,7 +1435,7 @@ try {
       assert.equal(JSON.stringify(state.snapshot), lastGoodSnapshot, "temporary owner state must preserve the last successful snapshot")
       assert.match(String(state.key.last_error), /federal jail/i)
 
-      // Replace with an explicit detailed-networth opt-in after the
+      // Turn on the separate central detailed-networth preference after the
       // server-enforced 30-second per-member request window has elapsed.
       state.throttleAt = new Date(Date.now() - 31000).toISOString()
       upstreamErrorCode = null
