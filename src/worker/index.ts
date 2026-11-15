@@ -5690,7 +5690,7 @@ async function handleAdminRequest(
     "/api/admin/overview", "/api/admin/private-live", "/api/admin/members",
     "/api/admin/jobs", "/api/admin/settings", "/api/admin/history/summary",
     "/api/admin/faction/weekly-boundaries", "/api/admin/member-activity",
-    "/api/admin/automation/runs", "/api/admin/data-governance",
+    "/api/admin/automation/runs",
     "/api/admin/audit", "/api/admin/administrators",
   ])
   const adminReadCache = (globalThis as unknown as {
@@ -6177,7 +6177,7 @@ async function handleAdminRequest(
       ).bind(query, like, like).first<{ total: number }>(),
     ])
     const totalMembers = Number(total?.total ?? 0)
-    return jsonResponse({
+    return respondWithAdminReadCache({
       currentPolicyVersion: PORTAL_POLICY_VERSION,
       consentVersion: PORTAL_CONSENT_VERSION,
       sharedServiceKeyConfigured: Boolean(workerServiceTornApiKey(env)),
@@ -6187,7 +6187,7 @@ async function handleAdminRequest(
       limit,
       truncated: totalMembers > (members.results?.length ?? 0),
       generatedAt: new Date().toISOString(),
-    }, 200, origin, { "cache-control": "private, no-store" })
+    }, 15_000, { "cache-control": "private, no-store" })
   }
   if (url.pathname === "/api/admin/overview" && request.method === "GET") {
     const metrics = await db.prepare("SELECT (SELECT COUNT(*) FROM players) AS members, (SELECT COUNT(*) FROM companies) AS companies, (SELECT COUNT(*) FROM company_api_keys) AS companyKeys, (SELECT COUNT(*) FROM company_snapshots) AS companySnapshots, (SELECT COUNT(*) FROM faction_director_snapshots) AS directorSnapshots, (SELECT COUNT(*) FROM dashboard_member_status WHERE disabled_at IS NOT NULL) AS disabledMembers, (SELECT COUNT(*) FROM admin_jobs WHERE status IN ('queued','running')) AS activeJobs, (SELECT COUNT(*) FROM admin_jobs WHERE status = 'failed') AS failedJobs, (SELECT MAX(fetched_at) FROM companies) AS latestCompanyRefresh").first<Record<string, unknown>>()
