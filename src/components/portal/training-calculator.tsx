@@ -563,11 +563,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   }, [currentStat, seQuantity, maxSeByCooldown, selectedSePrice])
 
   const naturalEnergyPerDay = energyBar
-    ? Math.max(0, safeNumber(energyBar.increment, 5) * 86400 / Math.max(1, safeNumber(energyBar.interval, 600)) * regenMultiplier)
-    : 480
+    ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval)) * regenMultiplier)
+    : 0
   const naturalHappyPerDay = happyBar
-    ? Math.max(0, safeNumber(happyBar.increment, 5) * 86400 / Math.max(1, safeNumber(happyBar.interval, 900)))
-    : 480
+    ? Math.max(0, safeNumber(happyBar.increment) * 86400 / Math.max(1, safeNumber(happyBar.interval)))
+    : 0
   const dailyHappyBarMaximum = happyBar ? Math.max(0, safeNumber(happyBar.maximum, HAPPY_CAP)) : HAPPY_CAP
   const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillAvailable ? refillBarMaximum : 0))
   const dailyEnergy = dailyEnergyOverride.trim() === "" ? dailyEnergyDefault : clamp(safeNumber(dailyEnergyOverride), 0, 100000)
