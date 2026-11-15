@@ -834,7 +834,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Cooldown budget remaining</span><strong>{fmt(boosterBudgetHours, 1)}h</strong></div>
               <div><span>Drug cooldown remaining</span><strong>{fmt(currentDrugCooldownHours, 1)}h</strong></div>
               <div><span>Maximum Xanax before planned train</span><strong>{fmt(maximumXanax)}</strong></div>
-              <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {activeBook === "self-control" ? "50% book" : "No book"}</strong></div>
+              <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {plannedEnergyBooks.has("self-control") ? "50% book" : "No book"}</strong></div>
               <div><span>Gym happy loss reduction</span><strong>{autoHappyLossReduction > 0 ? fmt(autoHappyLossReduction) + "% company" : "No company reduction"}</strong></div>
             </div>
             <p className="tc-muted">Energy drinks and stat boosters share the booster cooldown. The planner subtracts existing cooldown and the items selected for this plan.</p>
