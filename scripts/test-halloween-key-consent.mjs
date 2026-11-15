@@ -98,7 +98,7 @@ assert.ok(metrics.includes("fhcsAboveTheoreticalMaximum"), "cooldown math must e
 assert.doesNotMatch(workspace, /halloween-full-access-key|Paste your own Full Access Torn API key/)
 assert.ok(workspace.includes("Disable Halloween collection"), "Account Settings must retain an event-level disconnect control")
 assert.ok(workspace.includes("halloweenHistoryStatus.previouslyConsented"), "Account Settings must gate ongoing consent controls on initial consent")
-assert.ok(workspace.includes("historicalKeyStatus && !historicalConsentCurrent"), "the Halloween event page must show central-preference connection status without a second consent prompt")
+assert.ok(workspace.includes("historicalKeyStatus && !historicalKeyConnected"), "the Halloween event page must show central-preference connection status without a second consent prompt")
 assert.ok(workspace.includes("autoCollectionYearRef"), "selecting a Halloween event year must trigger an automatic collection check")
 assert.ok(workspace.includes("void startHistoricalCollection()"), "the selected Halloween year must invoke the idempotent collection endpoint")
 assert.ok(workspace.includes("Your optional historical collection permission is managed centrally"), "the event page must point to the central preference controls")
