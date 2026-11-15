@@ -358,7 +358,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     ? barMaximumBase + 100
     : Math.max(0, safeNumber(energyBar?.maximum, 150))
   const regenMultiplier = activeBook === "higher-daddy" && !activeHasBook(liveData, "higher-daddy") ? 1.2 : 1
-  const naturalEnergy = getNaturalEnergy(energyBar, waitHours, regenMultiplier)
+  const naturalEnergyBar = energyBar ? { ...energyBar, current: currentEnergy } : null
+  const naturalEnergy = getNaturalEnergy(naturalEnergyBar, waitHours, regenMultiplier)
   const energyAfterNatural = currentEnergy + naturalEnergy
   const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (activeBook === "fuelling" ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
@@ -618,7 +619,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
               </select><small className="tc-hint">Auto detects your active book from /user/perks. Pick a future book to model a planned jump.</small></label>
               <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
-                hint="Maximum 168 hours. Natural energy is calculated from your live bar tick and remaining time to its next tick." suffix="hours" />
+                hint="Maximum 168 hours. Natural energy is calculated from the starting energy you set and your live bar tick." suffix="hours" testId="training-energy-wait-hours" />
               <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
                 onChange={setManualEnergy} max={ENERGY_HARD_CAP} hint="Live Torn bar value. Maximum energy held at once is 1,000." testId="training-current-energy" />
               <div className="tc-readout-field"><span>Natural energy by training time</span><strong>+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
