@@ -35,12 +35,12 @@ jobs:
       - name: Build frontend
         run: npm run build
         env:
-          VITE_API_BASE_URL: https://naughty-company-api.kboone801.workers.dev
+          VITE_API_BASE_URL: https://naughtyfamily-api.kboone801.workers.dev
 
       - name: Deploy to production Pages
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=naughty-company-dashboard --branch=main
+          command: pages deploy dist --project-name=naughtyfamily --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
