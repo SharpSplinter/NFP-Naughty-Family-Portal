@@ -5680,11 +5680,40 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
   }
   const db = requireDb(env)
   await ensureAdminRequestSchema(env)
+  const cacheableAdminReadPaths = new Set([
+    "/api/admin/overview", "/api/admin/private-live", "/api/admin/members",
+    "/api/admin/jobs", "/api/admin/settings", "/api/admin/history/summary",
+    "/api/admin/faction/weekly-boundaries", "/api/admin/member-activity",
+    "/api/admin/automation/runs", "/api/admin/data-governance",
+    "/api/admin/audit", "/api/admin/administrators",
+  ])
+  const adminReadCache = (globalThis as unknown as {
+    __ncdAdminReadCache?: Map<string, { expiresAt: number; payload: unknown; headers: Record<string, string> }>
+  }).__ncdAdminReadCache || new Map<string, { expiresAt: number; payload: unknown; headers: Record<string, string> }>()
+  ;(globalThis as unknown as { __ncdAdminReadCache?: typeof adminReadCache }).__ncdAdminReadCache = adminReadCache
+  if (request.method !== "GET") adminReadCache.clear()
+  const adminCacheKey = session.player_id + ":" + url.pathname + url.search
+  const isCacheableAdminRead = request.method === "GET" && cacheableAdminReadPaths.has(url.pathname)
+  if (isCacheableAdminRead) {
+    const cached = adminReadCache.get(adminCacheKey)
+    if (cached && cached.expiresAt > Date.now()) return jsonResponse(cached.payload, 200, origin, cached.headers)
+    if (cached) adminReadCache.delete(adminCacheKey)
+  }
+  const respondWithAdminReadCache = (payload: unknown, ttlMs: number, headers: Record<string, string> = {}) => {
+    if (isCacheableAdminRead) {
+      if (adminReadCache.size >= 128) {
+        const firstKey = adminReadCache.keys().next().value
+        if (typeof firstKey === "string") adminReadCache.delete(firstKey)
+      }
+      adminReadCache.set(adminCacheKey, { expiresAt: Date.now() + ttlMs, payload, headers })
+    }
+    return jsonResponse(payload, 200, origin, headers)
+  }
   if (url.pathname === "/api/admin/administrators" && request.method === "GET") {
     const rows = await db.prepare(
       "SELECT a.player_id AS playerId, p.player_name AS playerName, a.granted_by AS grantedBy, grantor.player_name AS grantedByName, a.granted_at AS grantedAt, a.revoked_by AS revokedBy, revoker.player_name AS revokedByName, a.revoked_at AS revokedAt FROM administrators a JOIN players p ON p.player_id = a.player_id LEFT JOIN players grantor ON grantor.player_id = a.granted_by LEFT JOIN players revoker ON revoker.player_id = a.revoked_by ORDER BY CASE WHEN a.revoked_at IS NULL THEN 0 ELSE 1 END, p.player_name COLLATE NOCASE"
     ).all<Record<string, unknown>>()
-    return jsonResponse({ administrators: rows.results ?? [] }, 200, origin)
+    return respondWithAdminReadCache({ administrators: rows.results ?? [] }, 60_000)
   }
   if (url.pathname === "/api/admin/administrators/grant" && request.method === "POST") {
     const body: unknown = await request.json().catch(() => null)
@@ -5738,6 +5767,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
     ]))
     const boundaryPlaceholders = boundaryTimes.map(() => "?").join(", ")
     const reportPlaceholders = reportWeekStarts.map(() => "?").join(", ")
+    const oldestBoundaryAt = boundaryTimes[boundaryTimes.length - 1]
     const [registryRows, reportRows, membershipRows] = await Promise.all([
       db.prepare(
         `SELECT boundary_at AS boundaryAt, stats_run_id AS statsRunId, gym_energy_run_id AS gymEnergyRunId, created_at AS createdAt
@@ -5751,8 +5781,8 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
          WHERE faction_id = ? AND week_start_at IN (${reportPlaceholders})`
       ).bind(NAUGHTY_SOULS_FACTION_ID, ...reportWeekStarts).all<Record<string, unknown>>(),
       db.prepare(
-        "SELECT user_id AS userId, estimated_joined_at AS estimatedJoinedAt, first_seen_at AS firstSeenAt, left_observed_at AS leftObservedAt FROM faction_membership_intervals WHERE faction_id = ?"
-      ).bind(NAUGHTY_SOULS_FACTION_ID).all<Record<string, unknown>>(),
+          `SELECT user_id AS userId, estimated_joined_at AS estimatedJoinedAt, first_seen_at AS firstSeenAt, left_observed_at AS leftObservedAt FROM faction_membership_intervals WHERE faction_id = ? AND COALESCE(estimated_joined_at, first_seen_at) <= ? AND (left_observed_at IS NULL OR left_observed_at > ?)`
+        ).bind(NAUGHTY_SOULS_FACTION_ID, boundaryTimes[0], oldestBoundaryAt).all<Record<string, unknown>>(),
     ])
     const registryByBoundary = new Map((registryRows.results ?? []).map((row) => [String(row.boundaryAt), row]))
     const reportByWeek = new Map((reportRows.results ?? []).map((row) => [String(row.weekStartAt), row]))
@@ -5905,7 +5935,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
         recoveryReason,
       }
     })
-    return jsonResponse({ generatedAt: now, windowStartAt: boundaryTimes[boundaryTimes.length - 1], boundaries }, 200, origin)
+    return respondWithAdminReadCache({ generatedAt: now, windowStartAt: boundaryTimes[boundaryTimes.length - 1], boundaries }, 60_000)
   }
   if (url.pathname === "/api/admin/faction/weekly-boundaries/recover" && request.method === "POST") {
     const body: unknown = await request.json().catch(() => null)
@@ -6026,7 +6056,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
       db.prepare("SELECT COUNT(*) AS totalMembers, SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) AS activeMembers, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS newMembers, SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM companies c WHERE c.player_id = players.player_id) AND NOT EXISTS (SELECT 1 FROM company_api_keys k WHERE k.player_id = players.player_id) THEN 1 ELSE 0 END) AS withoutCompany FROM players").bind(cutoff, cutoff).first<Record<string, unknown>>(),
       db.prepare("SELECT p.player_id AS playerId, p.player_name AS playerName, p.created_at AS createdAt, p.updated_at AS lastActiveAt, (SELECT COUNT(*) FROM company_snapshots s WHERE s.player_id = p.player_id) AS snapshotCount, (SELECT MAX(c.fetched_at) FROM companies c WHERE c.player_id = p.player_id) AS latestCompanyAt FROM players p ORDER BY p.updated_at DESC LIMIT 50").all<Record<string, unknown>>(),
     ])
-    return jsonResponse({ rangeDays: days, summary: { totalMembers: Number(summary?.totalMembers ?? 0), activeMembers: Number(summary?.activeMembers ?? 0), newMembers: Number(summary?.newMembers ?? 0), withoutCompany: Number(summary?.withoutCompany ?? 0) }, members: recent.results ?? [], generatedAt: new Date().toISOString() }, 200, origin)
+    return respondWithAdminReadCache({ rangeDays: days, summary: { totalMembers: Number(summary?.totalMembers ?? 0), activeMembers: Number(summary?.activeMembers ?? 0), newMembers: Number(summary?.newMembers ?? 0), withoutCompany: Number(summary?.withoutCompany ?? 0) }, members: recent.results ?? [], generatedAt: new Date().toISOString() }, 30_000)
   }
   if (url.pathname === "/api/admin/automation/runs" && request.method === "GET") {
     await ensureAutomationSchema(env)
@@ -6060,7 +6090,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
       latestRunAt: summary.latestRunAt ?? null,
       recurringFailures: failureRows.results ?? [],
     }
-    return jsonResponse({ runs: rows.results ?? [], insights, range }, 200, origin)
+    return respondWithAdminReadCache({ runs: rows.results ?? [], insights, range }, 15_000)
   }
   if (url.pathname === "/api/admin/data-governance" && request.method === "GET") {
     // Governance diagnostics are intentionally metadata-only. Never select
@@ -6156,7 +6186,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
   if (url.pathname === "/api/admin/overview" && request.method === "GET") {
     const metrics = await db.prepare("SELECT (SELECT COUNT(*) FROM players) AS members, (SELECT COUNT(*) FROM companies) AS companies, (SELECT COUNT(*) FROM company_api_keys) AS companyKeys, (SELECT COUNT(*) FROM company_snapshots) AS companySnapshots, (SELECT COUNT(*) FROM faction_director_snapshots) AS directorSnapshots, (SELECT COUNT(*) FROM dashboard_member_status WHERE disabled_at IS NOT NULL) AS disabledMembers, (SELECT COUNT(*) FROM admin_jobs WHERE status IN ('queued','running')) AS activeJobs, (SELECT COUNT(*) FROM admin_jobs WHERE status = 'failed') AS failedJobs, (SELECT MAX(fetched_at) FROM companies) AS latestCompanyRefresh").first<Record<string, unknown>>()
     const recent = await db.prepare("SELECT id, actor_player_id AS actorPlayerId, actor_player_name AS actorPlayerName, action, target_type AS targetType, target_id AS targetId, outcome, summary, created_at AS createdAt FROM admin_audit_log ORDER BY id DESC LIMIT 8").all<Record<string, unknown>>()
-    return jsonResponse({ metrics: metrics ?? {}, maintenanceMode: await readAdminBoolean(env, "maintenanceMode", false), recentActivity: recent.results ?? [], generatedAt: new Date().toISOString() }, 200, origin)
+    return respondWithAdminReadCache({ metrics: metrics ?? {}, maintenanceMode: await readAdminBoolean(env, "maintenanceMode", false), recentActivity: recent.results ?? [], generatedAt: new Date().toISOString() }, 30_000)
   }
   if (url.pathname === "/api/admin/private-live" && request.method === "GET") {
     // Admins receive operational metadata only. Private bars, cooldowns,
@@ -6204,11 +6234,11 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
       noCaptureCount: connections.filter((row) => row.freshness === "no_capture").length,
       errorCount: connections.filter((row) => Boolean(row.lastError)).length,
     }
-    return jsonResponse({
+    return respondWithAdminReadCache({
       generatedAt: new Date().toISOString(), collectionMode: "owner_triggered",
       freshnessPolicy: { freshThroughMinutes: 15, ageingThroughMinutes: 60 },
       summary, connections, truncated: (rows.results?.length ?? 0) > 200,
-    }, 200, origin, { "cache-control": "private, no-store" })
+    }, 30_000, { "cache-control": "private, no-store" })
   }
   if (url.pathname === "/api/admin/members" && request.method === "GET") {
     const q = (url.searchParams.get("q") ?? "").trim().slice(0, 100)
@@ -6220,7 +6250,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
       db.prepare(`SELECT COUNT(*) AS total ${base}`).bind(q, like, like, like).first<{ total: number }>(),
     ])
     const members = (rows.results ?? []).map((r) => ({ playerId: String(r.playerId), playerName: String(r.playerName), createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null, companyId: r.companyId == null ? null : String(r.companyId), companyName: r.companyName == null ? null : String(r.companyName), companyType: r.companyType == null ? null : String(r.companyType), companyTypeId: r.companyTypeId ?? null, disabled: r.disabledAt != null, disabledAt: r.disabledAt ?? null, disableReason: r.disableReason ?? null, loginKeySaved: Number(r.loginKeySaved ?? 0) > 0, companyKeyCount: Number(r.companyKeyCount ?? 0), snapshotCount: Number(r.snapshotCount ?? 0) }))
-    return jsonResponse({ members, total: Number(count?.total ?? 0), limit, offset }, 200, origin)
+    return respondWithAdminReadCache({ members, total: Number(count?.total ?? 0), limit, offset }, 15_000)
   }
   if (memberMatch && request.method === "GET" && !memberMatch[2]) {
     const playerId = memberMatch[1]
@@ -6272,7 +6302,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
   }
   if (url.pathname === "/api/admin/jobs" && request.method === "GET") {
     const rows = await db.prepare("SELECT job_id AS jobId, job_type AS jobType, target_player_id AS targetPlayerId, target_company_id AS targetCompanyId, job_payload_json AS jobPayloadJson, status, requested_by AS requestedBy, created_at AS createdAt, started_at AS startedAt, finished_at AS finishedAt, result_json AS resultJson, error_message AS errorMessage FROM admin_jobs ORDER BY created_at DESC LIMIT ?").bind(limit).all<Record<string, unknown>>()
-    return jsonResponse({ jobs: (rows.results ?? []).map((row) => ({ ...row, refreshConfig: parseStoredJson(row.jobPayloadJson), result: parseStoredJson(row.resultJson), jobPayloadJson: undefined, resultJson: undefined })) }, 200, origin)
+    return respondWithAdminReadCache({ jobs: (rows.results ?? []).map((row) => ({ ...row, refreshConfig: parseStoredJson(row.jobPayloadJson), result: parseStoredJson(row.resultJson), jobPayloadJson: undefined, resultJson: undefined })) }, 10_000)
   }
   if (url.pathname === "/api/admin/jobs" && request.method === "POST") {
     const body: unknown = await request.json().catch(() => null)
@@ -6330,7 +6360,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
         if (typeof value === "boolean") settings[String(row.settingKey)] = value
       }
     }
-    return jsonResponse({ settings, updatedAt: new Date().toISOString() }, 200, origin)
+    return respondWithAdminReadCache({ settings, updatedAt: new Date().toISOString() }, 60_000)
   }
   if (url.pathname === "/api/admin/settings" && request.method === "POST") {
     const body: unknown = await request.json().catch(() => null)
@@ -6353,7 +6383,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
   if (url.pathname === "/api/admin/history/summary" && request.method === "GET") {
     const stats = await db.prepare("SELECT (SELECT COUNT(*) FROM companies) AS companies, (SELECT COUNT(*) FROM company_financials) AS financialRecords, (SELECT COUNT(*) FROM company_snapshots) AS companySnapshots, (SELECT COUNT(*) FROM faction_director_snapshots) AS directorSnapshots, (SELECT COUNT(*) FROM user_page_data) AS pageRecords").first<Record<string, unknown>>()
     const latest = await db.prepare("SELECT MAX(fetched_at) AS latestCompanySnapshot FROM company_snapshots").first<{ latestCompanySnapshot: string | null }>()
-    return jsonResponse({ stats: stats ?? {}, latestCompanySnapshot: latest?.latestCompanySnapshot ?? null, backupMode: "owner-matched merge; credentials and sessions excluded" }, 200, origin)
+    return respondWithAdminReadCache({ stats: stats ?? {}, latestCompanySnapshot: latest?.latestCompanySnapshot ?? null, backupMode: "owner-matched merge; credentials and sessions excluded" }, 60_000)
   }
   if (url.pathname === "/api/admin/history/backup" && request.method === "GET") {
     const playerId = positiveId(url.searchParams.get("playerId"))
@@ -6400,7 +6430,7 @@ async function handleAdminRequest(request: Request, env: WorkerEnv, origin: stri
   if (url.pathname === "/api/admin/audit" && request.method === "GET") {
     const before = Math.max(0, Number(url.searchParams.get("before") || 0) || 0)
     const rows = before ? await db.prepare("SELECT id, actor_player_id AS actorPlayerId, actor_player_name AS actorPlayerName, action, target_type AS targetType, target_id AS targetId, outcome, summary, details_json AS detailsJson, created_at AS createdAt FROM admin_audit_log WHERE id < ? ORDER BY id DESC LIMIT ?").bind(before, limit).all<Record<string, unknown>>() : await db.prepare("SELECT id, actor_player_id AS actorPlayerId, actor_player_name AS actorPlayerName, action, target_type AS targetType, target_id AS targetId, outcome, summary, details_json AS detailsJson, created_at AS createdAt FROM admin_audit_log ORDER BY id DESC LIMIT ?").bind(limit).all<Record<string, unknown>>()
-    return jsonResponse({ events: (rows.results ?? []).map((row) => ({ ...row, details: parseStoredJson(row.detailsJson), detailsJson: undefined })) }, 200, origin)
+    return respondWithAdminReadCache({ events: (rows.results ?? []).map((row) => ({ ...row, details: parseStoredJson(row.detailsJson), detailsJson: undefined })) }, 10_000)
   }
   return jsonResponse({ error: "Administration route not found." }, 404, origin)
 }
