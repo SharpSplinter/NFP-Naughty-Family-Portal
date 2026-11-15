@@ -95,7 +95,7 @@ for (let index = 0; index < MEMBERS.length; index += 1) {
   );
   statements.push(
     "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
-    [member.id, "portal-data-policy-v1", "2026-11-14", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+    [member.id, "portal-data-policy-v2", "2026-11-14-v2", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
   );
   statements.push(
     "INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (" +
@@ -140,7 +140,7 @@ statements.push(
 );
 statements.push(
   "INSERT INTO portal_user_consents (player_id, consent_version, policy_version, policy_acknowledged_at, historical_collection_enabled, share_halloween_history, share_private_live, share_networth, created_at, updated_at) VALUES (" +
-  [ADMIN.id, "portal-data-policy-v1", "2026-11-14", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
+  [ADMIN.id, "portal-data-policy-v2", "2026-11-14-v2", nowIso, 0, 0, 0, 0, nowIso, nowIso].map(sqlQuote).join(", ") + ");"
 );
 statements.push(
   "INSERT INTO sessions (token_hash, player_id, expires_at, created_at) VALUES (" +
