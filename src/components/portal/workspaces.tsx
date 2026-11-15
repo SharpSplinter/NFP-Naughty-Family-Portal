@@ -2204,6 +2204,7 @@ type PortalConsentSnapshot = {
     policyVersion?: string
     acknowledgedAt?: string
     apiKeyUsageAccepted?: boolean
+    apiKeyAccessType?: "custom" | "full" | null
     apiKeyConsentAcknowledgedAt?: string | null
     historicalCollectionEnabled?: boolean
     shareHalloweenHistory?: boolean
@@ -2519,7 +2520,7 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           <div className="settings-private-live-disclosure">
             <table><tbody>
               <tr><th>Privacy policy</th><td>{portalConsentStatus?.consent?.policyVersion ? "Acknowledged · " + portalConsentStatus.consent.policyVersion : portalConsentStatus ? "Acknowledgement required" : "Checking…"}</td></tr>
-              <tr><th>Primary API key use</th><td>{portalConsentStatus?.consent?.apiKeyUsageAccepted ? "Authorized for the current saved key" : "Custom Access or Full Access key consent required"}</td></tr>
+              <tr><th>Primary API key use</th><td>{portalConsentStatus?.consent?.apiKeyUsageAccepted ? (portalConsentStatus.consent.apiKeyAccessType === "full" ? "Full Access key authorized for the current saved key" : "Custom Access key authorized for the current saved key") : "Choose Custom Access or Full Access and authorize the current saved key"}</td></tr>
               <tr><th>Historical collection</th><td>{portalConsentStatus?.consent?.historicalCollectionEnabled ? "Enabled for supported private history collectors" : "Off"}</td></tr>
               <tr><th>Halloween sharing</th><td>{portalConsentStatus?.consent?.shareHalloweenHistory ? "Opted in · faction-visible" : "Off · private to you"}</td></tr>
               <tr><th>Bars & cooldown sharing</th><td>{portalConsentStatus?.consent?.sharePrivateLive ? "Opted in · latest snapshot only" : "Off"}</td></tr>
@@ -2629,6 +2630,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
   const [policyAccepted, setPolicyAccepted] = useState(false)
   const [policyAcknowledgementRequired, setPolicyAcknowledgementRequired] = useState(true)
   const [apiKeyUsageAccepted, setApiKeyUsageAccepted] = useState(false)
+  const [apiKeyAccessType, setApiKeyAccessType] = useState<"custom" | "full" | "">("")
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
   const [shareHalloweenHistory, setShareHalloweenHistory] = useState(false)
@@ -2663,9 +2665,14 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
         setShareHalloweenHistory(consent.shareHalloweenHistory === true)
         setSharePrivateLive(consent.sharePrivateLive === true)
         setShareNetworth(consent.shareNetworth === true)
-        setApiKeyUsageAccepted(consent.apiKeyUsageAccepted === true)
+        const keyConsentCurrent = consent.apiKeyUsageAccepted === true
+        setApiKeyUsageAccepted(keyConsentCurrent)
+        setApiKeyAccessType(keyConsentCurrent && consent.apiKeyAccessType === "full"
+          ? "full"
+          : keyConsentCurrent && consent.apiKeyAccessType === "custom" ? "custom" : "")
       } else {
         setApiKeyUsageAccepted(false)
+        setApiKeyAccessType("")
       }
       setPolicyAcknowledgementRequired(policyRequired)
       setPolicyAccepted(!policyRequired)
@@ -2710,6 +2717,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
       await request("/api/me/portal-consent", "POST", {
         policyAccepted: true,
         apiKeyUsageAccepted: true,
+        apiKeyAccessType,
         consentVersion: "portal-data-policy-v3",
         historicalCollectionEnabled,
         shareHalloweenHistory: historicalCollectionEnabled && shareHalloweenHistory,
@@ -2867,6 +2875,17 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>02</span><div><h2>Primary Torn API key use & permissions</h2><small>Required · Applies to your current primary key</small></div></div>
             <p>The portal accepts either a <strong>Custom Access</strong> key or a <strong>Full Access</strong> key. Custom Access is recommended because you choose its scopes in Torn; Full Access grants broader permissions. The portal can use only the access Torn actually grants and checks permissions before turning on optional features. Replacing your primary key requires this consent again.</p>
+            <p><strong>Select the key type that matches your current Torn API key.</strong> This is a declaration tied to the encrypted key saved to your member account. If you replace the key or change its access type, you must authorize the replacement again.</p>
+            <div className="portal-setup-key-choice">
+              <label className="portal-setup-check">
+                <input type="radio" name="primary-api-key-access-type" value="custom" checked={apiKeyAccessType === "custom"} onChange={() => { setApiKeyAccessType("custom"); setApiKeyUsageAccepted(false) }} disabled={busy || saved} />
+                <span><strong>Custom Access · Recommended</strong><small>Only the scopes selected in Torn's Custom Key Builder are granted.</small></span>
+              </label>
+              <label className="portal-setup-check">
+                <input type="radio" name="primary-api-key-access-type" value="full" checked={apiKeyAccessType === "full"} onChange={() => { setApiKeyAccessType("full"); setApiKeyUsageAccepted(false) }} disabled={busy || saved} />
+                <span><strong>Full Access · Broader permissions</strong><small>Grants broader access than a scoped Custom Access key.</small></span>
+              </label>
+            </div>
             <div className="portal-setup-policy-grid">
               <article><strong>Identity and membership</strong><p>User → Profile and faction membership are used to verify that the key belongs to you and that you are an active Naughty Souls member.</p></article>
               <article><strong>Personal feature data</strong><p>Depending on your choices and granted scopes, the member key may access User → Bars, Cooldowns, Networth, Personal Stats, Gym, Perks, Refills, Calendar, Halloween, Log and Attacks. Log and Attacks are needed for the respective private-history collectors.</p></article>
@@ -2874,8 +2893,8 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
               <article><strong>Faction and sensitive-data selections</strong><p>The builder preselects Faction → Members, Stats and Contributors, and enables its sensitive-data option. Grant only the scopes you are comfortable authorizing. Actual access remains controlled by Torn's key settings.</p></article>
             </div>
             <label className="portal-setup-check portal-setup-required">
-              <input type="checkbox" checked={apiKeyUsageAccepted} onChange={event => setApiKeyUsageAccepted(event.target.checked)} disabled={busy || saved} />
-              <span><strong>I own this primary Torn key and authorize Naughty Family to store and use it for the member-specific portal features I enable.</strong><small>I understand that Custom Access is limited to its selected permissions and Full Access is broader. I can replace or delete my key in Account Settings; replacement requires fresh consent.</small></span>
+              <input type="checkbox" checked={apiKeyUsageAccepted} onChange={event => setApiKeyUsageAccepted(event.target.checked)} disabled={!apiKeyAccessType || busy || saved} />
+              <span><strong>I own this primary Torn {apiKeyAccessType === "full" ? "Full Access" : "Custom Access"} key and authorize Naughty Family to store and use it for the member-specific portal features I enable.</strong><small>I understand that Custom Access is limited to its selected permissions and Full Access is broader. I can replace or delete my key in Account Settings; replacement requires fresh consent.</small></span>
             </label>
           </section>
 
@@ -2919,7 +2938,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           {!saved ? (
             <div className="portal-setup-actions">
-              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || !apiKeyUsageAccepted || busy || !preferencesLoaded}>
+              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || !apiKeyUsageAccepted || !apiKeyAccessType || busy || !preferencesLoaded}>
                 {busy ? "Saving preferences & starting eligible collections…" : props.isEdit ? "Save data preferences" : "Save preferences & finish setup"}
               </button>
               <small>Optional choices can remain off. You can update them later in Account Settings.</small>
