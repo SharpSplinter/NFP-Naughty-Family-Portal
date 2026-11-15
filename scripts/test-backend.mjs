@@ -1824,7 +1824,8 @@ try {
     const catalogBody = workerSource.slice(workerSource.indexOf("async function fetchGlobalCompanyTypeCatalog"), workerSource.indexOf("async function getGlobalRankingApiKey"))
     assert.match(catalogBody, /isRecord\(payload\) && isRecord\(payload\.error\)/, "Torn API error payloads must be surfaced even when HTTP status is successful")
     const rankingKeyBody = workerSource.slice(workerSource.indexOf("async function getGlobalRankingApiKey"), workerSource.indexOf("async function startGlobalRankingRefresh"))
-    assert.match(rankingKeyBody, /TORN_API_KEY_SERVICE[\s\S]*TORN_API_KEY_CUSTOM/, "TORN_API_KEY_SERVICE must be preferred, with Custom Access as fallback")
+    assert.match(workerSource, /function serviceFullAccessApiKey[\s\S]*TORN_API_KEY_SERVICE[\s\S]*TORN_API_KEY_FULL_ACCESS/, "the production SERVICE key must be preferred, with legacy FULL_ACCESS retained as a staging compatibility alias")
+    assert.match(rankingKeyBody, /serviceFullAccessApiKey\(env\)[\s\S]*TORN_API_KEY_CUSTOM/, "the service Full Access key must be preferred, with Custom Access as final fallback")
     const configuredCrons = wranglerSource.match(/crons\s*=\s*\[([^\]]*)\]/)?.[1]
       .match(/"([^"]+)"/g)?.map((value) => value.slice(1, -1)) ?? []
     assert.ok(configuredCrons.includes("10 18 * * *"), "the daily ranking capture schedule must remain configured")
