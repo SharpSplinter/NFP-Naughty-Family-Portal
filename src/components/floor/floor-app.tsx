@@ -1004,6 +1004,21 @@ export function FloorApp() {
       onSignOut={() => signOut()}
     />
   )
+ 
+  if (routePath === "/setup" && sessionToken && !demoMode) return (
+    <PortalSetupWorkspace
+      playerName={playerName}
+      playerId={playerId}
+      apiBase={API_BASE}
+      sessionToken={sessionToken}
+      isEdit
+      onComplete={() => {
+        window.history.replaceState({}, "", "/settings")
+        setRoutePath("/settings")
+      }}
+      onSignOut={() => signOut()}
+    />
+  )
 
   if (!sessionToken && !demoMode) return (
     <main className="login-screen">
