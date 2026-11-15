@@ -120,7 +120,7 @@ try {
         }
         return (sql) => {
           const statement = target.prepare(sql)
-          const normalizedSql = String(sql).trim().replace(/\\s+/g, " ").toLowerCase()
+          const normalizedSql = String(sql).trim().replace(/\s+/g, " ").toLowerCase()
           if (normalizedSql !== "select consent_version as consentversion from portal_user_consents where player_id = ?") {
             return statement
           }
@@ -4262,6 +4262,7 @@ try {
     const sessions = new Map()
     const apiKeys = new Map()
     const administrators = new Map()
+    const portalConsents = new Map()
     const disabled = new Map()
     const halloweenTables = {
       halloween_historical_keys: new Map(),
@@ -4289,6 +4290,14 @@ try {
         created_at: new Date(Date.now() - 86400000).toISOString(),
       })
       if (member.apiKey) apiKeys.set(playerId, await makeEncryptedTestKey(secret, member.apiKey))
+      portalConsents.set(playerId, {
+        player_id: playerId,
+        consent_version: "portal-data-policy-v1",
+        historical_collection_enabled: 1,
+        share_halloween_history: 0,
+        share_private_live: 0,
+        share_networth: 0,
+      })
       if (member.isAdmin) administrators.set(playerId, {
         player_id: playerId,
         granted_by: "900",
@@ -4314,6 +4323,14 @@ try {
         return {
           bind(...args) { values = args; return this },
           async first() {
+            if (normalized.startsWith("select consent_version as consentversion from portal_user_consents")) {
+              const consent = portalConsents.get(String(values[0]))
+              return consent ? { consentVersion: consent.consent_version } : null
+            }
+            if (normalized.startsWith("select historical_collection_enabled as enabled from portal_user_consents")) {
+              const consent = portalConsents.get(String(values[0]))
+              return consent ? { enabled: consent.historical_collection_enabled } : null
+            }
             if (normalized.includes("from sessions s join players p")) {
               const savedSession = sessions.get(String(values[0]))
               if (!savedSession || savedSession.expires_at <= Number(values[1])) return null
@@ -4417,6 +4434,9 @@ try {
               role.revoked_by = String(revokedBy)
               role.revoked_at = String(revokedAt)
               return { success: true, meta: { changes: 1 } }
+            }
+            if (normalized.startsWith("delete from portal_user_consents where player_id = ?")) {
+              return { success: true, meta: { changes: portalConsents.delete(String(values[0])) ? 1 : 0 } }
             }
             if (normalized.startsWith("delete from sessions where player_id = ?")) {
               const playerId = String(values[0])
