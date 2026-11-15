@@ -2742,7 +2742,7 @@ export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
 
           <section className="portal-setup-section">
             <div className="portal-setup-section-heading"><span>02</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
-            <p>Allow the portal to import historical records supported by your Torn key. The current event backfill integrations cover Halloween and Christmas Town. Other workspaces will become available here as their historical collectors are added.</p>
+            <p>Allow the portal to import historical records supported by your Torn key. The current event backfill integrations cover Halloween and Christmas Town. Halloween needs User → Log and User → Attacks; Christmas Town needs unrestricted User → Log access. Restricted log categories can prevent some history from being imported. Other workspaces will become available here as their historical collectors are added.</p>
             <label className="portal-setup-check">
               <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => setHistoricalCollectionEnabled(event.target.checked)} disabled={busy || saved} />
               <span><strong>Allow historical collection for supported portal features.</strong><small>Eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
