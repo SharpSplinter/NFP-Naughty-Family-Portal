@@ -13,6 +13,7 @@ const sql = [
   "DELETE FROM discord_account_links WHERE owner_player_id = '999999005';",
   "DELETE FROM discord_alert_poll_health WHERE owner_player_id = '999999005';",
   "DELETE FROM discord_alert_poll_history WHERE owner_player_id = '999999005';",
+  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member'));",
   "DELETE FROM players WHERE (player_id = '999999001' AND player_name = 'Staging Private History Member') OR (player_id = '999999002' AND player_name = 'Staging Private History Other Member') OR (player_id = '999999004' AND player_name = 'Staging Private History Admin') OR (player_id = '999999005' AND player_name = 'Staging Feature Walkthrough Member') OR (player_id = '999999006' AND player_name = 'Staging Partial Archive Member');",
 ].join("\n") + "\n";
 
