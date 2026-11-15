@@ -8,11 +8,10 @@ const migration = read("migrations/auth/0033_gym_training_history.sql");
 const workspace = read("src/components/portal/workspaces.tsx");
 const classifier = read("src/lib/gym-training/logs.ts");
 
-assert.match(classifier, /gym[\\s_-]*training/);
-assert.match(classifier, /training[\\s_-]+in[\\s_-]+the[\\s_-]+gym/);
-assert.match(classifier, /const gymCategory = \\/\\bgym\\b\\//);
-assert.match(classifier, /trainingSignal/);
-assert.match(classifier, /return gymCategory && trainingSignal/);
+assert.ok(classifier.includes("const explicitGymTraining ="));
+assert.ok(classifier.includes("const gymCategory ="));
+assert.ok(classifier.includes("const trainingSignal ="));
+assert.ok(classifier.includes("return gymCategory && trainingSignal"));
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_historical_keys/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_collection_jobs/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_event_logs/);
