@@ -2622,3 +2622,266 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
     </main>
   )
 }
+
+type PortalSetupWorkspaceProps = {
+  playerName: string
+  playerId: string
+  apiBase: string
+  sessionToken: string
+  onComplete: () => void
+  onSignOut: () => void
+}
+
+type PortalSetupResponse = Record<string, unknown> & { error?: string }
+
+export function PortalSetupWorkspace(props: PortalSetupWorkspaceProps) {
+  const [policyAccepted, setPolicyAccepted] = useState(false)
+  const [historicalCollectionEnabled, setHistoricalCollectionEnabled] = useState(false)
+  const [sharePrivateLive, setSharePrivateLive] = useState(false)
+  const [shareNetworth, setShareNetworth] = useState(false)
+  const [secondaryCompanyKey, setSecondaryCompanyKey] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState("")
+  const [notices, setNotices] = useState<string[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
+
+  const request = async (
+    path: string,
+    method: "GET" | "POST" = "GET",
+    body?: Record<string, unknown>,
+  ): Promise<PortalSetupResponse> => {
+    const response = await fetch(props.apiBase + path, {
+      method,
+      headers: {
+        Authorization: "Bearer " + props.sessionToken,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+    const payload = await response.json().catch(() => ({})) as PortalSetupResponse
+    if (!response.ok) {
+      throw new Error(typeof payload.error === "string" ? payload.error : "The portal request could not be completed.")
+    }
+    return payload
+  }
+
+  const completeSetup = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!policyAccepted || busy || saved) return
+    setBusy(true)
+    setError("")
+    setNotices([])
+    setWarnings([])
+    const nextNotices: string[] = []
+    const nextWarnings: string[] = []
+
+    try {
+      await request("/api/me/portal-consent", "POST", {
+        policyAccepted: true,
+        consentVersion: "portal-data-policy-v1",
+        historicalCollectionEnabled,
+        sharePrivateLive,
+        shareNetworth: sharePrivateLive && shareNetworth,
+      })
+      nextNotices.push("Your privacy acknowledgement and data preferences were saved.")
+
+      if (sharePrivateLive) {
+        try {
+          const live = await request("/api/me/private-live/key", "POST", {
+            consent: true,
+            shareWithFaction: true,
+            includeNetworth: shareNetworth,
+            consentVersion: "faction-private-live-v1",
+          })
+          nextNotices.push(typeof live.warning === "string"
+            ? live.warning
+            : "Your member-owned live bars and cooldown snapshot was connected for faction sharing.")
+        } catch (caught) {
+          nextWarnings.push("Private live sharing was selected, but could not be enabled: " +
+            (caught instanceof Error ? caught.message : "Torn did not accept the required member-key permissions."))
+        }
+      }
+
+      if (historicalCollectionEnabled) {
+        let halloweenReady = false
+        try {
+          await request("/api/me/halloween/key", "POST", {
+            consent: true,
+            consentVersion: "halloween-history-v2",
+          })
+          halloweenReady = true
+          nextNotices.push("Your Halloween historical collection authorization was validated.")
+        } catch (caught) {
+          nextWarnings.push("Halloween history could not be enabled: " +
+            (caught instanceof Error ? caught.message : "The member key did not provide the required log and attack access."))
+        }
+
+        if (halloweenReady) {
+          try {
+            const archive = await request("/api/me/halloween/archive?year=all")
+            const years = Array.isArray(archive.eventYears)
+              ? archive.eventYears.filter((year): year is number => Number.isInteger(year))
+              : []
+            if (!years.length) {
+              nextNotices.push("Halloween history is enabled. No event years are currently registered for backfill.")
+            }
+            for (const year of years) {
+              try {
+                const queued = await request("/api/me/halloween/collect", "POST", { year })
+                const logStatus = queued.logCollection && typeof queued.logCollection === "object"
+                  ? (queued.logCollection as Record<string, unknown>).status
+                  : "queued"
+                nextNotices.push("Halloween " + year + " collection: " + String(logStatus) + ".")
+              } catch (caught) {
+                nextWarnings.push("Halloween " + year + " remains pending: " +
+                  (caught instanceof Error ? caught.message : "Its historical collection could not be queued."))
+              }
+            }
+          } catch (caught) {
+            nextWarnings.push("Halloween access was saved, but the available event years could not be read: " +
+              (caught instanceof Error ? caught.message : "The archive request failed."))
+          }
+        }
+
+        let christmasReady = false
+        try {
+          await request("/api/me/christmas-town/key", "POST", {
+            consent: true,
+            consentVersion: "christmas-town-history-v1",
+          })
+          christmasReady = true
+          nextNotices.push("Your Christmas Town historical collection authorization was validated.")
+        } catch (caught) {
+          nextWarnings.push("Christmas Town history could not be enabled: " +
+            (caught instanceof Error ? caught.message : "The member key did not provide unrestricted log access."))
+        }
+
+        if (christmasReady) {
+          try {
+            const yesterday = new Date()
+            yesterday.setUTCDate(yesterday.getUTCDate() - 1)
+            const result = await request("/api/me/christmas-town/collect", "POST", {
+              fromDate: "2021-12-01",
+              toDate: yesterday.toISOString().slice(0, 10),
+            })
+            const jobs = Array.isArray(result.jobs) ? result.jobs.length : 0
+            nextNotices.push("Christmas Town backfill was submitted for " + jobs + " event-year window(s).")
+          } catch (caught) {
+            nextWarnings.push("Christmas Town access was saved, but its history backfill could not be queued: " +
+              (caught instanceof Error ? caught.message : "The collection request failed."))
+          }
+        }
+      }
+
+      if (secondaryCompanyKey.trim()) {
+        try {
+          const company = await request("/api/auth/company-key", "POST", { apiKey: secondaryCompanyKey.trim() })
+          const companyName = typeof company.companyName === "string" ? company.companyName : "Your secondary company"
+          nextNotices.push(companyName + " was validated and connected.")
+          setSecondaryCompanyKey("")
+        } catch (caught) {
+          nextWarnings.push("The optional secondary company key was not saved: " +
+            (caught instanceof Error ? caught.message : "Torn could not validate the company connection."))
+        }
+      }
+
+      setNotices(nextNotices)
+      setWarnings(nextWarnings)
+      setSaved(true)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save your portal setup.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="portal-page portal-setup-page">
+      <header className="portal-topbar">
+        <a className="portal-brand" href="/" onClick={event => event.preventDefault()}>
+          <span className="portal-brand-mark">NF</span>
+          <span><strong>NAUGHTY FAMILY</strong><small>FIRST-TIME SETUP</small></span>
+        </a>
+        <div className="portal-user">
+          <span className="portal-user-avatar">{props.playerName.slice(0, 2).toUpperCase() || "NS"}</span>
+          <span><strong>{props.playerName || "Faction member"}</strong><small>TORN ID {props.playerId || "—"}</small></span>
+          <button type="button" onClick={props.onSignOut}>Sign out</button>
+        </div>
+      </header>
+
+      <section className="portal-setup-shell">
+        <div className="portal-setup-heading">
+          <div className="portal-eyebrow"><span /> YOUR ACCOUNT · PRIVACY & DATA</div>
+          <h1>Welcome to the <em>Naughty Family.</em></h1>
+          <p>Before entering the portal, review how your data is used and choose which optional collections and sharing features to enable. You can change these preferences later in Account Settings.</p>
+        </div>
+
+        <form className="portal-setup-card" onSubmit={completeSetup}>
+          <section className="portal-setup-section">
+            <div className="portal-setup-section-heading"><span>01</span><div><h2>Data policy & privacy</h2><small>Required acknowledgement</small></div></div>
+            <div className="portal-setup-policy-grid">
+              <article><strong>Your member API key</strong><p>Your key verifies your Torn identity and is used only for data that belongs to your account or specifically requires your personal permissions. The encrypted key is stored by the portal API, not in this browser's local storage.</p></article>
+              <article><strong>Shared faction and market data</strong><p>Shared faction information and public market prices are requested by the portal Worker using its own server-side Torn service key. Your personal API key is not used for these shared requests.</p></article>
+              <article><strong>Historical collections</strong><p>When enabled below, supported personal event archives are imported automatically using your own key. Your event logs remain associated with your account. Torn permissions and available records determine what can be collected.</p></article>
+              <article><strong>Retention & revocation</strong><p>You can turn off collection and sharing later. Revocation stops future collection and removes the stored collection credential or shared live snapshot. Previously collected historical event records are retained under the portal's data-retention policy.</p></article>
+            </div>
+            <label className="portal-setup-check portal-setup-required">
+              <input type="checkbox" checked={policyAccepted} onChange={event => setPolicyAccepted(event.target.checked)} disabled={busy || saved} />
+              <span><strong>I have read and acknowledge the Naughty Family data policy and privacy notice.</strong><small>This acknowledgement is required to enter the portal. It does not enable optional historical collection or data sharing by itself.</small></span>
+            </label>
+          </section>
+
+          <section className="portal-setup-section">
+            <div className="portal-setup-section-heading"><span>02</span><div><h2>Historical data collection</h2><small>Optional · Starts automatically when enabled</small></div></div>
+            <p>Allow the portal to import historical records supported by your Torn key. The current event backfill integrations cover Halloween and Christmas Town. Other workspaces will become available here as their historical collectors are added.</p>
+            <label className="portal-setup-check">
+              <input type="checkbox" checked={historicalCollectionEnabled} onChange={event => setHistoricalCollectionEnabled(event.target.checked)} disabled={busy || saved} />
+              <span><strong>Allow historical collection for supported portal features.</strong><small>Eligible event-year jobs will be queued after setup. Missing Torn permissions or a personal Halloween start-time requirement will be reported as pending instead of guessed.</small></span>
+            </label>
+          </section>
+
+          <section className="portal-setup-section">
+            <div className="portal-setup-section-heading"><span>03</span><div><h2>Data sharing</h2><small>Optional · Off by default</small></div></div>
+            <p>These choices are separate from the policy acknowledgement and historical collection permission.</p>
+            <label className="portal-setup-check">
+              <input type="checkbox" checked={sharePrivateLive} onChange={event => { setSharePrivateLive(event.target.checked); if (!event.target.checked) setShareNetworth(false) }} disabled={busy || saved} />
+              <span><strong>Share my latest bars and cooldowns with Naughty Souls.</strong><small>Uses your own API key to create a latest-only snapshot. The snapshot is visible to authorized faction members and is refreshed only through supported member-triggered flows.</small></span>
+            </label>
+            <label className={"portal-setup-check portal-setup-subcheck" + (!sharePrivateLive ? " is-disabled" : "")}>
+              <input type="checkbox" checked={shareNetworth} onChange={event => setShareNetworth(event.target.checked)} disabled={!sharePrivateLive || busy || saved} />
+              <span><strong>Also share my detailed networth breakdown.</strong><small>Separate opt-in. Only available if Torn grants the member key access to detailed networth.</small></span>
+            </label>
+          </section>
+
+          <section className="portal-setup-section">
+            <div className="portal-setup-section-heading"><span>04</span><div><h2>Secondary company API key</h2><small>Optional · Can be added later</small></div></div>
+            <p>Members with another company may add a separate key for that company. It is validated against the company profile and used only for the returned company connection. It does not need to belong to the signed-in member.</p>
+            <label className="portal-setup-input-label" htmlFor="portal-setup-company-key">Additional company API key</label>
+            <input id="portal-setup-company-key" className="portal-setup-input" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => setSecondaryCompanyKey(event.target.value)} placeholder="Leave blank to skip" disabled={busy || saved} />
+            <small className="portal-setup-field-hint">Your primary portal key remains your member identity key. No company key is required to finish setup.</small>
+          </section>
+
+          {error && <div className="portal-setup-alert is-error" role="alert">{error}</div>}
+          {warnings.length > 0 && <div className="portal-setup-alert is-warning" role="status"><strong>Some optional connections need attention</strong>{warnings.map((message, index) => <p key={index}>{message}</p>)}</div>}
+          {notices.length > 0 && <div className="portal-setup-alert is-success" role="status"><strong>Setup saved</strong>{notices.map((message, index) => <p key={index}>{message}</p>)}</div>}
+
+          {!saved ? (
+            <div className="portal-setup-actions">
+              <button type="submit" className="portal-setup-primary" disabled={!policyAccepted || busy}>
+                {busy ? "Saving preferences & starting eligible collections…" : "Save preferences & finish setup"}
+              </button>
+              <small>Optional choices can remain off. You can update them later in Account Settings.</small>
+            </div>
+          ) : (
+            <div className="portal-setup-actions">
+              <button type="button" className="portal-setup-primary" onClick={props.onComplete}>Enter Naughty Family Portal <span>→</span></button>
+              <small>Your central preferences are saved. Eligible historical jobs have been submitted and will continue in the background.</small>
+            </div>
+          )}
+        </form>
+      </section>
+      <footer className="portal-footer"><span>NAUGHTY FAMILY PORTAL</span><span>YOUR DATA · YOUR CHOICES</span></footer>
+    </main>
+  )
+}
