@@ -125,6 +125,21 @@ function estimateEnergyEquivalentGain(stat: number, happy: number, energy: numbe
   return Math.max(0, modifier * dots * Math.max(0, energy) * perEnergy)
 }
 
+function applyDailyHappyRegeneration(
+  happyBefore: number,
+  happyLost: number,
+  naturalHappyGain: number,
+  happyBarMaximum: number,
+): number {
+  const afterTraining = Math.max(0, happyBefore - Math.max(0, happyLost))
+  const cap = Math.max(0, happyBarMaximum)
+  // Items can place happiness above the normal bar cap. Natural regeneration
+  // must not pull that elevated value down; it only runs once below the cap.
+  return afterTraining >= cap
+    ? afterTraining
+    : Math.min(cap, afterTraining + Math.max(0, naturalHappyGain))
+}
+
 function estimateGymSession({
   stat, happy, energy, dots, energyPerTrain, modifier, happyLossRate,
 }: {
@@ -553,6 +568,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const naturalHappyPerDay = happyBar
     ? Math.max(0, safeNumber(happyBar.increment, 5) * 86400 / Math.max(1, safeNumber(happyBar.interval, 900)))
     : 480
+  const dailyHappyBarMaximum = happyBar ? Math.max(0, safeNumber(happyBar.maximum, HAPPY_CAP)) : HAPPY_CAP
   const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillAvailable ? refillBarMaximum : 0))
   const dailyEnergy = dailyEnergyOverride.trim() === "" ? dailyEnergyDefault : clamp(safeNumber(dailyEnergyOverride), 0, 100000)
   const projection = useMemo(() => {
@@ -566,11 +582,16 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
       })
       stat = result.endingStat
-      happy = Math.min(HAPPY_CAP, happy + naturalHappyPerDay - result.trains * selectedGym.energyCost * happyLossPercent / 100)
+      happy = applyDailyHappyRegeneration(
+        happy,
+        result.trains * selectedGym.energyCost * happyLossPercent / 100,
+        naturalHappyPerDay,
+        dailyHappyBarMaximum,
+      )
       totalGain += result.statGain
     }
     return { stat, totalGain, energy: dailyEnergy * days, days }
-  }, [currentStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay])
+  }, [currentStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
 
   const permanentStatBookOptions: Array<{ stat: StatKey; title: string }> = [
     { stat: "strength", title: "Brawn Over Brains" },
@@ -610,10 +631,11 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           happyLossRate: happyLossPercent / 100,
         })
         statAtCompletion = dayTrain.endingStat
-        happyAtCompletion = clamp(
-          happyAtCompletion + naturalHappyPerDay - dayTrain.trains * selectedGym.energyCost * happyLossPercent / 100,
-          0,
-          HAPPY_CAP,
+        happyAtCompletion = applyDailyHappyRegeneration(
+          happyAtCompletion,
+          dayTrain.trains * selectedGym.energyCost * happyLossPercent / 100,
+          naturalHappyPerDay,
+          dailyHappyBarMaximum,
         )
       }
     }
@@ -955,7 +977,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </div>)}
             </div>
             <div className="tc-result-total"><span>Combined one-time book gain</span><strong>+{fmt(totalPermanentStatBookGain, 2)}</strong></div>
-            <p className="tc-muted">Books are not tradeable and have no Item Market price. This estimate assumes the same daily energy, gym and perk scenario throughout the read. Recheck it when the book finishes because actual training may differ.</p>
+            <p className="tc-muted">Books are not tradeable and have no Item Market price. This estimate assumes the same daily energy, gym and perk scenario throughout the read, with natural happy regeneration capped at your live bar maximum. Recheck it when the book finishes because actual training may differ.</p>
           </Panel>
           <Panel title="Company job-point stat gains" eyebrow="LIVE JOB + JOBPOINTS API" description="Some company specials award permanent battle-stat gains through job points. Current company, rating and saved points are read automatically.">
             <div className="tc-condition-list">
