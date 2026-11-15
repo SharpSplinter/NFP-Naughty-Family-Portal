@@ -395,10 +395,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
-  const barMaximumBase = Math.max(0, safeNumber(energyBar?.maximum, 150) - (hasLiveUglyEnergy ? 100 : 0))
-  const refillBarMaximum = plannedEnergyBooks.has("ugly-energy") && !hasLiveUglyEnergy
-    ? barMaximumBase + 100
-    : Math.max(0, safeNumber(energyBar?.maximum, 150))
+  const liveBarMaximum = energyBar ? Math.max(0, safeNumber(energyBar.maximum)) : 0
+  const refillBarMaximum = plannedEnergyBooks.has("ugly-energy") || hasLiveUglyEnergy
+    ? Math.max(250, liveBarMaximum)
+    : liveBarMaximum
   const regenMultiplier = plannedEnergyBooks.has("higher-daddy") ? 1.2 : 1
   const naturalEnergyBar = energyBar ? { ...energyBar, current: currentEnergy } : null
   const naturalEnergy = getNaturalEnergy(naturalEnergyBar, waitHours, regenMultiplier)
@@ -784,7 +784,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="auto">Use active book from API</option><option value="none">No energy book</option>
                 <option value="fuelling">Fuelling Your Way to Failure · 2× drink energy</option>
                 <option value="higher-daddy">Higher Daddy, Higher! · +20% natural energy</option>
-                <option value="ugly-energy">Ugly Energy · +100 refill/bar capacity</option>
+                <option value="ugly-energy">Ugly Energy · 250E bar and refill capacity</option>
                 <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
               </select><small className="tc-hint">Auto applies all active energy books returned by /user/perks. Choose one to compare a single-book scenario.</small></label>
               <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
