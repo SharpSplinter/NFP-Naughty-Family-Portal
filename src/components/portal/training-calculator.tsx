@@ -499,9 +499,9 @@ export function TrainingCalculatorWorkspace({ playerName, onNavigate }: Training
             </Panel>
             <Panel title="Market cost inputs" eyebrow="07 · OPTIONAL PRICES" description="Prices are intentionally manual because Torn market values move. Leave a price at zero when you do not use that item.">
               <div className="tc-form-grid">
-                <NumberField label="Xanax price" value={xanaxPrice} onChange={setXanaxPrice} min={0} step={1000} />
-                <NumberField label="Selected can price" value={canPrice} onChange={setCanPrice} min={0} step={1000} />
-                <NumberField label="FHC price" value={fhcPrice} onChange={setFhcPrice} min={0} step={1000} />
+                <NumberField label="Xanax price" value={xanaxPrice} onChange={setXanaxPrice} min={0} step={1000} testId="training-xanax-price" />
+                <NumberField label="Selected can price" value={canPrice} onChange={setCanPrice} min={0} step={1000} testId="training-can-price" />
+                <NumberField label="FHC price" value={fhcPrice} onChange={setFhcPrice} min={0} step={1000} testId="training-fhc-price" />
                 <NumberField label="Refill opportunity cost" value={refillPrice} onChange={setRefillPrice} min={0} step={1000} hint="Optional cost of a point refill or other refill." />
               </div>
               <div className="tc-cost-total"><span>Known consumable cost</span><strong>{money(energyPlan.totalCost)}</strong></div>
