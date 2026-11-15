@@ -217,6 +217,11 @@
 .historical-collect-banner button:disabled,.historical-collection-toolbar button:disabled{opacity:.45;cursor:not-allowed}
 .historical-leaderboard{overflow-x:auto;border:1px solid #33434a;border-radius:10px;background:#0f1921}
 .historical-leaderboard:focus-visible{outline:2px solid #9ccbb6;outline-offset:3px}
+.halloween-table-scroll-controls{display:none;align-items:center;justify-content:flex-end;gap:6px;padding:7px 9px;border-bottom:1px solid #ffffff12;background:#111d25}
+.halloween-table-scroll-controls span{margin-right:auto;color:#9aafb1;font-size:8px}
+.halloween-table-scroll-controls button{min-width:30px;min-height:28px;border:1px solid #49645a;border-radius:6px;background:#162721;color:#d6eee2;font-size:15px;line-height:1;cursor:pointer}
+.halloween-table-scroll-controls button:focus-visible{outline:2px solid #9ccbb6;outline-offset:2px}
+@media(max-width:900px){.halloween-table-scroll-controls{display:flex}}
 .historical-leaderboard table{width:100%;border-collapse:collapse;min-width:650px}
 .historical-leaderboard th,.historical-leaderboard td{padding:11px 12px;border-bottom:1px solid #ffffff10;text-align:left;vertical-align:middle;font-size:9px}
 .historical-leaderboard th{color:#7f98a1;font-size:8px;letter-spacing:.13em;background:#17232c}

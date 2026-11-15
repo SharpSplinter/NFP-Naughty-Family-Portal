@@ -87,8 +87,8 @@ assert.equal(halloweenAll.payload?.myCollection?.attackOutcomesStatus, "complete
 assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeProcs, 12);
 assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64);
 assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80);
-assert.equal(halloweenAll.payload?.eventTotals?.revitalizeProcs, 17);
-assert.equal(halloweenAll.payload?.eventTotals?.revitalizeSuccessfulAttacks, 114);
+assert.ok((halloweenAll.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "All-time event totals must include the synthetic current-season Revitalize procs.");
+assert.ok((halloweenAll.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "All-time event totals must include the synthetic current-season finishing hits.");
 const allTimeComparison = halloweenAll.payload?.memberComparisons?.find(row => row.playerId === otherPlayerId);
 assert.ok(allTimeComparison?.metrics, "All-time archive should expose the explicitly shared synthetic member comparison.");
 assert.equal(allTimeComparison.metrics.revitalizeProcs, 5);
@@ -99,6 +99,8 @@ const halloweenYear = await api("/api/me/halloween/archive?year=2026");
 ok(halloweenYear, "Halloween year-specific archive");
 assert.equal(halloweenYear.payload?.event?.eventYear, 2026);
 assert.equal(halloweenYear.payload?.myCollection?.coverage, "complete");
+assert.equal(halloweenYear.payload?.eventTotals?.revitalizeProcs, 17, "The 2026 event totals should match the synthetic season fixtures.");
+assert.equal(halloweenYear.payload?.eventTotals?.revitalizeSuccessfulAttacks, 114, "The 2026 finishing-hit totals should match the synthetic season fixtures.");
 assert.ok(halloweenYear.payload?.memberComparisons?.some(row => row.playerId === otherPlayerId));
 assert.equal(halloweenYear.payload?.leaderboard?.find(row => row.playerId === partialPlayerId)?.coverage, "partial");
 
