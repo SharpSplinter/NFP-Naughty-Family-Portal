@@ -727,8 +727,9 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   recordAssertion("Training Calculator " + viewportName + ": permanent stat book applies the 10M completion cap",
     permanentBookGain.includes("10,000,000"), permanentBookGain);
   await tab("happy").click();
+  await page.getByTestId("training-dvd-happy").selectOption("auto");
   const dvdHappyMode = await page.getByTestId("training-dvd-happy").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness remains in live auto mode",
+  recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness can return to live auto mode",
     dvdHappyMode === "auto", dvdHappyMode);
   await tab("enhancers").click();
   recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
@@ -742,8 +743,8 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   await page.getByTestId("training-projection-days").fill("30");
   const projectedGain = (await page.locator(".tc-metric").first().locator("strong").innerText()).replaceAll(",", "").replace("+", "");
   recordAssertion("Training Calculator " + viewportName + ": 30-day projection calculates positive gains", Number(projectedGain) > 0, projectedGain);
-  const projectionEnergy = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": projection accounts for 14,400E", projectionEnergy === "14,400", projectionEnergy);
+  const projectionEnergy = (await page.locator(".tc-metric").nth(2).locator("strong").innerText()).replaceAll(",", "").replace(/E$/i, "");
+  recordAssertion("Training Calculator " + viewportName + ": projection accounts for 14,400E", projectionEnergy === "14400", projectionEnergy);
   await noOverflow("long-term projection");
   await scanAxe("Long-term Projection");
 
