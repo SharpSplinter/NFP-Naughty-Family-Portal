@@ -7481,7 +7481,7 @@ export default {
       const yearValue = Number(requestedYear)
       if (!allTimeDetail && (!Number.isInteger(yearValue) || yearValue < 2000 || yearValue > 2100)) return jsonResponse({ error: "A valid Halloween event year is required." }, 400, origin)
       const db = requireDb(env)
-      const member = await db.prepare("SELECT player_id AS playerId, player_name AS playerName FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id WHERE p.player_id = ? AND p.faction_id = ? AND st.disabled_at IS NULL")
+      const member = await db.prepare("SELECT p.player_id AS playerId, p.player_name AS playerName FROM players p LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id WHERE p.player_id = ? AND p.faction_id = ? AND st.disabled_at IS NULL")
         .bind(targetId, NAUGHTY_SOULS_FACTION_ID).first<{ playerId: string; playerName: string }>()
       if (!member) return jsonResponse({ error: "That member is not currently verified as a Naughty Souls member." }, 404, origin)
        if (targetId !== session.player_id) {
