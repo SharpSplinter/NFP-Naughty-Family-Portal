@@ -7135,6 +7135,278 @@ export default {
         key: row ? { lastFour: row.last_four, accessLevel: row.access_level, consentVersion: row.consent_version, consentedAt: row.consented_at, lastValidatedAt: row.last_validated_at, updatedAt: row.updated_at } : null,
       }, 200, origin)
     }
+
+    if (url.pathname === "/api/me/training-calculator" && request.method === "GET") {
+      const session = await authenticate(request, env)
+      if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
+      const memberKey = await savedKey(env, session.player_id)
+      if (!memberKey) return jsonResponse({ error: "Your saved Torn API key is unavailable. Sign in again to refresh your connection." }, 409, origin)
+
+      const publicKey = workerServiceTornApiKey(env) || env.TORN_API_KEY_CUSTOM?.trim() || ""
+      const baseUrl = (env.TORN_API_BASE_URL || "https://api.torn.com/v2").replace(/\/+$/, "")
+      const fetcher = env.TORN_API_FIXTURE?.fetch.bind(env.TORN_API_FIXTURE) || fetch
+      const errors: Record<string, string> = {}
+      const getJson = async (path: string, key: string, workload: string, label: string, playerScoped = true): Promise<Record<string, unknown> | null> => {
+        if (!key) { errors[label] = "No public Torn API key is configured for this shared catalogue and market data."; return null }
+        try {
+          const response = await trackedTornFetch(workload, baseUrl + path, {
+            headers: { Authorization: "ApiKey " + key, Accept: "application/json" },
+            signal: AbortSignal.timeout(12000),
+          }, fetcher, playerScoped ? session.player_id : undefined)
+          const payload: unknown = await response.json().catch(() => null)
+          const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
+          if (!response.ok || apiError || !isRecord(payload)) {
+            const message = typeof apiError?.error === "string" ? apiError.error : "Torn did not return this selection."
+            throw new Error(message)
+          }
+          return payload
+        } catch (error) {
+          errors[label] = error instanceof Error ? error.message.slice(0, 240) : "Torn request failed."
+          return null
+        }
+      }
+
+      const userRequests = [
+        getJson("/user/battlestats", memberKey, "training-calculator-battlestats", "battleStats"),
+        getJson("/user/perks", memberKey, "training-calculator-perks", "perks"),
+        getJson("/user/gym", memberKey, "training-calculator-active-gym", "gym"),
+        getJson("/user/bars", memberKey, "training-calculator-bars", "bars"),
+        getJson("/user/refills", memberKey, "training-calculator-refills", "refills"),
+        getJson("/user/cooldowns", memberKey, "training-calculator-cooldowns", "cooldowns"),
+      ]
+      const publicRequests = [
+        getJson("/torn/gyms", publicKey, "training-calculator-gym-catalogue", "gymCatalogue", false),
+        getJson("/torn/stats", publicKey, "training-calculator-city-stats", "cityStats", false),
+        getJson("/torn/items?cat=Drug", publicKey, "training-calculator-item-catalogue", "drugItems", false),
+        getJson("/torn/items?cat=Energy%20Drink", publicKey, "training-calculator-item-catalogue", "drinkItems", false),
+        getJson("/torn/items?cat=Booster", publicKey, "training-calculator-item-catalogue", "boosterItems", false),
+        getJson("/torn/items?cat=Special", publicKey, "training-calculator-item-catalogue", "specialItems", false),
+      ]
+      const [battleStatsPayload, perksPayload, gymPayload, barsPayload, refillsPayload, cooldownsPayload,
+        gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload] =
+        await Promise.all([...userRequests, ...publicRequests])
+
+      const list = (payload: Record<string, unknown> | null, key: string): Record<string, unknown>[] => {
+        const rows = payload && Array.isArray(payload[key]) ? payload[key] as unknown[] : []
+        return rows.filter(isRecord)
+      }
+      const allItems = [
+        ...list(drugItemsPayload, "items"),
+        ...list(drinkItemsPayload, "items"),
+        ...list(boosterItemsPayload, "items"),
+        ...list(specialItemsPayload, "items"),
+      ]
+      const normalizeItemName = (value: unknown): string => typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]/g, "") : ""
+      const findItem = (...names: string[]): Record<string, unknown> | null => {
+        for (const name of names) {
+          const needle = normalizeItemName(name)
+          const found = allItems.find(item => normalizeItemName(item.name) === needle)
+          if (found) return found
+        }
+        for (const name of names) {
+          const needle = normalizeItemName(name)
+          const found = allItems.find(item => normalizeItemName(item.name).includes(needle))
+          if (found) return found
+        }
+        return null
+      }
+      const drinkNames: Record<string, string[]> = {
+        goose: ["Can of Goose Juice", "Goose Juice"],
+        damp: ["Can of Damp Valley", "Damp Valley"],
+        croco: ["Can of Crocozade", "Crocozade"],
+        munster: ["Can of Munster", "Munster"],
+        santa: ["Can of Santa Shooters", "Santa Shooters"],
+        "red-cow": ["Can of Red Cow", "Red Cow"],
+        rudolph: ["Can of Rockstar Rudolph", "Rockstar Rudolph"],
+        taurine: ["Can of Taurine Elite", "Taurine Elite"],
+        "x-mass": ["Can of X-MASS", "X-MASS"],
+      }
+      const targets: Record<string, Record<string, unknown> | null> = {
+        xanax: findItem("Xanax"),
+        fhc: findItem("Feathery Hotel Coupon"),
+        eroticDvd: findItem("Erotic DVD"),
+        yellowEgg: findItem("Yellow Easter Egg"),
+        poisonMistletoe: findItem("Poison Mistletoe"),
+        dumbbells: findItem("Dumbbells"),
+        boxingGloves: findItem("Boxing Gloves"),
+        skateboard: findItem("Skateboard"),
+        parachute: findItem("Parachute"),
+      }
+      for (const [drinkId, names] of Object.entries(drinkNames)) targets["drink:" + drinkId] = findItem(...names)
+
+      const marketCache = (globalThis as unknown as { __trainingMarketCache?: Map<string, { itemId: string; name: string; averagePrice: number | null; cacheTimestamp: number | null; fetchedAt: number }> }).__trainingMarketCache
+        || new Map<string, { itemId: string; name: string; averagePrice: number | null; cacheTimestamp: number | null; fetchedAt: number }>()
+      ;(globalThis as unknown as { __trainingMarketCache?: typeof marketCache }).__trainingMarketCache = marketCache
+      const fetchMarketPrice = async (key: string, item: Record<string, unknown> | null): Promise<Record<string, unknown> | null> => {
+        if (!item || !item.id) return null
+        const itemId = String(item.id)
+        const prior = marketCache.get(itemId)
+        const now = Date.now()
+        if (prior && now - prior.fetchedAt < 180000) return prior
+        if (!publicKey) return prior || null
+        try {
+          const response = await trackedTornFetch("training-calculator-item-market", baseUrl + "/market/" + encodeURIComponent(itemId) + "/itemmarket?offset=0", {
+            headers: { Authorization: "ApiKey " + publicKey, Accept: "application/json" },
+            signal: AbortSignal.timeout(12000),
+          }, fetcher)
+          const payload: unknown = await response.json().catch(() => null)
+          const root = isRecord(payload) && isRecord(payload.itemmarket) ? payload.itemmarket : null
+          const marketItem = isRecord(root?.item) ? root.item : null
+          const rawPrice = marketItem?.average_price
+          const rawTimestamp = root?.cache_timestamp
+          const averagePrice = typeof rawPrice === "number" && Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : null
+          const cacheTimestamp = typeof rawTimestamp === "number" && Number.isFinite(rawTimestamp) ? Math.floor(rawTimestamp) : null
+          if (!response.ok || !marketItem) throw new Error("Torn returned no item-market price.")
+          const record = { itemId, name: typeof marketItem.name === "string" ? marketItem.name : String(item.name), averagePrice, cacheTimestamp, fetchedAt: now }
+          marketCache.set(itemId, record)
+          return record
+        } catch (error) {
+          errors["market:" + key] = error instanceof Error ? error.message.slice(0, 180) : "Market lookup failed."
+          return prior || null
+        }
+      }
+
+      const marketEntries = Object.entries(targets)
+      const marketResults: Record<string, Record<string, unknown> | null> = {}
+      for (let offset = 0; offset < marketEntries.length; offset += 4) {
+        const batch = marketEntries.slice(offset, offset + 4)
+        const prices = await Promise.all(batch.map(([key, item]) => fetchMarketPrice(key, item)))
+        batch.forEach(([key], index) => { marketResults[key] = prices[index] })
+      }
+      const root = (payload: Record<string, unknown> | null, key: string): Record<string, unknown> | null =>
+        payload && isRecord(payload[key]) ? payload[key] as Record<string, unknown> : null
+      const battles = root(battleStatsPayload, "battlestats")
+      const perks = root(perksPayload, "perks")
+      const activeGym = root(gymPayload, "gym")
+      const bars = root(barsPayload, "bars")
+      const energyBar = bars && isRecord(bars.energy) ? bars.energy : null
+      const happyBar = bars && isRecord(bars.happy) ? bars.happy : null
+      const refillState = root(refillsPayload, "refills")
+      const cooldownState = root(cooldownsPayload, "cooldowns")
+      const cityStats = root(cityStatsPayload, "stats")
+      const currency = cityStats && isRecord(cityStats.currency) ? cityStats.currency : null
+      const gymRows = list(gymsPayload, "gyms")
+      const unlockedRows = activeGym && Array.isArray(activeGym.unlocked_gyms) ? activeGym.unlocked_gyms.filter(isRecord) : []
+      const unlockedById = new Map(unlockedRows.map(row => [String(row.id), row]))
+      const normalizedGyms = gymRows.map(gym => {
+        const modifiers = isRecord(gym.modifiers) ? gym.modifiers : {}
+        const rawDots = (stat: string): number | null => {
+          const raw = modifiers[stat]
+          if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null
+          return raw > 10 ? raw / 10 : raw
+        }
+        const unlocked = unlockedById.get(String(gym.id))
+        return {
+          id: String(gym.id),
+          name: typeof gym.name === "string" ? gym.name : "Gym " + String(gym.id),
+          energyCost: typeof gym.energy_cost === "number" && gym.energy_cost > 0 ? gym.energy_cost : 10,
+          dots: { strength: rawDots("strength"), defense: rawDots("defense"), speed: rawDots("speed"), dexterity: rawDots("dexterity") },
+          note: typeof gym.note === "string" ? gym.note : "",
+          available: unlocked ? unlocked.available === true : String(gym.id) === String(activeGym?.id),
+        }
+      }).filter(gym => gym.available || String(gym.id) === String(activeGym?.id))
+      const battleValue = (key: string): number | null => {
+        const item = battles && isRecord(battles[key]) ? battles[key] as Record<string, unknown> : null
+        return item && typeof item.value === "number" && Number.isFinite(item.value) ? item.value : null
+      }
+      const price = (key: string) => marketResults[key] || null
+      const priceByDrink: Record<string, unknown> = {}
+      for (const drinkId of Object.keys(drinkNames)) priceByDrink[drinkId] = price("drink:" + drinkId)
+      const statEnhancers = {
+        strength: price("dumbbells"),
+        defense: price("boxingGloves"),
+        speed: price("skateboard"),
+        dexterity: price("parachute"),
+      }
+      const activeBooks = perks && Array.isArray(perks.book) ? perks.book.filter(value => typeof value === "string") : []
+      const activeFactionPerks = perks && Array.isArray(perks.faction) ? perks.faction.filter(value => typeof value === "string") : []
+      const activeEducationPerks = perks && Array.isArray(perks.education) ? perks.education.filter(value => typeof value === "string") : []
+      const gymModifierFor = (stat: string): { multiplier: number; bonuses: string[] } => {
+        let multiplier = 1
+        const bonuses: string[] = []
+        const add = (label: string, percent: number) => { if (percent > 0 && Number.isFinite(percent)) { multiplier *= 1 + percent / 100; bonuses.push(label + " +" + percent + "%") } }
+        const educationMap: Array<[RegExp, number, string[]]> = [
+          [/sports science bachelors/i, 1, ["strength", "defense", "speed", "dexterity"]],
+          [/strength and conditioning/i, 1, ["strength"]],
+          [/human movement analysis/i, 1, ["defense"]],
+          [/physiological testing/i, 1, ["speed"]],
+          [/bio mechanical determinants of skill/i, 1, ["dexterity"]],
+        ]
+        for (const text of activeEducationPerks) for (const [pattern, percent, stats] of educationMap) if (pattern.test(text) && stats.includes(stat)) add("Education: " + text, percent)
+        const bookMap: Array<[RegExp, number, string[]]> = [
+          [/get hard or go home/i, 20, ["strength", "defense", "speed", "dexterity"]],
+          [/gym grunting/i, 30, ["strength"]],
+          [/self defense in the workplace/i, 30, ["defense"]],
+          [/speed 3.*rejected script/i, 30, ["speed"]],
+          [/limbo lovers 101/i, 30, ["dexterity"]],
+        ]
+        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent)
+        const allPerks = [
+          ...activeFactionPerks.map(text => ({ group: "Faction", text })),
+          ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
+        ]
+        const seen = new Set<string>()
+        for (const entry of allPerks) {
+          const match = entry.text.match(/(\d+(?:\.\d+)?)\s*%/)
+          if (!match || !/(gym|training|steadfast)/i.test(entry.text)) continue
+          const percent = Number(match[1])
+          const key = entry.group + ":" + entry.text
+          if (!seen.has(key)) { seen.add(key); add(entry.group + ": " + entry.text, percent) }
+        }
+        return { multiplier, bonuses }
+      }
+      const modifiers = {
+        strength: gymModifierFor("strength"),
+        defense: gymModifierFor("defense"),
+        speed: gymModifierFor("speed"),
+        dexterity: gymModifierFor("dexterity"),
+      }
+      const pointsAverageCost = currency && typeof currency.points_average_cost === "number" && currency.points_average_cost > 0
+        ? currency.points_average_cost : null
+      const battleStats = {
+        strength: battleValue("strength"),
+        defense: battleValue("defense"),
+        speed: battleValue("speed"),
+        dexterity: battleValue("dexterity"),
+        total: battles && typeof battles.total === "number" ? battles.total : null,
+      }
+      if (!battleStats.strength && !battleStats.defense && !battleStats.speed && !battleStats.dexterity) {
+        errors.battleStats = errors.battleStats || "Torn did not return battle stats. Check your API key's User → Battlestats selection."
+      }
+      return jsonResponse({
+        fetchedAt: new Date().toISOString(),
+        battleStats,
+        perks: perks || {},
+        gym: activeGym ? { id: String(activeGym.id), name: activeGym.name, unlockedGyms: unlockedRows } : null,
+        gyms: normalizedGyms,
+        gymModifiers: modifiers,
+        bars: {
+          energy: energyBar ? {
+            current: energyBar.current, maximum: energyBar.maximum, increment: energyBar.increment,
+            interval: energyBar.interval, tickTime: energyBar.tick_time, fullTime: energyBar.full_time,
+          } : null,
+          happy: happyBar ? {
+            current: happyBar.current, maximum: happyBar.maximum, increment: happyBar.increment,
+            interval: happyBar.interval, tickTime: happyBar.tick_time, fullTime: happyBar.full_time,
+          } : null,
+        },
+        refills: refillState || {},
+        cooldowns: cooldownState || {},
+        pointsAverageCost,
+        items: {
+          xanax: price("xanax"),
+          energyDrinks: priceByDrink,
+          fhc: price("fhc"),
+          eroticDvd: price("eroticDvd"),
+          yellowEgg: price("yellowEgg"),
+          poisonMistletoe: price("poisonMistletoe"),
+          statEnhancers,
+        },
+        marketUpdatedAt: Math.max(0, ...Object.values(marketResults).filter(isRecord).map(item => Number(item.cacheTimestamp) || 0)),
+        errors,
+      }, 200, origin)
+    }
+
     if (url.pathname === "/api/me/gym-training/history" && request.method === "GET") {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
