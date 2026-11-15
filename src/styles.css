@@ -972,3 +972,9 @@ th.numeric-cell {
   .halloween-live-market-total{align-items:flex-start;flex-direction:column;gap:4px}
   .halloween-live-market-item{align-items:flex-start}
 }
+
+
+.login-key-builder-button{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;margin-top:9px;padding:0 15px;border:1px solid #5ab9a288;border-radius:9px;background:linear-gradient(120deg,#164d493d,#1b334a85);color:#d8fff2!important;text-decoration:none!important;font:650 12px 'Space Grotesk',sans-serif;transition:border-color .18s ease,transform .18s ease,background .18s ease}
+.login-key-builder-button:hover{border-color:#82d9c6;background:linear-gradient(120deg,#1e665c66,#24405b);transform:translateY(-1px)}
+.login-key-builder-button>span{display:grid;place-items:center;width:25px;height:25px;border:1px solid #72cfb16b;border-radius:7px;color:#a4efda;font-size:18px}
+.login-key-builder-button>b{color:#a8dccc;font-size:15px}
