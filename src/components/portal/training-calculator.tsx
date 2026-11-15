@@ -922,7 +922,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <NumberField label="Number of Stat Enhancers" value={seQuantity} onChange={setSeQuantity} min={0} max={maxSeByCooldown}
                 hint={"Maximum " + maxSeByCooldown + " by your remaining booster-cooldown capacity. The gain from each individual SE is capped at 5 trillion."} testId="training-se-quantity" />
               <TextNumberField label={STAT_OPTIONS.find(option => option.value === seTargetStat)?.label + " battle stat"} value={manualStats[seTargetStat]} fallbackValue={liveData?.battleStats?.[seTargetStat] ?? null}
-                onChange={value => setManualStats(current => ({ ...current, [seTargetStat]: value }))} hint="Uses the live battle stat unless you override it." />
+                onChange={value => setManualStats(current => ({ ...current, [seTargetStat]: value }))} hint="Uses the live battle stat unless you override it." testId="training-se-stat-value" />
               <PriceField label="Selected Stat Enhancer · live Item Market average" value={priceOverrides["se:" + seTargetStat] || ""} autoValue={marketPrice(liveData?.items?.statEnhancers?.[seTargetStat])}
                 onChange={value => setPriceOverride("se:" + seTargetStat, value)} hint={liveData?.items?.statEnhancers?.[seTargetStat]?.name || "Live market price not returned"} testId="training-se-price" />
             </div>
