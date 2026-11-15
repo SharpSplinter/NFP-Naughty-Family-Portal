@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS portal_user_consents (
   policy_acknowledged_at TEXT NOT NULL,
   historical_collection_enabled INTEGER NOT NULL DEFAULT 0
     CHECK (historical_collection_enabled IN (0, 1)),
+  share_halloween_history INTEGER NOT NULL DEFAULT 0
+    CHECK (share_halloween_history IN (0, 1)),
   share_private_live INTEGER NOT NULL DEFAULT 0
     CHECK (share_private_live IN (0, 1)),
   share_networth INTEGER NOT NULL DEFAULT 0
