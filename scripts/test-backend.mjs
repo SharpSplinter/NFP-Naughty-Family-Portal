@@ -1363,7 +1363,7 @@ try {
     const primaryKeyIv = crypto.getRandomValues(new Uint8Array(12))
     const primaryKeyCiphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: primaryKeyIv }, primaryKeyCrypto, new TextEncoder().encode(apiKey))
     const state = { key: null, snapshot: null, throttleAt: null, writes: [], centralPreferences: {
-      consentVersion: "portal-data-policy-v2", sharePrivateLive: 0, shareNetworth: 0,
+      consentVersion: "portal-data-policy-v4", privateDataVisibility: "self", sharePrivateLive: 0, shareNetworth: 0,
     }, primaryKey: {
       ciphertext: Buffer.from(primaryKeyCiphertext).toString("base64"), iv: Buffer.from(primaryKeyIv).toString("base64"),
     } }
@@ -1382,9 +1382,9 @@ try {
             if (normalized.startsWith("select consent_version as consentversion from portal_user_consents")) {
               return { consentVersion: state.centralPreferences.consentVersion }
             }
-            if (normalized.startsWith("select share_private_live as shareprivatelive, share_networth as sharenetworth from portal_user_consents")) {
+            if (normalized.startsWith("select private_data_visibility as privatedatavisibility, share_networth as sharenetworth from portal_user_consents")) {
               return {
-                sharePrivateLive: state.centralPreferences.sharePrivateLive,
+                privateDataVisibility: state.centralPreferences.privateDataVisibility,
                 shareNetworth: state.centralPreferences.shareNetworth,
               }
             }
@@ -1497,7 +1497,7 @@ try {
       assert.equal(missingCentralPreference.status, 409)
       assert.equal(calls.length, 0, "central sharing preference is checked before contacting Torn")
 
-      state.centralPreferences.sharePrivateLive = 1
+      state.centralPreferences.privateDataVisibility = "faction_members"
       const wrongOwner = await request("POST", {})
       assert.equal(wrongOwner.status, 403)
       assert.equal(state.key, null, "a key owned by another player must never be stored")
