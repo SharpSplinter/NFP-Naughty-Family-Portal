@@ -274,7 +274,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [mistletoeTargetHappy, setMistletoeTargetHappy] = useState(99999)
   const [otherHappy, setOtherHappy] = useState(0)
   const [ecstasy, setEcstasy] = useState(false)
-  const [seQuantity, setSeQuantity] = useState(1)
+  const [seQuantity, setSeQuantity] = useState(0)
   const [seTargetStat, setSeTargetStat] = useState<StatKey>("strength")
   const [projectionDays, setProjectionDays] = useState(30)
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
@@ -346,7 +346,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     : Math.max(0, safeNumber(energyBar?.maximum, 150))
   const regenMultiplier = activeBook === "higher-daddy" && !activeHasBook(liveData, "higher-daddy") ? 1.2 : 1
   const naturalEnergy = getNaturalEnergy(energyBar, waitHours, regenMultiplier)
-  const energyAfterNatural = Math.min(refillBarMaximum, currentEnergy + naturalEnergy)
+  const energyAfterNatural = currentEnergy + naturalEnergy
   const drinkMultiplier = (voracityEnabled ? 1.5 : 1) * (activeBook === "fuelling" ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
   const pointRefillAvailable = liveData?.refills?.energy === true
@@ -361,13 +361,18 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
   const boosterBudgetDescription = fmt(Math.max(0, boosterBudgetHours)) + "h available before planned items"
   const maximumXanax = 4
-  const maximumCanCount = Math.min(24, Math.max(0, Math.floor(Math.max(0, boosterBudgetHours / (2 * cooldownFactor)))))
-  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(boosterBudgetHours / (6 * cooldownFactor))))
-  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(boosterBudgetHours / (6 * cooldownFactor))))
-  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(boosterBudgetHours / (6 * cooldownFactor))))
+  const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6 * cooldownFactor)
+  const maximumCanCount = Math.min(24, Math.max(0, Math.floor(cooldownExceptCans / (2 * cooldownFactor))))
+  const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 + greenEggCount * 6 + dvdCount * 6 + yellowEggCount * 6 + seQuantity * 6) * cooldownFactor)
+  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / (6 * cooldownFactor))))
+  const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6) * cooldownFactor)
+  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / (6 * cooldownFactor))))
+  const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6) * cooldownFactor)
+  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / (6 * cooldownFactor))))
   const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
-  const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75) * -1)) : 0
-  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(boosterBudgetHours / (6 * cooldownFactor))))
+  const maximumMistletoeCount = targetHappy > 1 ? Math.min(50, Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75)))) : 0
+  const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6) * cooldownFactor)
+  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / (6 * cooldownFactor))))
   const maxPointRefill = pointRefillAvailable ? 1 : 0
 
   const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
@@ -639,7 +644,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             </div>
             <div className="tc-result-total"><span>Maximum held at once</span><strong>{fmt(ENERGY_HARD_CAP)}E</strong></div>
             <div className="tc-result-total"><span>Booster cooldown left after plan</span><strong>{fmt(cooldownRemainingHours, 1)}h</strong></div>
-            <div className="tc-result-total"><span>Planned supply cost</span><strong>{money(totalEnergyPlanCost)}</strong></div>
+            <div className="tc-cost-total" data-testid="training-energy-cost"><span>Planned supply cost</span><strong>{money(totalEnergyPlanCost)}</strong></div>
             <div className="tc-inline-note"><strong>Point refill estimate:</strong> {liveData?.pointsAverageCost ? "25 points × " + money(liveData.pointsAverageCost) + " average cost per point = " + money(pointPrice) + "." : "Torn's points_average_cost is not available; refill cost is omitted."}</div>
             {liveData?.marketUpdatedAt ? <p className="tc-muted">Item Market cache timestamp: {currentMarketTimestamp}. Prices are Torn's market average, not guaranteed purchase quotes.</p> : <p className="tc-muted">Item Market prices appear here when the public Torn key and market selections are available.</p>}
           </Panel>
