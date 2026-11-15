@@ -1499,6 +1499,7 @@ try {
       DB: db,
       KEY_ENCRYPTION_SECRET: keySecret,
       ALLOWED_ORIGIN: "https://naughty-company-dashboard.pages.dev",
+      DEBUG_PORTAL_CONSENT: true,
     }
     const request = (method, body, pathname = "/api/me/private-live/key") => worker.fetch(new Request("https://worker.test" + pathname, {
       method,
