@@ -27,6 +27,12 @@ assert.ok(worker.includes("async function refreshFactionDirectoryFromServiceKey"
 assert.doesNotMatch(worker, /refreshFactionDirectoryFromAnyKey|SELECT player_id, ciphertext, iv FROM api_keys ORDER BY updated_at DESC LIMIT 1/, "shared faction refreshes must never borrow a saved member key")
 assert.ok(worker.includes('const serviceKey = workerServiceTornApiKey(env)'), "member-triggered faction-directory refresh must use the Worker service key")
 assert.ok(worker.includes("https://api.torn.com/v2/market/"), "market requests are made by the Worker")
+assert.ok(worker.includes('url.pathname === "/api/me/private-live/refresh" && request.method === "POST"'), "private-live refresh must remain supported")
+assert.ok(worker.includes('Number(centralPreferences?.sharePrivateLive) !== 1'), "private-live refresh must re-check the central sharing toggle")
+assert.doesNotMatch(worker, /body\.consent === true|body\.shareWithFaction === true|consentVersion !== "halloween-history-v2"|consentVersion !== "christmas-town-history-v1"/, "member collection and sharing routes must not require duplicate feature-level consent")
+assert.ok(worker.includes('UPDATE member_private_live_keys SET include_networth = ?, updated_at = ? WHERE player_id = ?'), "changing central networth preference must update an existing private-live connection")
+assert.ok(worker.includes("Historical collection is disabled in the member's central portal preferences"), "disabling historical collection must stop pending event jobs")
+
 assert.ok(worker.includes("serviceFullAccessApiKey(env)"), "other Worker-owned ranking tasks may retain their Worker-only compatibility fallback")
 assert.doesNotMatch(worker, /env\.TORN_FACTION_API_KEY\?\.trim\(\)/)
 assert.doesNotMatch(worker, /SELECT player_id FROM api_keys ORDER BY updated_at DESC LIMIT 1/)
