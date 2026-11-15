@@ -6298,6 +6298,9 @@ export default {
       if (!sharePrivateLive) {
         await db.prepare("DELETE FROM faction_member_private_live_snapshots WHERE player_id = ?").bind(session.player_id).run()
         await db.prepare("DELETE FROM member_private_live_keys WHERE player_id = ?").bind(session.player_id).run()
+      } else {
+        await db.prepare("UPDATE member_private_live_keys SET include_networth = ?, updated_at = ? WHERE player_id = ?")
+          .bind(shareNetworth ? 1 : 0, now, session.player_id).run()
       }
       if (!historicalCollectionEnabled) {
         await db.prepare("DELETE FROM halloween_historical_keys WHERE player_id = ?").bind(session.player_id).run()
@@ -6441,8 +6444,15 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       if (session.faction_id !== NAUGHTY_SOULS_FACTION_ID) return jsonResponse({ error: "Private live connections are available only to current Naughty Souls members." }, 403, origin)
       const db = requireDb(env)
-      const key = await db.prepare("SELECT include_networth FROM member_private_live_keys WHERE player_id = ? AND faction_id = ? AND share_with_faction = 1")
-        .bind(session.player_id, NAUGHTY_SOULS_FACTION_ID).first<{ include_networth: number }>()
+      const [key, centralPreferences] = await Promise.all([
+        db.prepare("SELECT include_networth FROM member_private_live_keys WHERE player_id = ? AND faction_id = ? AND share_with_faction = 1")
+          .bind(session.player_id, NAUGHTY_SOULS_FACTION_ID).first<{ include_networth: number }>(),
+        db.prepare("SELECT share_private_live AS sharePrivateLive, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?")
+          .bind(session.player_id).first<{ sharePrivateLive: number; shareNetworth: number }>(),
+      ])
+      if (Number(centralPreferences?.sharePrivateLive) !== 1) {
+        return jsonResponse({ error: "Private live sharing is disabled in your central portal data preferences." }, 409, origin)
+      }
       if (!key) return jsonResponse({ error: "Enable private live sharing with your saved portal key before refreshing." }, 404, origin)
       const apiKey = await savedKey(env, session.player_id)
       if (!apiKey) return jsonResponse({ error: "Your saved portal API key is missing. Sign in again with your Torn key." }, 409, origin)
@@ -6454,7 +6464,7 @@ export default {
         .bind(now, now, session.player_id).run()
       try {
         const live = await fetchPrivateLiveBase(env, apiKey)
-        let includeNetworth = Number(key.include_networth) === 1
+        let includeNetworth = Number(centralPreferences?.shareNetworth) === 1
         let networth: ReturnType<typeof parsePrivateLiveNetworth> | null = null
         let networthSourceTimestamp: number | null = null
         let networthWarning: string | null = null
