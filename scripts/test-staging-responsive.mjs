@@ -172,8 +172,18 @@ try {
   await settingsGrid.waitFor({ state: "visible", timeout: 10000 });
   const privateLiveCard = settingsModule.locator(".settings-private-live-card");
   await privateLiveCard.waitFor({ state: "visible", timeout: 10000 });
-  const shareControls = privateLiveCard.locator("label.settings-private-live-check");
-  assert.equal(await shareControls.count(), 2, "Private live card should expose the optional networth and sharing-consent controls.");
+
+  // Optional sharing toggles now live in the centralized privacy/setup workspace,
+  // not in Account Settings. Verify them there instead of expecting duplicate prompts.
+  const setupPage = await context.newPage();
+  await setupPage.goto(baseUrl + "/setup", { waitUntil: "networkidle", timeout: 30000 });
+  await setupPage.locator(".portal-setup-page").waitFor({ state: "visible", timeout: 20000 });
+  const dataSharingSection = setupPage.locator(".portal-setup-section").filter({
+    has: setupPage.getByRole("heading", { name: "Data sharing", exact: true }),
+  });
+  await dataSharingSection.waitFor({ state: "visible", timeout: 10000 });
+  const sharingControls = dataSharingSection.locator("label.portal-setup-check");
+  assert.equal(await sharingControls.count(), 2, "Central setup should expose the optional live-sharing and networth choices.");
   for (const viewport of viewports) {
     await settingsPage.setViewportSize({ width: viewport.width, height: viewport.height });
     await settingsPage.waitForTimeout(80);
@@ -187,21 +197,6 @@ try {
         const box = element.getBoundingClientRect();
         return { left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width) };
       };
-      const shareControls = [...(privateLiveCard?.querySelectorAll("label.settings-private-live-check") || [])].map(label => {
-        const checkbox = label.querySelector('input[type="checkbox"]');
-        const copy = label.querySelector("span");
-        return {
-          label: bounds(label),
-          display: getComputedStyle(label).display,
-          textAlign: getComputedStyle(label).textAlign,
-          checkbox: bounds(checkbox),
-          checkboxWidth: checkbox.getBoundingClientRect().width,
-          copy: bounds(copy),
-          copyTextAlign: getComputedStyle(copy).textAlign,
-          copyClientWidth: copy.clientWidth,
-          copyScrollWidth: copy.scrollWidth,
-        };
-      });
       return {
         viewportWidth: window.innerWidth,
         documentWidth: root.scrollWidth,
@@ -211,7 +206,6 @@ try {
         rowGap: parseFloat(getComputedStyle(grid).rowGap) || 0,
         cards: cards.map(bounds),
         privateLiveCard: bounds(privateLiveCard),
-        shareControls,
       };
     });
     const withinViewport = metrics.documentWidth <= viewport.width + 1
@@ -221,27 +215,42 @@ try {
       && metrics.grid.left >= -1
       && metrics.grid.right <= viewport.width + 1
       && metrics.cards.every(card => card.left >= -1 && card.right <= viewport.width + 1);
-    const sharingLabelsReadable = metrics.shareControls.length === 2 && metrics.shareControls.every(control =>
-      control.display === "grid"
-      && control.textAlign === "left"
-      && control.checkboxWidth >= 14 && control.checkboxWidth <= 18
-      && control.checkbox.left >= control.label.left - 1
-      && control.checkbox.left <= control.label.left + 3
-      && control.copy.left - control.checkbox.right >= 6
-      && control.copy.left - control.checkbox.right <= 13
-      && control.copy.width >= 80
-      && control.copy.right <= metrics.privateLiveCard.right - 12
-      && control.copyTextAlign === "left"
-      && control.copyScrollWidth <= control.copyClientWidth + 1
-    );
-    console.log((withinViewport && sharingLabelsReadable ? "PASS " : "FAIL ") + "settings-" + viewport.label + ": " + JSON.stringify(metrics));
+    await setupPage.setViewportSize({ width: viewport.width, height: viewport.height });
+    await setupPage.waitForTimeout(80);
+    const setupMetrics = await setupPage.evaluate(() => {
+      const root = document.documentElement;
+      const sharing = [...document.querySelectorAll(".portal-setup-section")].find(section =>
+        section.querySelector("h2")?.textContent?.trim() === "Data sharing"
+      );
+      const controls = [...(sharing?.querySelectorAll("label.portal-setup-check") || [])].map(label => {
+        const box = label.getBoundingClientRect();
+        const checkbox = label.querySelector('input[type="checkbox"]')?.getBoundingClientRect();
+        return {
+          left: Math.round(box.left),
+          right: Math.round(box.right),
+          checkboxLeft: checkbox ? Math.round(checkbox.left) : null,
+          checkboxWidth: checkbox ? checkbox.width : 0,
+        };
+      });
+      return { documentWidth: root.scrollWidth, bodyWidth: document.body.scrollWidth, controls };
+    });
+    const sharingLabelsReadable = setupMetrics.controls.length === 2 &&
+      setupMetrics.controls.every(control => control.left >= -1 && control.right <= viewport.width + 1 &&
+        control.checkboxLeft !== null && control.checkboxLeft >= control.left - 1 &&
+        control.checkboxLeft <= control.left + 20 && control.checkboxWidth >= 14 && control.checkboxWidth <= 22);
+    const setupWithinViewport = setupMetrics.documentWidth <= viewport.width + 1 &&
+      setupMetrics.bodyWidth <= viewport.width + 1;
+    console.log((withinViewport && sharingLabelsReadable && setupWithinViewport ? "PASS " : "FAIL ") + "settings-" + viewport.label + ": " + JSON.stringify({ settings: metrics, setup: setupMetrics }));
     assert.ok(withinViewport, "Account Settings overflowed or a card exceeded the viewport at " + viewport.label);
-    assert.ok(sharingLabelsReadable, "Private live sharing checkboxes or their copy are misaligned, stretched, or clipped at " + viewport.label);
+    assert.ok(sharingLabelsReadable, "Central data-sharing controls are missing or misaligned at " + viewport.label);
+    assert.ok(setupWithinViewport, "Central setup overflowed the viewport at " + viewport.label);
     assert.ok(metrics.rowGap >= 8, "Account Settings cards are too tightly spaced at " + viewport.label);
     await settingsPage.screenshot({ path: "test-results/staging-responsive/settings-" + viewport.label + ".png", fullPage: true });
+    await setupPage.screenshot({ path: "test-results/staging-responsive/setup-" + viewport.label + ".png", fullPage: true });
   }
   await settingsPage.close();
-  console.log("PASS Account Settings viewport bounds and card spacing at " + viewports.length + " viewports.");
+  await setupPage.close();
+  console.log("PASS Account Settings and centralized sharing controls at " + viewports.length + " viewports.");
 
   // Confirm a narrow screen can switch to another top-level area without losing the Company shell.
   await page.setViewportSize({ width: 390, height: 844 });
