@@ -2,7 +2,7 @@
 
 ## Projects and release targets
 
-- **Current production API Worker:** `naughty-company-api` at https://naughty-company-api.kboone801.workers.dev
+- **Current production API Worker:** `naughtyfamily-api` at https://naughtyfamily-api.kboone801.workers.dev
 - **Current production D1:** `naughty-company-dashboard` (UUID `bbbe128a-c5cc-46ec-b8ef-93860183e795`)
 - **Legacy Pages rollback site:** `naughty-company-dashboard` at https://naughty-company-dashboard.pages.dev
 - **New Pages cutover target:** `naughtyfamily` at https://naughtyfamily.pages.dev
@@ -12,14 +12,14 @@
 - **Git repository:** `SharpSplinter/Naughty-Company-Dashboard`
 - **Production branch:** `main`
 
-The legacy Pages site remains the fallback for the first cutover. Its existing canonical production deployment is preserved and automatic production/preview deployments have been disabled. The new `naughtyfamily` project is configured for `main`, but it also has automatic production/preview deployments disabled and has not yet received a production deployment. Do not point a staging Worker or acceptance database at production resources.
+The legacy Pages project remains preserved as a static prior deployment, but its current bundle targets the retired `naughty-company-api` hostname. It is not yet a verified end-to-end fallback. To use it as a fallback, either restore a compatibility Worker at the previous hostname or rebuild/redeploy that Pages project against `naughtyfamily-api` and verify it. The new `naughtyfamily` project is configured for `main` with automatic production/preview deployments disabled and has not yet received a production deployment. Do not point a staging Worker or acceptance database at production resources.
 
 Pages build settings for the new target:
 
 - Build command: `npm run build`
 - Output directory: `dist`
 - Root directory: repository root
-- Production build variable: `VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev`
+- Production build variable: `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`
 
 See [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the release checklist, verified production baseline, backup procedure, migration order, rollback boundaries and explicit no-production-change status.
 
@@ -27,7 +27,7 @@ See [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the release
 
 The Worker exposes health, authenticated dashboard, company intelligence, automation, and administrator routes. The current health check is `GET /health`. Company IDs must be positive integers. Torn API keys are validated through the Worker; never put a key in a URL, source file, or logs.
 
-The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from the production Pages domain, Pages preview subdomains, and localhost port 3000 for local development.
+The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from `https://naughtyfamily.pages.dev`, the preserved legacy Pages hostname for compatibility, and localhost port 3000 for local development. The production master Full Access key is configured as secret `TORN_API_KEY_SERVICE`; the Worker code must use that exact binding name. `TORN_API_KEY_CUSTOM` remains a fallback for public global-ranking requests, and `TORN_FACTION_API_KEY` remains dedicated to scheduled public faction collection.
 
 ## Security notes
 
@@ -43,7 +43,7 @@ All Torn sign-ins start with standard-user permissions. The primary owner Torn p
 
 Run the following from the repository root in a private interactive terminal:
 
-1. Verify that Wrangler is authenticated to the intended Cloudflare account with `npx wrangler whoami`. The repository's `wrangler.toml` names the Worker `naughty-company-api`; the commands below target that Worker explicitly.
+1. Verify that Wrangler is authenticated to the intended Cloudflare account with `npx wrangler whoami`. The repository's `wrangler.toml` names the Worker `naughtyfamily-api`; the commands below target that Worker explicitly.
 2. Choose a unique administrator passphrase of at least 8 characters, containing at least one letter, one digit, and one punctuation/symbol character. Do not use three or more ascending or descending letters/digits in a row (for example `abc`, `cba`, `123`, or `321`). Do not send it in chat or commit it to the repository.
 3. Generate the hash by running:
 
@@ -56,7 +56,7 @@ Run the following from the repository root in a private interactive terminal:
 4. Set the separate administrator username:
 
    ```sh
-   npx wrangler secret put ADMIN_USERNAME --name naughty-company-api
+   npx wrangler secret put ADMIN_USERNAME --name naughtyfamily-api
    ```
 
    At Wrangler's `Enter a secret value:` prompt, type the chosen administrator username and press Enter.
@@ -64,7 +64,7 @@ Run the following from the repository root in a private interactive terminal:
 5. Set the generated hash:
 
    ```sh
-   npx wrangler secret put ADMIN_PASSWORD_HASH --name naughty-company-api
+   npx wrangler secret put ADMIN_PASSWORD_HASH --name naughtyfamily-api
    ```
 
    At Wrangler's `Enter a secret value:` prompt, paste the **entire one-line output** from the hash helper and press Enter. Paste it into Wrangler's prompt, not into the shell command. The hash contains `$` characters, which shells can interpret when the value is entered as a command argument.
@@ -72,7 +72,7 @@ Run the following from the repository root in a private interactive terminal:
 6. Confirm that both names are configured:
 
    ```sh
-   npx wrangler secret list --name naughty-company-api
+   npx wrangler secret list --name naughtyfamily-api
    ```
 
    This lists secret names/types, not their values. Check that `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are listed; do not print, screenshot, or share secret values.
@@ -94,7 +94,7 @@ node scripts/generate-admin-password-hash.mjs
 
 At the hidden prompt, type your new passphrase and press Enter. Copy only the generated `pbkdf2-sha256$...` hash line. Never paste the password or hash into ChatGPT, a message, or a screenshot. The hash is still sensitive because it can be targeted for offline password guessing, so store it only as a Worker Secret. Keep the hash temporarily on your phone and clear it from the clipboard after you have entered it into Cloudflare.
 
-To configure the secrets without a desktop, open the [Cloudflare dashboard](https://dash.cloudflare.com/) in your Android browser. If needed, use the browser menu's **Desktop site** option. Go to **Workers & Pages** > **naughty-company-api** > **Settings** > **Variables and Secrets**. Choose **Add**, select type **Secret**, and add `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`. Add both before clicking **Deploy** once.
+To configure the secrets without a desktop, open the [Cloudflare dashboard](https://dash.cloudflare.com/) in your Android browser. If needed, use the browser menu's **Desktop site** option. Go to **Workers & Pages** > **naughtyfamily-api** > **Settings** > **Variables and Secrets**. Choose **Add**, select type **Secret**, and add `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`. Add both before clicking **Deploy** once.
 
 **Do not click Deploy until the production configuration change is approved.** Cloudflare deploys a new version of the currently deployed Worker when you save and deploy secret changes; this does not deploy the PR's feature-branch code. See [Cloudflare's official secret setup guide](https://developers.cloudflare.com/workers/configuration/secrets/).
 
