@@ -7173,14 +7173,12 @@ export default {
       }
 
       const userRequests = [
-        getJson("/user/battlestats", memberKey, "training-calculator-battlestats", "battleStats"),
-        getJson("/user/perks", memberKey, "training-calculator-perks", "perks"),
-        getJson("/user/gym", memberKey, "training-calculator-active-gym", "gym"),
-        getJson("/user/bars", memberKey, "training-calculator-bars", "bars"),
-        getJson("/user/refills", memberKey, "training-calculator-refills", "refills"),
-        getJson("/user/cooldowns", memberKey, "training-calculator-cooldowns", "cooldowns"),
-        getJson("/user/job", memberKey, "training-calculator-current-job", "job"),
-        getJson("/user/jobpoints", memberKey, "training-calculator-jobpoints", "jobPoints"),
+        getJson(
+          "/user?selections=battlestats%2Cperks%2Cgym%2Cbars%2Crefills%2Ccooldowns%2Cjob%2Cjobpoints",
+          memberKey,
+          "training-calculator-live-profile",
+          "liveProfile",
+        ),
       ]
       const publicRequests = [
         getJson("/torn/gyms", publicKey, "training-calculator-gym-catalogue", "gymCatalogue", false),
@@ -7191,9 +7189,16 @@ export default {
         getJson("/torn/items?cat=Special", publicKey, "training-calculator-item-catalogue", "specialItems", false),
         getJson("/torn/items?cat=Enhancer", publicKey, "training-calculator-item-catalogue", "enhancerItems", false),
       ]
-      const [battleStatsPayload, perksPayload, gymPayload, barsPayload, refillsPayload, cooldownsPayload, jobPayload, jobPointsPayload,
-        gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
+      const [liveProfilePayload, gymsPayload, cityStatsPayload, drugItemsPayload, drinkItemsPayload, boosterItemsPayload, specialItemsPayload, enhancerItemsPayload] =
         await Promise.all([...userRequests, ...publicRequests])
+      const battleStatsPayload = liveProfilePayload
+      const perksPayload = liveProfilePayload
+      const gymPayload = liveProfilePayload
+      const barsPayload = liveProfilePayload
+      const refillsPayload = liveProfilePayload
+      const cooldownsPayload = liveProfilePayload
+      const jobPayload = liveProfilePayload
+      const jobPointsPayload = liveProfilePayload
 
       const list = (payload: Record<string, unknown> | null, key: string): Record<string, unknown>[] => {
         const rows = payload && Array.isArray(payload[key]) ? payload[key] as unknown[] : []
@@ -7341,13 +7346,14 @@ export default {
       }
       const activeJobPerks = perks && Array.isArray(perks.job) ? perks.job.filter(value => typeof value === "string") : []
       const activePropertyPerks = perks && Array.isArray(perks.property) ? perks.property.filter(value => typeof value === "string") : []
+      const activeStockPerks = perks && Array.isArray(perks.stock) ? perks.stock.filter(value => typeof value === "string") : []
       const activeEnhancerPerks = perks && Array.isArray(perks.enhancer) ? perks.enhancer.filter(value => typeof value === "string") : []
       const gymHappyLossReductionPercent = activeJobPerks.some(text => /goal oriented/i.test(text)) ? 50 : 0
       const companyCooldownReductionPercent = activeJobPerks.some(text => /professional metabolism/i.test(text)) ? 25
         : activeJobPerks.some(text => /fast metabolism/i.test(text)) ? 10 : 0
       const gymModifierFor = (stat: string): { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] } => {
         const groupMultipliers: Record<string, number> = {
-          property: 1, job: 1, book: 1, enhancer: 1, faction: 1,
+          property: 1, job: 1, book: 1, enhancer: 1, faction: 1, stock: 1,
           educationGeneral: 1, educationSpecific: 1,
         }
         const bonuses: string[] = []
@@ -7396,6 +7402,7 @@ export default {
         }
         const perkGroups: Array<[string, string[], string]> = [
           ["property", activePropertyPerks, "property"],
+          ["stock", activeStockPerks, "stock"],
           ["job", activeJobPerks, "job"],
           ["book", activeBooks, "book"],
           ["enhancer", activeEnhancerPerks, "enhancer"],
