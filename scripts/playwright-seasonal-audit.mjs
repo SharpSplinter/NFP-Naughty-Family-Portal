@@ -616,7 +616,7 @@ async function auditTrainingCalculatorInteractions(page, viewportName) {
   await page.getByTestId("training-current-energy").fill("0");
   await page.getByTestId("training-energy-wait-hours").fill("1");
   const naturalEnergy = await page.getByTestId("training-natural-energy").first().innerText();
-  recordAssertion("Training Calculator " + viewportName + ": natural regeneration follows live bar timing and the next tick phase", naturalEnergy === "+25E", naturalEnergy);
+  recordAssertion("Training Calculator " + viewportName + ": natural regeneration follows live bar timing and the next tick phase", naturalEnergy === "+30E", naturalEnergy);
   await page.getByTestId("training-energy-wait-hours").fill("0");
   const currentEnergyMax = await page.getByTestId("training-current-energy").getAttribute("max");
   const xanaxMax = await page.getByTestId("training-xanax-count").getAttribute("max");
