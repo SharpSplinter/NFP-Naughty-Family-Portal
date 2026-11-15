@@ -53,7 +53,7 @@ assert.ok(worker.includes("DELETE FROM halloween_historical_keys WHERE player_id
 assert.ok(worker.includes("historicalRecordsRetained: true"))
 assert.ok(workspace.includes("Data sharing"), "central setup must disclose sharing separately from collection")
 assert.ok(workspace.includes("User → Log and User → Attacks"), "central setup must disclose the key selections needed for Halloween history")
-assert.ok(workspace.includes("both User → Log and User → Attacks selections"))
+assert.ok(workspace.includes("Halloween needs User → Log and User → Attacks"), "central setup must explain both Torn selections needed for Halloween history")
 assert.ok(workspace.includes("halloween-history-v2"))
 assert.ok(workspace.includes("SUCCESSFUL REVITALIZE PROCS"))
 assert.ok(workspace.includes("REVITALIZE PROC RATE"), "dashboard must display empirical Revitalize proc rate instead of Torn's chance-on-proc value")
