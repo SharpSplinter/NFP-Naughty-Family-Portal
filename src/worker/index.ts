@@ -6379,23 +6379,15 @@ export default {
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       if (session.faction_id !== NAUGHTY_SOULS_FACTION_ID) return jsonResponse({ error: "Private live connections are available only to current Naughty Souls members." }, 403, origin)
       try {
-        const body: unknown = await request.json().catch(() => null)
         const apiKey = await savedKey(env, session.player_id) ?? ""
-        const consent = isRecord(body) && body.consent === true
-        const shareWithFaction = isRecord(body) && body.shareWithFaction === true
-        const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
-        let includeNetworth = isRecord(body) && body.includeNetworth === true
         const centralPreferences = await requireDb(env).prepare(
           "SELECT share_private_live AS sharePrivateLive, share_networth AS shareNetworth FROM portal_user_consents WHERE player_id = ?",
         ).bind(session.player_id).first<{ sharePrivateLive: number; shareNetworth: number }>()
         if (Number(centralPreferences?.sharePrivateLive) !== 1) {
           return jsonResponse({ error: "Enable private live faction sharing in your central portal data preferences first." }, 409, origin)
         }
-        includeNetworth = includeNetworth && Number(centralPreferences?.shareNetworth) === 1
+        const includeNetworth = Number(centralPreferences?.shareNetworth) === 1
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling private live data." }, 409, origin)
-        if (!consent || !shareWithFaction || consentVersion !== "faction-private-live-v1") {
-          return jsonResponse({ error: "The central private live sharing preference must be enabled before connecting your key." }, 400, origin)
-        }
         if (!await claimPrivateLiveRequest(env, session.player_id)) {
           return jsonResponse({ error: "A private live Torn request was made recently. Please wait 30 seconds before connecting or refreshing again." }, 429, origin, { "retry-after": "30" })
         }
@@ -6543,17 +6535,11 @@ export default {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       try {
-        const body: unknown = await request.json().catch(() => null)
-        const consent = isRecord(body) && body.consent === true
-        const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
         const centralConsent = await requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
           .bind(session.player_id).first<{ enabled: number }>()
         const apiKey = await savedKey(env, session.player_id) ?? ""
         if (Number(centralConsent?.enabled) !== 1) return jsonResponse({ error: "Enable historical collection in your central portal data preferences first." }, 409, origin)
         if (!apiKey) return jsonResponse({ error: "Sign in with your Naughty Family Portal Torn API key before enabling Christmas Town history." }, 409, origin)
-        if (!consent || consentVersion !== "christmas-town-history-v1") {
-          return jsonResponse({ error: "Please review and accept the Christmas Town personal event-history terms before enabling collection." }, 400, origin)
-        }
 
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 12000)
@@ -6841,15 +6827,11 @@ export default {
       const session = await authenticate(request, env)
       if (!session) return jsonResponse({ error: "Session expired. Sign in again with your Torn API key." }, 401, origin)
       try {
-        const body: unknown = await request.json().catch(() => null)
         const apiKey = await savedKey(env, session.player_id) ?? ""
-        const consent = isRecord(body) && body.consent === true
-        const consentVersion = isRecord(body) && typeof body.consentVersion === "string" ? body.consentVersion : ""
         const centralConsent = await requireDb(env).prepare("SELECT historical_collection_enabled AS enabled FROM portal_user_consents WHERE player_id = ?")
           .bind(session.player_id).first<{ enabled: number }>()
         if (Number(centralConsent?.enabled) !== 1) return jsonResponse({ error: "Enable historical collection in your central portal data preferences first." }, 409, origin)
         if (!apiKey) return jsonResponse({ error: "Sign in with your single Naughty Family Portal Torn API key before enabling historical collection." }, 409, origin)
-        if (!consent || consentVersion !== "halloween-history-v2") return jsonResponse({ error: "Please review and accept the updated Halloween log and detailed attack data-sharing terms before enabling collection." }, 400, origin)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 12000)
         let payload: unknown
