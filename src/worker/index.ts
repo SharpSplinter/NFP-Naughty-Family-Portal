@@ -7323,16 +7323,33 @@ export default {
       const activeBooks = perks && Array.isArray(perks.book) ? perks.book.filter(value => typeof value === "string") : []
       const activeFactionPerks = perks && Array.isArray(perks.faction) ? perks.faction.filter(value => typeof value === "string") : []
       const activeEducationPerks = perks && Array.isArray(perks.education) ? perks.education.filter(value => typeof value === "string") : []
+      const romanNumber = (value: string): number => {
+        const values: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100 }
+        let total = 0
+        let prior = 0
+        for (const character of value.toUpperCase().split("").reverse()) {
+          const current = values[character] || 0
+          total += current < prior ? -current : current
+          prior = Math.max(prior, current)
+        }
+        return total
+      }
+      const activeJobPerks = perks && Array.isArray(perks.job) ? perks.job.filter(value => typeof value === "string") : []
+      const activeEnhancerPerks = perks && Array.isArray(perks.enhancer) ? perks.enhancer.filter(value => typeof value === "string") : []
+      const gymHappyLossReductionPercent = activeJobPerks.some(text => /goal oriented/i.test(text)) ? 50 : 0
+      const companyCooldownReductionPercent = activeJobPerks.some(text => /professional metabolism/i.test(text)) ? 25
+        : activeJobPerks.some(text => /fast metabolism/i.test(text)) ? 10 : 0
       const gymModifierFor = (stat: string): { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] } => {
         let bonusPercent = 0
         let bookBonusPercent = 0
         const bonuses: string[] = []
-        const add = (label: string, percent: number, isBook = false) => {
-          if (percent > 0 && Number.isFinite(percent)) {
-            bonusPercent += percent
-            if (isBook) bookBonusPercent += percent
-            bonuses.push(label + " +" + percent + "%")
-          }
+        const seen = new Set<string>()
+        const add = (label: string, percent: number, isBook = false, dedupeKey = label) => {
+          if (seen.has(dedupeKey) || percent <= 0 || !Number.isFinite(percent)) return
+          seen.add(dedupeKey)
+          bonusPercent += percent
+          if (isBook) bookBonusPercent += percent
+          bonuses.push(label + " +" + percent + "%")
         }
         const educationMap: Array<[RegExp, number, string[]]> = [
           [/sports science bachelors/i, 1, ["strength", "defense", "speed", "dexterity"]],
@@ -7341,7 +7358,7 @@ export default {
           [/physiological testing/i, 1, ["speed"]],
           [/bio mechanical determinants of skill/i, 1, ["dexterity"]],
         ]
-        for (const text of activeEducationPerks) for (const [pattern, percent, stats] of educationMap) if (pattern.test(text) && stats.includes(stat)) add("Education: " + text, percent)
+        for (const text of activeEducationPerks) for (const [pattern, percent, stats] of educationMap) if (pattern.test(text) && stats.includes(stat)) add("Education: " + text, percent, false, "education:" + text)
         const bookMap: Array<[RegExp, number, string[]]> = [
           [/get hard or go home/i, 20, ["strength", "defense", "speed", "dexterity"]],
           [/gym grunting/i, 30, ["strength"]],
@@ -7349,18 +7366,34 @@ export default {
           [/speed 3.*rejected script/i, 30, ["speed"]],
           [/limbo lovers 101/i, 30, ["dexterity"]],
         ]
-        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent, true)
+        for (const text of activeBooks) for (const [pattern, percent, stats] of bookMap) if (pattern.test(text) && stats.includes(stat)) add("Book: " + text, percent, true, "book:" + text)
+        for (const text of activeJobPerks) {
+          if (/training regime/i.test(text)) add("Company: " + text, 3, false, "job:" + text)
+          if (/boxercise/i.test(text) && stat === "defense") add("Company: " + text, 10, false, "job:" + text)
+          if (/pilates/i.test(text) && stat === "dexterity") add("Company: " + text, 10, false, "job:" + text)
+        }
+        for (const text of activeEnhancerPerks) {
+          if (/sports sneakers/i.test(text) && stat === "speed") add("Enhancer: " + text, 5, false, "enhancer:" + text)
+        }
+        for (const text of activeFactionPerks) {
+          const steadfast = text.match(/\\b(strength|defense|speed|dexterity)\\s+(?:gym\\s+)?train(?:ing|s)?\\s+([IVXLCDM]+)\\b/i)
+          if (steadfast && /steadfast/i.test(text)) {
+            const targetStat = steadfast[1].toLowerCase()
+            if (targetStat === stat) add("Faction: " + text, romanNumber(steadfast[2]), false, "faction:" + text)
+          }
+        }
         const allPerks = [
           ...activeFactionPerks.map(text => ({ group: "Faction", text })),
-          ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
+          ...(perks ? Object.entries(perks).filter(([group]) => !["education", "book", "faction", "job", "enhancer"].includes(group)).flatMap(([group, value]) => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").map(text => ({ group, text })) : []) : []),
         ]
-        const seen = new Set<string>()
         for (const entry of allPerks) {
-          const match = entry.text.match(/(\d+(?:\.\d+)?)\s*%/)
+          const match = entry.text.match(/(\\d+(?:\\.\\d+)?)\\s*%/)
           if (!match || !/(gym|training|steadfast)/i.test(entry.text)) continue
+          const statMention = entry.text.match(/\\b(strength|defense|speed|dexterity)\\b/i)
+          if (statMention && statMention[1].toLowerCase() !== stat) continue
           const percent = Number(match[1])
-          const key = entry.group + ":" + entry.text
-          if (!seen.has(key)) { seen.add(key); add(entry.group + ": " + entry.text, percent) }
+          const dedupeKey = entry.group.toLowerCase() + ":" + entry.text
+          add(entry.group + ": " + entry.text, percent, false, dedupeKey)
         }
         return {
           multiplier: 1 + bonusPercent / 100,
@@ -7369,13 +7402,17 @@ export default {
           bonuses,
         }
       }
-      const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy/i.test(text)) || ""
+      const factionEnergyPerk = activeFactionPerks.find(text => /energy.{0,35}drink|drink.{0,35}energy|voracity/i.test(text)) || ""
       const factionCooldownPerk = activeFactionPerks.find(text => /booster cooldown/i.test(text)) || ""
       const factionEnergyPercentMatch = factionEnergyPerk.match(/(\d+(?:\.\d+)?)\s*%/)
       const factionCooldownHoursMatch = factionCooldownPerk.match(/(\d+(?:\.\d+)?)\s*(?:hours?|h)\b/i)
+      const factionCooldownRomanMatch = factionCooldownPerk.match(/booster cooldown\s+([IVXLCDM]+)\b/i)
       const factionBonuses = {
         energyDrinkBonusPercent: factionEnergyPercentMatch ? Number(factionEnergyPercentMatch[1]) : 0,
-        boosterCooldownBonusHours: factionCooldownHoursMatch ? Math.max(0, Math.min(24, Number(factionCooldownHoursMatch[1]))) : 0,
+        boosterCooldownBonusHours: factionCooldownHoursMatch ? Math.max(0, Math.min(24, Number(factionCooldownHoursMatch[1])))
+          : factionCooldownRomanMatch ? Math.max(0, Math.min(24, romanNumber(factionCooldownRomanMatch[1]))) : 0,
+        companyCooldownReductionPercent,
+        gymHappyLossReductionPercent,
       }
       const modifiers = {
         strength: gymModifierFor("strength"),
