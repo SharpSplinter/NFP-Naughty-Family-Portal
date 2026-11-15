@@ -1759,11 +1759,11 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
   const nowMs = Date.now()
   const personalEventPhase = !personalWindow?.configured ? "TIME SLOT REQUIRED" : nowMs < personalStartMs ? "UPCOMING FOR YOU" : nowMs < personalEndMs ? "ACTIVE FOR YOU" : "YOUR EVENT WINDOW CONCLUDED"
   const canCapturePersonalSnapshot = Boolean(personalWindow?.configured && nowMs >= personalStartMs && nowMs < personalEndMs)
-  const historicalConsentCurrent = Boolean(historicalKeyStatus?.connected && historicalKeyStatus.key?.consentVersion === "halloween-history-v2")
+  const historicalKeyConnected = Boolean(historicalKeyStatus?.connected)
   useEffect(() => {
     if (tab !== "historical" || historicalYear === "all") return
     const targetYear = Number(historicalYear)
-    if (!Number.isInteger(targetYear) || !historicalConsentCurrent ||
+    if (!Number.isInteger(targetYear) || !historicalKeyConnected ||
         archive?.event?.eventYear !== targetYear ||
         personalWindowYear !== targetYear || !personalWindow?.configured || collectBusy) return
     if (autoCollectionYearRef.current === targetYear) return
@@ -1771,7 +1771,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
     // The server checks both the event-log job and versioned detailed-attack job.
     // It queues only incomplete work and returns alreadyComplete for a finished year.
     void startHistoricalCollection()
-  }, [tab, historicalYear, historicalConsentCurrent, archive?.event?.eventYear,
+  }, [tab, historicalYear, historicalKeyConnected, archive?.event?.eventYear,
     personalWindowYear, personalWindow?.configured, collectBusy])
   const archiveYearLabel = tab === "live" ? String(eventYear) : historicalYear === "all" ? "ALL RECORDED YEARS" : historicalYear
   const revitalizeMetricsReady = (archive?.eventTotals?.revitalizeCoveredMemberYears ?? archive?.eventTotals?.revitalizeCoveredMembers ?? 0) > 0
@@ -2106,7 +2106,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
               </select>
             </label>
           </div>
-          {historicalKeyStatus && !historicalConsentCurrent && (
+          {historicalKeyStatus && !historicalKeyConnected && (
             <div className="historical-key-muted" role="status">
               Halloween historical collection is not connected. Your optional historical collection permission is managed centrally, and the portal automatically validates your member key and queues eligible event years when enabled.
               <button type="button" className="settings-link-button" onClick={() => onNavigate("/setup")}>Review privacy & data preferences →</button>
@@ -2115,7 +2115,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
           <div className="historical-collection-toolbar"><div><small>FACTION HISTORICAL LEADERBOARD</small><strong>{archive?.leaderboard.length ?? 0} member accounts in the archive</strong></div><button type="button" onClick={() => { void loadArchive(); void loadHistoricalKeyStatus() }} disabled={archiveBusy}>{archiveBusy ? "Refreshing…" : "Refresh archive ↻"}</button></div>
           {archiveError && <p className="historical-key-error" role="alert">{archiveError}</p>}
           {collectMessage && <p className="historical-key-message" role="status">{collectMessage}</p>}
-          {historicalConsentCurrent && <div className="historical-collect-banner"><div><strong>{historicalYear === "all" ? "Contribute or refresh " + (historicalCollectionYear ?? "Halloween") + " event stats" : "Contribute or refresh Halloween event stats"}</strong><span>{historicalYear === "all" ? "All-time view automatically targets the newest configured event year. Choose a different year in Display to collect another event." : "Collection follows your saved personal window, from your selected October 25 start time through November 1 at the same TCT time."} Detailed attacks provide outcome totals, the zero-treat histogram bucket, and Revitalize finishing-hit effects.</span></div><button type="button" onClick={startHistoricalCollection} disabled={collectBusy || historicalCollectionYear === null || archive?.myCollection?.coverage === "collecting" || archive?.myCollection?.attackMetricsStatus === "queued" || archive?.myCollection?.attackMetricsStatus === "running" || !personalWindow?.configured || personalWindowYear !== historicalCollectionYear}>{collectBusy ? "Queueing…" : archive?.myCollection?.coverage === "collecting" || archive?.myCollection?.attackMetricsStatus === "queued" || archive?.myCollection?.attackMetricsStatus === "running" ? "Collection running…" : !historicalCollectionYear ? "No configured event year" : (!personalWindow?.configured || personalWindowYear !== historicalCollectionYear) ? "Set this event year's time above" : "Collect / refresh " + historicalCollectionYear + " history"}</button></div>}
+          {historicalKeyConnected && <div className="historical-collect-banner"><div><strong>{historicalYear === "all" ? "Contribute or refresh " + (historicalCollectionYear ?? "Halloween") + " event stats" : "Contribute or refresh Halloween event stats"}</strong><span>{historicalYear === "all" ? "All-time view automatically targets the newest configured event year. Choose a different year in Display to collect another event." : "Collection follows your saved personal window, from your selected October 25 start time through November 1 at the same TCT time."} Detailed attacks provide outcome totals, the zero-treat histogram bucket, and Revitalize finishing-hit effects.</span></div><button type="button" onClick={startHistoricalCollection} disabled={collectBusy || historicalCollectionYear === null || archive?.myCollection?.coverage === "collecting" || archive?.myCollection?.attackMetricsStatus === "queued" || archive?.myCollection?.attackMetricsStatus === "running" || !personalWindow?.configured || personalWindowYear !== historicalCollectionYear}>{collectBusy ? "Queueing…" : archive?.myCollection?.coverage === "collecting" || archive?.myCollection?.attackMetricsStatus === "queued" || archive?.myCollection?.attackMetricsStatus === "running" ? "Collection running…" : !historicalCollectionYear ? "No configured event year" : (!personalWindow?.configured || personalWindowYear !== historicalCollectionYear) ? "Set this event year's time above" : "Collect / refresh " + historicalCollectionYear + " history"}</button></div>}
           <div className="historical-leaderboard">
             {!archive && archiveBusy ? <p className="historical-key-muted">Loading faction archive…</p> : archive?.leaderboard.length ? <table><thead><tr><th>RANK</th><th>MEMBER</th><th>TOTAL HITS</th><th>LOGS</th><th>COVERAGE</th></tr></thead><tbody>
               {archive.leaderboard.map((member, index) => <tr key={member.playerId} className={selectedMember?.playerId === member.playerId ? "selected" : ""}>
@@ -2477,9 +2477,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
         </article>
         <article className="settings-card settings-card-wide">
           <div className="settings-card-icon">♧</div><small>HALLOWEEN ARCHIVE</small><h2>Halloween historical collection</h2>
-          <p>Manage your consent for personal event logs and detailed attack outcomes. Your key is encrypted, used only for your own Torn account, and event metrics are shared with authenticated Naughty Souls members.</p>
-          <span className={halloweenHistoryStatus?.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? "settings-connection good" : "settings-connection"}><i /> {!halloweenHistoryStatus ? "Checking consent…" : halloweenHistoryStatus.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? "Enabled securely · •••• " + (halloweenHistoryStatus.key.lastFour || "••••") : halloweenHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled or updated consent required" : "Initial consent not yet given"}</span>
-          {!halloweenHistoryStatus ? <p className="settings-form-hint">Loading your Halloween collection settings…</p> : halloweenHistoryStatus.connected && halloweenHistoryStatus.key?.consentVersion === "halloween-history-v2" ? (
+          <p>Manage the member-key connection used for personal event logs and detailed attack outcomes. Collection permission is controlled in central data preferences. Your key is encrypted, used only for your own Torn account, and event metrics are shared with authenticated Naughty Souls members.</p>
+          <span className={halloweenHistoryStatus?.connected && true ? "settings-connection good" : "settings-connection"}><i /> {!halloweenHistoryStatus ? "Checking key connection…" : halloweenHistoryStatus.connected && true ? "Enabled securely · •••• " + (halloweenHistoryStatus.key.lastFour || "••••") : halloweenHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled or updated consent required" : "Initial consent not yet given"}</span>
+          {!halloweenHistoryStatus ? <p className="settings-form-hint">Loading your Halloween collection settings…</p> : halloweenHistoryStatus.connected && true ? (
             <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {halloweenHistoryStatus.key.lastValidatedAt ? new Date(halloweenHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains archived records.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("halloween")}>Disable Halloween collection</button></div>
           ) : (
             <div className="settings-inline-form"><p className="settings-form-hint">Historical collection permission is managed centrally. After opting in, the portal validates your key and automatically queues eligible Halloween years. Some years may still need your personal Trick-or-Treat start time.</p><button type="button" onClick={() => props.onNavigate("/setup")}>Review central data preferences →</button></div>
@@ -2487,9 +2487,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
         </article>
         <article className="settings-card settings-card-wide">
           <div className="settings-card-icon">❄</div><small>CHRISTMAS TOWN ARCHIVE</small><h2>Christmas Town personal history</h2>
-          <p>Manage your consent for your own Christmas Town User → Log history. Records remain private to your account and are not shared in faction reports.</p>
-          <span className={christmasTownHistoryStatus?.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? "settings-connection good" : "settings-connection"}><i /> {!christmasTownHistoryStatus ? "Checking consent…" : christmasTownHistoryStatus.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? "Enabled securely · •••• " + (christmasTownHistoryStatus.key.lastFour || "••••") : christmasTownHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled" : "Initial consent not yet given"}</span>
-          {!christmasTownHistoryStatus ? <p className="settings-form-hint">Loading your Christmas Town collection settings…</p> : christmasTownHistoryStatus.connected && christmasTownHistoryStatus.key?.consentVersion === "christmas-town-history-v1" ? (
+          <p>Manage the member-key connection used for your own Christmas Town User → Log history. Collection permission is controlled in central data preferences. Records remain private to your account and are not shared in faction reports.</p>
+          <span className={christmasTownHistoryStatus?.connected && true ? "settings-connection good" : "settings-connection"}><i /> {!christmasTownHistoryStatus ? "Checking key connection…" : christmasTownHistoryStatus.connected && true ? "Enabled securely · •••• " + (christmasTownHistoryStatus.key.lastFour || "••••") : christmasTownHistoryStatus.previouslyConsented ? "Previously authorized · currently disabled" : "Initial consent not yet given"}</span>
+          {!christmasTownHistoryStatus ? <p className="settings-form-hint">Loading your Christmas Town collection settings…</p> : christmasTownHistoryStatus.connected && true ? (
             <div className="settings-inline-form"><p className="settings-form-hint">Last key validation: {christmasTownHistoryStatus.key.lastValidatedAt ? new Date(christmasTownHistoryStatus.key.lastValidatedAt).toLocaleString() : "Not available"}. Disabling removes the encrypted event key and cancels active collection, but retains your archive.</p><button type="button" disabled={eventHistoryBusy} onClick={() => void disconnectEventHistory("christmas-town")}>Disable Christmas Town collection</button></div>
           ) : (
             <div className="settings-inline-form"><p className="settings-form-hint">Historical collection permission is managed centrally. When enabled, the portal automatically queues eligible Christmas Town event-year archives using your own member key.</p><button type="button" onClick={() => props.onNavigate("/setup")}>Review central data preferences →</button></div>
