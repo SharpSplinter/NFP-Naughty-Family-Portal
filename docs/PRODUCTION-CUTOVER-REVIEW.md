@@ -50,12 +50,12 @@ These values were read from Cloudflare and the live production D1 database durin
 
 | Resource | Verified state |
 |---|---|
-| Production API Worker | `naughty-company-api` |
+| Production API Worker | `naughtyfamily-api` |
 | Production D1 | `naughty-company-dashboard` |
 | Production D1 UUID | `bbbe128a-c5cc-46ec-b8ef-93860183e795` |
 | Production D1 schema | 41 tables; existing member/session/company/history data is present |
 | Production migration ledger | 16 entries; latest is `0012_company_ranking_snapshots.sql` |
-| PR migrations awaiting production | `0012_administrator_registry.sql` and `0013` through `0025` |
+| Portal-branch migrations requiring pre-cutover ledger reconciliation | `0012_administrator_registry.sql` and `0013` through `0037` |
 | Active Worker version | `af3b0630-c758-4910-9a41-d43c8c330960` (100% traffic; deployed 2026-11-13 20:00:55 UTC) |
 | Legacy Pages site | `https://naughty-company-dashboard.pages.dev` |
 | Legacy Pages canonical production deployment | `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13; PR #155 frontend) |
@@ -89,34 +89,91 @@ The workflow lists pending migrations, applies them, lists the ledger again, dep
 
 ## 5. Migration review
 
-The portal staging D1 has successfully applied the portal branch migration chain through `0025_halloween_attack_metrics.sql` (30 migration records; 64 tables), with end-to-end staging integration confirmed on run #43508964870. Production has already applied `0012_company_ranking_snapshots.sql`; the portal-specific migration files still pending in production are:
+The current `portal-rebuild` branch contains **42 SQL migration files**, with the latest migration `0037_private_data_visibility.sql`. This is the complete ordered filename inventory, not just the newer tail of the chain:
 
-| Migration file | Purpose |
+```text
+0001_auth.sql
+0002_company_financial_history.sql
+0002_faction_directors.sql
+0003_company_data_sharing.sql
+0003_faction_star_weekly_counts.sql
+0004_company_data_sharing.sql
+0005_admin_panel.sql
+0006_automation.sql
+0007_automation_delivery_and_rules.sql
+0008_admin_endpoint_refresh.sql
+0008_combined_webhook_delivery.sql
+0009_discord_alert_poll_monitoring.sql
+0009_faction_director_snapshot_kind.sql
+0010_admin_step_up.sql
+0011_discord_account_linking.sql
+0012_administrator_registry.sql
+0012_company_ranking_snapshots.sql
+0013_faction_membership_verification.sql
+0014_halloween_historical_keys.sql
+0015_halloween_shared_archive.sql
+0016_membership_revalidation_scheduler.sql
+0017_halloween_member_event_slots.sql
+0018_membership_verification_state.sql
+0019_faction_performance_collection.sql
+0020_faction_weekly_boundaries.sql
+0021_faction_weekly_reports.sql
+0022_faction_stats_snapshots.sql
+0023_member_private_live_connections.sql
+0024_halloween_custom_key_support.sql
+0025_halloween_attack_metrics.sql
+0026_halloween_attack_outcome_metrics.sql
+0027_halloween_exchange_market_price_cache.sql
+0028_christmas_town_archive.sql
+0029_halloween_historical_event_years.sql
+0030_event_history_consent_records.sql
+0031_torn_event_calendar_windows.sql
+0032_portal_first_login_consent.sql
+0033_gym_training_history.sql
+0034_portal_api_key_usage_consent.sql
+0035_portal_api_key_access_type.sql
+0036_admin_read_path_indexes.sql
+0037_private_data_visibility.sql
+```
+
+There are multiple files with the same numeric prefix (`0002`, `0003`, `0008`, `0009`, and `0012`). Migration checks and release records must compare the complete filenames, not numeric prefixes alone. In particular, `0012_administrator_registry.sql` and `0012_company_ranking_snapshots.sql` are distinct migrations.
+
+At the last recorded read-only production ledger check (2026-11-14), production D1 had 16 migration records and ended at `0012_company_ranking_snapshots.sql`. The portal branch additions after that recorded baseline are `0012_administrator_registry.sql` and `0013` through `0037`. This is a historical baseline, not a claim that the live ledger has been re-read on 2026-11-16. Re-read the exact production ledger immediately before any approved migration.
+
+| Migration file(s) | Purpose |
 |---|---|
 | `0012_administrator_registry.sql` | Durable administrator role registry |
-| `0013`–`0018` | Membership verification/revalidation and Halloween collection/consent schema |
-| `0019` | Public faction-performance collection runs, roster/stat/gym snapshots and membership intervals |
-| `0020` | Idempotent Sunday-boundary run registry |
-| `0021` | Immutable completed-week reports and member results |
-| `0022` | Faction-wide stats collection/snapshots |
-| `0023` | Private-live consent metadata, latest snapshots and request throttling |
-| `0024` | Rebuilds the Halloween historical-key table to admit Full and Custom Access credentials while copying existing rows |
-| `0025` | Detailed Halloween attack/Revitalize metrics collection |
+| `0013_faction_membership_verification.sql` | Torn faction membership verification |
+| `0014_halloween_historical_keys.sql` | Member-owned Halloween historical collection key metadata |
+| `0015_halloween_shared_archive.sql` | Shared Halloween archive structures |
+| `0016_membership_revalidation_scheduler.sql` | Scheduled member revalidation state |
+| `0017_halloween_member_event_slots.sql` | Per-member Halloween event windows |
+| `0018_membership_verification_state.sql` | Membership verification and fail-closed state |
+| `0019_faction_performance_collection.sql` | Public faction roster/stat/gym collection runs and snapshots |
+| `0020_faction_weekly_boundaries.sql` | Idempotent Sunday-boundary run registry |
+| `0021_faction_weekly_reports.sql` | Immutable completed-week reports and member results |
+| `0022_faction_stats_snapshots.sql` | Faction-wide stats collection and snapshots |
+| `0023_member_private_live_connections.sql` | Private-live consent metadata, snapshots, and request throttling |
+| `0024_halloween_custom_key_support.sql` | Rebuilds Halloween historical-key storage to support Full and Custom Access while copying existing rows |
+| `0025_halloween_attack_metrics.sql` | Halloween attack and Revitalize metrics |
+| `0026_halloween_attack_outcome_metrics.sql` | Successful/lost/stalemated attack outcome totals and version metadata |
+| `0027_halloween_exchange_market_price_cache.sql` | Shared public item-market average-price cache |
+| `0028_christmas_town_archive.sql` | Encrypted Christmas Town history connections, collection jobs, and event logs |
+| `0029_halloween_historical_event_years.sql` | Known historical Halloween event windows for 2021–2025 |
+| `0030_event_history_consent_records.sql` | Per-player event-history consent records and legacy backfill |
+| `0031_torn_event_calendar_windows.sql` | Torn calendar source/confirmation metadata and per-player event-calendar cache |
+| `0032_portal_first_login_consent.sql` | Centralized first-login/policy consent and collection/sharing preferences |
+| `0033_gym_training_history.sql` | Member-owned Gym Training key metadata, collection jobs, logs, and indexes |
+| `0034_portal_api_key_usage_consent.sql` | API-key usage consent, acknowledgement timestamp, and key fingerprint |
+| `0035_portal_api_key_access_type.sql` | Constrained `custom` / `full` API-key access declaration |
+| `0036_admin_read_path_indexes.sql` | Company/player administrative and faction-boundary read indexes |
+| `0037_private_data_visibility.sql` | Private-data visibility preferences and fingerprint-bound member-key capability cache |
 
-The migration review found no intentional deletion of company history. Migrations `0019`–`0023` add the faction/private-live structures. Migration `0024` creates a replacement historical-key table, copies the old table's rows, drops the old table and renames the replacement. In the current production schema, the `halloween_historical_keys` table does not yet exist because its creating migration `0014` is still pending; consequently it will be created and then rebuilt empty during the ordered migration chain. Still verify the final table definition, row counts and database integrity after migration.
+The current-candidate staging acceptance runs [#316](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43792813370) and [#317](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793005243) passed their isolated-staging migration-apply and migration-ledger verification steps. Those runs targeted `naughtyfamily-acceptance-staging` only. They do not establish that production has applied any of the portal migrations.
 
-**Important distinction:** the portal migration/feature integration rehearsal remains against a clean isolated acceptance database, not a clone of production data. Separately, the full production D1 backup was restored into a temporary isolated D1 database on 2026-11-14; see Section 6 for that production-data restore rehearsal and its validation limits.
+The migration review found no intentional deletion of company history. In particular, migration `0024_halloween_custom_key_support.sql` rebuilds the Halloween historical-key table by copying its existing rows before replacing the table. The ordered chain, final table definition, row counts, and foreign-key integrity still require verification against a restored production-data copy before release.
 
-### Required pre-migration checks
-
-1. Freeze the release commit and confirm that the deployed Worker version, Pages canonical deployment and D1 migration ledger have not changed since this review.
-2. Confirm that `wrangler.toml` still points to the production Worker and the production D1 UUID above; compare it against `wrangler.acceptance.toml` to ensure no staging ID can be used.
-3. Run `npx wrangler d1 migrations list naughty-company-dashboard --remote --config wrangler.toml` and confirm that the portal-specific pending filenames are exactly `0012_administrator_registry.sql` and `0013`–`0025`; confirm `0012_company_ranking_snapshots.sql` is already applied.
-4. Export and verify the full production D1 database as described below. Store the backup in restricted encrypted storage outside the repository, GitHub Actions artifacts, and public logs.
-5. Read and record the current D1 Time Travel bookmark through the read-only API immediately before migration. Cloudflare creates bookmarks automatically; there is no manual-create operation. Re-read it again if writes, internal bookmark advancement, or a meaningful delay occurs.
-6. Review the pending SQL files in order and confirm the live ledger matches the post-PR-155 baseline ending in `0012_company_ranking_snapshots.sql`. Pay particular attention to the two distinct files sharing the `0012` numeric prefix; compare exact filenames, not only numeric prefixes.
-7. Confirm required production Worker secret names exist without printing or disclosing their values. In particular, verify the configured encryption secret and the service-owned Torn keys required by the production runtime. Do not run `wrangler secret put` as a substitute; secret changes can deploy the currently targeted Worker.
-8. Obtain explicit release approval before dispatching the production workflow.
+**Important distinction:** the 2026-11-14 production-data restore rehearsal replayed the backup through its existing migration ledger ending at `0012_company_ranking_snapshots.sql`; it did not replay migrations `0013`–`0037`. The isolated acceptance D1 migration run is not a substitute for replaying this full chain against restored production data. See Section 6 and Section 15.
 
 ## 6. Production backup procedure
 
@@ -164,13 +221,13 @@ After the preceding checks and explicit approval:
 1. Merge PR #152 only after final code review and remaining feature-level acceptance.
 2. Confirm the legacy Pages production deployment remains frozen and the new Pages target remains paused.
 3. Complete the external D1 export and fresh Time Travel bookmark; verify the backup checksum and access.
-4. On `main`, manually dispatch **Deploy Cloudflare Worker** with target `naughty-company-api` and the external backup reference. The workflow applies the pending D1 migrations, verifies the migration ledger, deploys the Worker, then checks `/health`, D1 health and key-encryption readiness.
-5. Confirm the production ledger includes the portal migration files through `0025_halloween_attack_metrics.sql` after deployment. Run read-only `PRAGMA integrity_check` and `PRAGMA foreign_key_check`, and check the `halloween_historical_keys` and `halloween_attack_metrics_jobs` table definitions and expected row counts.
-6. Verify the production Worker accepts CORS from `https://naughtyfamily.pages.dev`. The current branch's origin allowlist explicitly permits this exact hostname.
+4. On `main`, manually dispatch **Deploy Cloudflare Worker** with the exact production target `naughtyfamily-api` and the external backup reference. The protected workflow applies pending D1 migrations, verifies the exact migration ledger, deploys the renamed Worker, then checks `/health`, D1 health, and key-encryption readiness.
+5. Confirm the production ledger includes the approved portal migration files through `0037_private_data_visibility.sql`. Run the approved integrity and foreign-key checks and verify the event-history, Gym Training, consent, private-data-visibility, and member-key-capability schemas and expected row preservation.
+6. Verify the production Worker accepts CORS from `https://naughtyfamily.pages.dev`.
 7. Run authenticated smoke tests with a standard member and an administrator: sign-in, session, company data refresh, member settings, public faction endpoints, consent-gated feature endpoints, and admin authorization. Confirm no private data is exposed to another member.
-8. Build with `VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev` and manually publish `dist/` to Pages project `naughtyfamily`. Do not publish to the legacy `naughty-company-dashboard` project.
-9. Verify the new Pages root, JavaScript bundle API URL, browser CORS, sign-in, company refresh, and critical workspace flows. Keep the previous Pages site frozen as the fallback.
-10. Record the deployed Worker version, Pages deployment ID, D1 migration ledger, backup reference/checksum and smoke-test results in the release record.
+8. Build with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and manually publish `dist/` to Pages project `naughtyfamily`. Do not publish the portal bundle to the legacy `naughty-company-dashboard` project.
+9. Verify the new Pages root, JavaScript bundle API URL, browser CORS, sign-in, company refresh, and critical workspace flows. The preserved legacy Pages deployment currently points at the retired `naughty-company-api` Worker hostname and is **not** a verified rollback until it is rebuilt and checked against `naughtyfamily-api`.
+10. Record the deployed Worker version, Pages deployment ID, exact D1 migration ledger, backup reference/checksum, rollback bundle verification, and smoke-test results in the release record.
 
 ## 8. Rollback plan and limitations
 
@@ -426,6 +483,8 @@ The separate [Torn calendar API probe run #3](https://github.com/SharpSplinter/N
 
 **Acceptance boundary:** the source-contract tests and upstream Torn endpoint probe passed, but the selected Christmas Town staging feature suite intentionally reads a synthetic cached calendar fixture and makes no Torn call. The API probe does not traverse the authenticated portal Worker route, and its repository secret is not proof that the production Worker binding `TORN_API_KEY_SERVICE` is authorized. Therefore this is upstream/API-contract acceptance, not a complete live member-to-Worker-to-Torn end-to-end acceptance. Keep the live integration gate open until it is exercised with an authorized member session in an isolated environment and the returned Torn window is observed through the portal route.
 
+A queue-free authenticated staging E2E attempt was added to the existing Torn calendar probe workflow and run from `portal-rebuild`: [run #43793815930](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793815930). The checkout, script syntax, upstream Torn probe, and D1 budget preflight passed. The E2E script then found that the Torn player associated with the repository key already has a row in staging D1 and **failed closed before sign-in, key save, calendar-route request, or cleanup**. No existing staging identity was overwritten or deleted. The final D1 budget check passed with the run's recorded baseline unchanged at 3,985,750 rows read for the UTC day. Thus the live authenticated portal-route acceptance remains open; provide a dedicated test member/key or authorize a safe strategy for using the existing staging identity without replacing its stored connection.
+
 ### Migration inventory through 0037
 
 The current `migrations/auth` chain contains 42 SQL files. The previous review's migration inventory ending at `0031_torn_event_calendar_windows.sql` is superseded. The following later migrations are present on this candidate:
@@ -491,3 +550,5 @@ The production `naughtyfamily-api` Worker remains configured with scheduled trig
 **Temporary operating guard:** no further queue-backed staging tests, fixture jobs, manual collection refreshes, queue replays, retries, or queue provisioning changes while the daily allowance is near the limit. Do not drain or purge the six staging messages merely to reduce the backlog; that would itself create queue operations and could discard work. Do not detach or disable the production consumer or cron triggers without an explicit operational decision, because that may interrupt expected scheduled service. Recheck the Cloudflare usage dashboard after the next UTC reset before resuming queue work. If uninterrupted queue delivery is required, evaluate the Workers Paid plan before the limit is reached.
 
 This warning does not change the previously recorded staging feature acceptance results. No queue configuration or production deployment was modified during this check.
+
+The same 2026-11-16 live-calendar attempt recorded an account-wide D1 rows-read baseline and final value of **3,985,750** against the workflow's **4,000,000-row hard stop**, with a recorded delta of zero. That left only **14,250 rows** below the staging hard stop at the time of the run. Do not start additional D1-backed acceptance work until the UTC usage reset has passed and account-wide D1 usage has been freshly checked.
