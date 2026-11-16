@@ -472,3 +472,22 @@ The latest legacy Pages deployment is `b0352cf1-db23-437e-87b4-a363d08b53b8` (20
 5. Complete PR review/approval, reconcile the live production migration ledger immediately before cutover, confirm the rollback plan, and obtain explicit production release approval.
 
 No production migration or deployment is authorized by this review. Production remains unchanged.
+
+
+## 16. Queue free-tier capacity warning (2026-11-16 UTC)
+
+The operator supplied a Cloudflare notification reporting **91% of the daily Queues free-tier operations limit used**, with the stated reset at `2026-11-16T00:00:00Z`. This leaves only 9% headroom at the time of that notification. Cloudflare warns that message delivery stops when the daily limit is reached.
+
+Read-only Cloudflare Queue API inspection was performed after the alert. It did not send, receive, acknowledge, purge, or modify messages.
+
+| Queue | Backlog | DLQ backlog |
+|---|---:|---:|
+| `ncd-global-rankings-refresh` (production) | 0 | 0 |
+| `ncd-faction-performance-integration` | 0 | 0 |
+| `ncd-naughtyfamily-staging-collection` | 6 | 0 |
+
+The production `naughtyfamily-api` Worker remains configured with scheduled triggers at `10 18 * * *`, `10 0 * * *`, and `*/5 * * * *`, and its global-ranking queue consumer remains attached. The staging collection queue also has a consumer attached and currently shows six pending messages. Queue backlog metrics are not the account's daily operation counter and do not establish which workload used the 91%.
+
+**Temporary operating guard:** no further queue-backed staging tests, fixture jobs, manual collection refreshes, queue replays, retries, or queue provisioning changes while the daily allowance is near the limit. Do not drain or purge the six staging messages merely to reduce the backlog; that would itself create queue operations and could discard work. Do not detach or disable the production consumer or cron triggers without an explicit operational decision, because that may interrupt expected scheduled service. Recheck the Cloudflare usage dashboard after the next UTC reset before resuming queue work. If uninterrupted queue delivery is required, evaluate the Workers Paid plan before the limit is reached.
+
+This warning does not change the previously recorded staging feature acceptance results. No queue configuration or production deployment was modified during this check.
