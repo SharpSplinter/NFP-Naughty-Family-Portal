@@ -123,9 +123,12 @@
 .tc-history-heading h2{margin:5px 0 0;color:#f0f2ff;font:600 15px 'Space Grotesk',sans-serif}
 .tc-history-heading>span{color:#b6c2dc;font-size:9px;text-align:right}
 .tc-log-list{display:grid;gap:0}
-.tc-log-row{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(0,1.4fr) auto;align-items:center;gap:12px;padding:10px 0;border-top:1px solid #29354e}
-.tc-log-row>span,.tc-log-row>small{color:#aebbd6;font-size:8px}
-.tc-log-row>strong{color:#e0e7f8;font-size:9px;font-weight:600;overflow-wrap:anywhere}
+.tc-log-row{display:grid;grid-template-columns:minmax(145px,.8fr) minmax(0,1.2fr) minmax(105px,.7fr) minmax(145px,.9fr);align-items:center;gap:12px;padding:11px 0;border-top:1px solid #29354e}
+.tc-log-date,.tc-log-summary,.tc-log-gain,.tc-log-after{display:grid;gap:4px;min-width:0}
+.tc-log-date>span,.tc-log-summary>strong,.tc-log-gain>strong,.tc-log-after>strong{color:#e0e7f8;font-size:9px;font-weight:600;overflow-wrap:anywhere}
+.tc-log-date>small,.tc-log-summary>small,.tc-log-gain>small,.tc-log-after>small{color:#aebbd6;font-size:8px;overflow-wrap:anywhere}
+.tc-log-gain>strong{color:#a9e8c0}
+.tc-log-after>strong{font-variant-numeric:tabular-nums}
 .tc-history-empty{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .tc-history-empty p{margin:0;color:#b6c2dc;font-size:9px;line-height:1.6}
 .tc-history-empty .tc-secondary-button{width:auto;flex:0 0 auto;margin:0}
@@ -134,5 +137,5 @@
 .tc-data-warnings p{margin:7px 0 0;color:#d8c39c;overflow-wrap:anywhere}
 .tc-data-warnings p strong{color:#f4e4c7}
 @media(max-width:900px){.tc-profile-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.tc-profile-gym{grid-column:span 2}}
-@media(max-width:620px){.tc-profile-strip{gap:6px}.tc-profile-stat{padding:9px}.tc-history-panel{padding:14px}.tc-log-row{grid-template-columns:1fr auto;gap:5px 10px}.tc-log-row>strong{grid-column:1/-1;grid-row:2}.tc-log-row>small{grid-column:2;grid-row:1;text-align:right}.tc-history-heading{align-items:flex-start;flex-direction:column}.tc-history-heading>span{text-align:left}.tc-history-empty{align-items:stretch;flex-direction:column}.tc-history-empty .tc-secondary-button{width:100%}}
+@media(max-width:620px){.tc-profile-strip{gap:6px}.tc-profile-stat{padding:9px}.tc-history-panel{padding:14px}.tc-log-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 10px}.tc-log-date{grid-column:1;grid-row:1}.tc-log-summary{grid-column:1;grid-row:2}.tc-log-gain{grid-column:2;grid-row:1}.tc-log-after{grid-column:2;grid-row:2;text-align:right}.tc-history-heading{align-items:flex-start;flex-direction:column}.tc-history-heading>span{text-align:left}.tc-history-empty{align-items:stretch;flex-direction:column}.tc-history-empty .tc-secondary-button{width:100%}}
 @media(max-width:380px){.tc-profile-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.tc-profile-gym{grid-column:span 2}.tc-profile-stat>strong{font-size:11px}.tc-history-panel{padding:12px}.tc-train-table{font-size:8px}.tc-train-table td{padding:7px 5px}}

@@ -7282,7 +7282,7 @@ export default {
           const payload: unknown = await response.json().catch(() => null)
           const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
           if (!response.ok || apiError || !isRecord(payload)) {
-            const message = typeof apiError?.error === "string" ? apiError.error : "Torn did not return this selection."
+            const message = typeof apiError?.error === "string" ? apiError.error : "Torn did not return this selection (HTTP " + response.status + ")."
             throw new Error(message)
           }
           if (!playerScoped) publicCache.set(path, { payload, fetchedAt: Date.now() })
@@ -7302,8 +7302,26 @@ export default {
         ),
         getJson("/user/perks", memberKey, "training-calculator-perks", "perks"),
       ]
+      const fetchGymCatalogue = async (): Promise<Record<string, unknown> | null> => {
+        const cached = publicCache.get("/torn/gyms")
+        if (cached && !Array.isArray(cached.payload.gyms)) publicCache.delete("/torn/gyms")
+        const keys = [publicKey, env.TORN_API_KEY_CUSTOM?.trim() || "", memberKey]
+          .filter((key, index, values) => Boolean(key) && values.indexOf(key) === index)
+        for (const key of keys) {
+          const payload = await getJson("/torn/gyms", key, "training-calculator-gym-catalogue", "gymCatalogue", false)
+          if (payload && Array.isArray(payload.gyms)) {
+            delete errors.gymCatalogue
+            return payload
+          }
+          if (payload) {
+            publicCache.delete("/torn/gyms")
+            errors.gymCatalogue = "Torn returned an unexpected gym catalogue format."
+          }
+        }
+        return null
+      }
       const publicRequests = [
-        getJson("/torn/gyms", publicKey, "training-calculator-gym-catalogue", "gymCatalogue", false),
+        fetchGymCatalogue(),
         getJson("/torn/stats", publicKey, "training-calculator-city-stats", "cityStats", false),
         getJson("/torn/items?cat=Drug", publicKey, "training-calculator-item-catalogue", "drugItems", false),
         getJson("/torn/items?cat=Energy%20Drink", publicKey, "training-calculator-item-catalogue", "drinkItems", false),

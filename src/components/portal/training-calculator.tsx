@@ -77,6 +77,14 @@ type TrainRow = { train: number; statBefore: number; happyBefore: number; gain: 
 type SessionResult = { trains: number; energyUsed: number; statGain: number; endingStat: number; endingHappy: number; averageGain: number; rows: TrainRow[] }
 type HistoryLog = { logId: string; timestamp: number; title: string; category?: string; record?: Record<string, unknown> }
 type HistoryData = { collectionEnabled?: boolean; connected?: boolean; totalLogs?: number; logs?: HistoryLog[]; error?: string }
+type GymHistoryDetails = {
+  title: string
+  stat: StatKey | null
+  energy: number | null
+  gain: number | null
+  statBefore: number | null
+  statAfter: number | null
+}
 
 const STAT_OPTIONS: Array<{ value: StatKey; label: string }> = [
   { value: "strength", label: "Strength" },
@@ -159,13 +167,43 @@ function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: nu
   const ticks = waitSeconds < untilNext ? 0 : 1 + Math.floor((waitSeconds - untilNext) / interval)
   return Math.min(maximum - current, ticks * increment)
 }
-function estimateEnergyEquivalentGain(stat: number, happy: number, energy: number, dots: number, modifier: number): number {
-  const adjustedHappy = clamp(happy, 0, HAPPY_CAP) + 250
-  const perEnergy =
-    (3.480061091e-7 * Math.log(adjustedHappy) + 3.091619094e-6) * Math.max(0, stat)
-    + 6.82775184551527e-5 * adjustedHappy
-    - 0.0301431777
-  return Math.max(0, modifier * dots * Math.max(0, energy) * perEnergy)
+const GYM_GAIN_CONSTANTS: Record<StatKey, { a: number; b: number }> = {
+  strength: { a: 1600, b: 1700 },
+  defense: { a: 2100, b: -600 },
+  speed: { a: 1600, b: 2000 },
+  dexterity: { a: 1800, b: 1500 },
+}
+
+function effectiveGymStat(stat: number): number {
+  const value = Math.max(0, stat)
+  if (value <= 50_000_000) return value
+  // Torn's post-50M gym stat soft cap. Continued growth is retained at a
+  // decreasing rate rather than feeding the full raw stat into the formula.
+  return 50_000_000 + 0.057406 * Math.pow(value - 50_000_000, 0.928996)
+}
+
+function estimateEnergyEquivalentGain(
+  statKey: StatKey,
+  stat: number,
+  happy: number,
+  energy: number,
+  dots: number,
+  modifier: number,
+): number {
+  const currentHappy = clamp(happy, 0, HAPPY_CAP)
+  const constants = GYM_GAIN_CONSTANTS[statKey]
+  const happyLog = Math.round(Math.log(1 + currentHappy / 250) * 10_000) / 10_000
+  const happyMultiplier = Math.round((1 + 0.07 * happyLog) * 10_000) / 10_000
+  const happyAdjustment = (1 - Math.pow(Math.min(currentHappy, 99_999) / 99_999, 2)) * constants.a
+  const expectedPerEnergy = (
+    effectiveGymStat(stat) * happyMultiplier
+    + 8 * Math.pow(currentHappy, 1.05)
+    + happyAdjustment
+    + constants.b
+  ) / 200_000
+  // The game's small per-train random term is intentionally omitted, so this
+  // reports the expected gain rather than presenting one roll as exact.
+  return Math.max(0, expectedPerEnergy * (Math.max(0, dots) / 10) * Math.max(0, energy) * Math.max(0, modifier))
 }
 
 function applyDailyHappyRegeneration(
@@ -184,9 +222,9 @@ function applyDailyHappyRegeneration(
 }
 
 function estimateGymSession({
-  stat, happy, energy, dots, energyPerTrain, modifier, happyLossRate,
+  stat, statKey, happy, energy, dots, energyPerTrain, modifier, happyLossRate,
 }: {
-  stat: number; happy: number; energy: number; dots: number; energyPerTrain: number; modifier: number; happyLossRate: number
+  stat: number; statKey: StatKey; happy: number; energy: number; dots: number; energyPerTrain: number; modifier: number; happyLossRate: number
 }): SessionResult {
   const stepEnergy = Math.max(1, Math.floor(energyPerTrain))
   const trains = Math.min(20_000, Math.max(0, Math.floor(Math.max(0, energy) / stepEnergy)))
@@ -197,12 +235,7 @@ function estimateGymSession({
   for (let index = 0; index < trains; index++) {
     const statBefore = currentStat
     const happyBefore = currentHappy
-    const adjustedHappy = currentHappy + 250
-    const perEnergy =
-      (3.480061091e-7 * Math.log(adjustedHappy) + 3.091619094e-6) * currentStat
-      + 6.82775184551527e-5 * adjustedHappy
-      - 0.0301431777
-    const gain = Math.max(0, modifier * dots * stepEnergy * perEnergy)
+    const gain = estimateEnergyEquivalentGain(statKey, currentStat, currentHappy, stepEnergy, dots, modifier)
     currentStat += gain
     statGain += gain
     currentHappy = Math.max(0, currentHappy - stepEnergy * happyLossRate)
@@ -290,18 +323,83 @@ function prettyDate(timestamp: number): string {
   const date = new Date(timestamp * 1000)
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Date unavailable"
 }
-function shortLogDetails(log: HistoryLog): string {
+function parseGymHistoryLog(log: HistoryLog): GymHistoryDetails {
   const record = log.record || {}
-  const details = record.details && typeof record.details === "object" ? record.details as Record<string, unknown> : {}
-  const title = typeof details.title === "string" ? details.title : log.title
-  const data = record.data && typeof record.data === "object" ? record.data as Record<string, unknown> : {}
-  const params = record.params && typeof record.params === "object" ? record.params as Record<string, unknown> : {}
-  const merged = { ...params, ...data }
-  const stat = Object.keys(merged).find(key => ["strength", "defense", "speed", "dexterity"].includes(key.toLowerCase()))
-  const statName = stat ? stat[0].toUpperCase() + stat.slice(1) : ""
-  const energyValue = merged.energy_used ?? merged.energy ?? merged.amount
-  const energy = typeof energyValue === "number" ? fmt(energyValue) + "E" : ""
-  return [title, statName, energy].filter(Boolean).join(" · ")
+  const fields = new Map<string, unknown[]>()
+  const collectFields = (value: unknown, depth = 0): void => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 4) return
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "")
+      const values = fields.get(normalized) || []
+      values.push(nested)
+      fields.set(normalized, values)
+      if (nested && typeof nested === "object") collectFields(nested, depth + 1)
+    }
+  }
+  collectFields(record)
+
+  const parseNumber = (value: unknown): number | null => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null
+    if (typeof value !== "string") return null
+    const normalized = value.replace(/,/g, "").trim()
+    if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return null
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const readNumber = (...keys: string[]): number | null => {
+    for (const key of keys) {
+      for (const value of fields.get(key.toLowerCase().replace(/[^a-z0-9]/g, "")) || []) {
+        const parsed = parseNumber(value)
+        if (parsed !== null) return parsed
+      }
+    }
+    return null
+  }
+  const readString = (...keys: string[]): string | null => {
+    for (const key of keys) {
+      for (const value of fields.get(key.toLowerCase().replace(/[^a-z0-9]/g, "")) || []) {
+        if (typeof value === "string" && value.trim()) return value.trim()
+      }
+    }
+    return null
+  }
+  const statFromValue = (value: string | null): StatKey | null => {
+    if (!value) return null
+    const normalized = value.toLowerCase().replace(/[^a-z]/g, "")
+    if (["strength", "str"].includes(normalized)) return "strength"
+    if (["defense", "def"].includes(normalized)) return "defense"
+    if (["speed", "spd"].includes(normalized)) return "speed"
+    if (["dexterity", "dex"].includes(normalized)) return "dexterity"
+    return null
+  }
+
+  const textParts = [
+    readString("description"), readString("text"), readString("message"),
+    readString("result"), readString("title"), log.title,
+  ].filter((value): value is string => Boolean(value))
+  const resultText = textParts.join(" ")
+  const trainingText = resultText.match(/training\s+(?:your\s+)?(strength|defense|speed|dexterity)/i)
+  const shortText = resultText.match(/you\s+(?:have\s+)?gained\s+([\d,]+(?:\.\d+)?)\s+(strength|defense|speed|dexterity)/i)
+  const fullText = resultText.match(/(?:increasing|increased)\s+it\s+by\s+([\d,]+(?:\.\d+)?)\s+to\s+([\d,]+(?:\.\d+)?)/i)
+  const statKeyField = (["strength", "defense", "speed", "dexterity"] as StatKey[]).find(key => fields.has(key))
+
+  const stat = statFromValue(readString("stat", "statName", "battleStat", "targetStat", "trainedStat", "attribute"))
+    || statFromValue(trainingText?.[1] || shortText?.[2] || null)
+    || statKeyField
+    || null
+  let gain = readNumber("gain", "statGain", "gained", "increase", "increasedBy", "amountGained", "statIncrease", "increaseAmount", "gainAmount", "delta", "statDelta")
+    ?? parseNumber(fullText?.[1])
+    ?? parseNumber(shortText?.[1])
+  let statAfter = readNumber("statAfter", "afterStat", "newStat", "resultingStat", "totalAfter", "newValue", "currentValue", "resultValue", "finalStat")
+    ?? parseNumber(fullText?.[2])
+  let statBefore = readNumber("statBefore", "beforeStat", "previousStat", "oldStat", "priorStat", "startingStat", "initialStat")
+  if (statAfter !== null && gain !== null && statBefore === null) statBefore = statAfter - gain
+  if (statBefore !== null && gain !== null && statAfter === null) statAfter = statBefore + gain
+  if (statBefore !== null && statAfter !== null && gain === null) gain = statAfter - statBefore
+
+  const energy = readNumber("energyUsed", "energySpent", "energy", "amountEnergy", "amount")
+  const title = readString("title") || log.title || "Gym training"
+  return { title, stat, energy, gain, statBefore, statAfter }
 }
 
 type TrainingCalculatorProps = { playerName: string; apiBase: string; sessionToken: string; onNavigate: (path: string) => void }
@@ -377,7 +475,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       .then(payload => {
         if (controller.signal.aborted) return
         setLiveData(payload)
-        if (payload.gym?.id) setSelectedGymId(current => current || payload.gym!.id)
+        if (payload.gym?.id) {
+          const normalizeGymName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "")
+          const profileGym = payload.gyms?.find(gym => String(gym.id) === String(payload.gym?.id))
+            || FALLBACK_GYMS.find(gym => normalizeGymName(gym.name) === normalizeGymName(payload.gym?.name || ""))
+          setSelectedGymId(current => current || profileGym?.id || payload.gym!.id)
+        }
         if (payload.bars?.happy?.current !== undefined) setManualHappy(current => current || "")
         if (payload.errors?.battleStats && !Object.values(payload.battleStats || {}).some(value => typeof value === "number")) {
           setApiError("Torn could not return your battle stats. Check that your saved API key includes User → Battlestats.")
@@ -421,9 +524,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 0
   const currentEnergy = manualEnergy.trim() === "" ? currentEnergyFromApi : clamp(safeNumber(manualEnergy), 0, ENERGY_HARD_CAP)
   const startingHappy = manualHappy.trim() === "" ? currentHappyFromApi : clamp(safeNumber(manualHappy), 0, HAPPY_CAP)
-  const activeGym = liveData?.gyms?.find(gym => String(gym.id) === String(liveData.gym?.id)) || null
+  const normalizeGymName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "")
+  const activeGym = liveData?.gyms?.find(gym => String(gym.id) === String(liveData.gym?.id))
+    || FALLBACK_GYMS.find(gym => normalizeGymName(gym.name) === normalizeGymName(liveData?.gym?.name || ""))
+    || null
   const gyms = liveData?.gyms?.length ? liveData.gyms : FALLBACK_GYMS
-  const gymId = selectedGymId || String(liveData?.gym?.id || "gun-shop")
+  const gymId = selectedGymId || String(activeGym?.id || liveData?.gym?.id || "gun-shop")
   const selectedGym = gyms.find(gym => String(gym.id) === gymId) || activeGym || FALLBACK_GYMS.find(gym => gym.id === "gun-shop")!
   const liveStatValue = liveData?.battleStats?.[selectedStat] ?? null
   const statOverride = manualStats[selectedStat]
@@ -534,17 +640,17 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   }, [startingHappy, xanaxCount, fhcCount, dvdCount, dvdHappy, yellowEggCount, mistletoeCount, targetHappy, otherHappy, ecstasy])
 
   const session = useMemo(() => estimateGymSession({
-    stat: currentStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
+    stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+  }), [currentStat, selectedStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
   const oneTrain = useMemo(() => estimateGymSession({
-    stat: currentStat, happy: startingHappy, energy: selectedGym.energyCost, dots: selectedDots,
+    stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: selectedGym.energyCost, dots: selectedDots,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, startingHappy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+  }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
   const happySession = useMemo(() => estimateGymSession({
-    stat: currentStat, happy: happyJump.finalHappy, energy: usableEnergy, dots: selectedDots,
+    stat: currentStat, statKey: selectedStat, happy: happyJump.finalHappy, energy: usableEnergy, dots: selectedDots,
     energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+  }), [currentStat, selectedStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
 
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
@@ -592,14 +698,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     let gain = 0
     for (let index = 0; index < Math.min(jobPointQuantity, jobPointMax); index++) {
       const modeledHappy = jobPointSpecial.happinessIndependent ? 0 : startingHappy
-      const next = estimateEnergyEquivalentGain(stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
+      const next = estimateEnergyEquivalentGain(jobPointStat, stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
       stat += next
       gain += next
     }
     return {
       gain,
       endingStat: stat,
-      perPoint: estimateEnergyEquivalentGain(jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
+      perPoint: estimateEnergyEquivalentGain(jobPointStat, jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
     }
   })()
   const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
@@ -631,7 +737,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     const days = clamp(projectionDays, 1, 3650)
     for (let day = 0; day < days; day++) {
       const result = estimateGymSession({
-        stat, happy, energy: dailyEnergy, dots: selectedDots,
+        stat, statKey: selectedStat, happy, energy: dailyEnergy, dots: selectedDots,
         energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
       })
       stat = result.endingStat
@@ -644,7 +750,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       totalGain += result.statGain
     }
     return { stat, totalGain, energy: dailyEnergy * days, days }
-  }, [currentStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
+  }, [currentStat, selectedStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
 
   const permanentStatBookOptions: Array<{ stat: StatKey; title: string }> = [
     { stat: "strength", title: "Brawn Over Brains" },
@@ -676,6 +782,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       for (let day = 0; day < 31; day++) {
         const dayTrain = estimateGymSession({
           stat: statAtCompletion,
+          statKey: book.stat,
           happy: happyAtCompletion,
           energy: dailyEnergy,
           dots,
@@ -1093,9 +1200,20 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       <section className="tc-history-panel">
         <div className="tc-history-heading"><div><span>YOUR TORN ACTIVITY</span><h2>Gym training history</h2></div><span>{historyLoading ? "Syncing…" : historyConnected ? fmt(history?.totalLogs || logRows.length) + " records collected" : "Not connected"}</span></div>
         {historyLoading ? <p className="tc-muted">Loading your saved gym-training history…</p> : historyConnected && logRows.length > 0 ? (
-          <div className="tc-log-list">{logRows.slice(0, 6).map(log => <div className="tc-log-row" key={log.logId}>
-            <span>{prettyDate(log.timestamp)}</span><strong>{shortLogDetails(log)}</strong><small>Log #{log.logId}</small>
-          </div>)}</div>
+          <div className="tc-log-list">{logRows.slice(0, 6).map(log => {
+            const details = parseGymHistoryLog(log)
+            const statLabel = details.stat ? STAT_OPTIONS.find(option => option.value === details.stat)?.label || details.stat : "Battle stat"
+            return <div className="tc-log-row" key={log.logId}>
+              <div className="tc-log-date"><span>{prettyDate(log.timestamp)}</span><small>Log #{log.logId}</small></div>
+              <div className="tc-log-summary"><strong>{details.title}</strong><small>{statLabel}{details.energy !== null ? " · " + fmt(details.energy) + "E" : ""}</small></div>
+              <div className="tc-log-gain"><strong>{details.gain !== null ? "+" + fmt(details.gain, 2) : "Not in log"}</strong><small>Stat delta</small></div>
+              <div className="tc-log-after">
+                <strong>{details.statAfter !== null ? fmt(details.statAfter, 2) : "Not in log"}</strong>
+                <small>After train</small>
+                {details.statBefore !== null && <small>Before {fmt(details.statBefore, 2)}</small>}
+              </div>
+            </div>
+          })}</div>
         ) : historyConnected ? <p className="tc-muted">Your log collection is connected. No gym-training records have been collected yet.</p> : (
           <div className="tc-history-empty"><p>{history?.error || (history?.collectionEnabled ? "Your main portal consent is enabled, but Gym Training history still needs its User → Log key connection." : "Gym-training history is private. Enable historical collection and connect a key with User → Log access in Account Settings.")}</p>
             <button className="tc-secondary-button" onClick={() => onNavigate("/settings")}>Open Account Settings →</button>
