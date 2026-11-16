@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react"
 import "./training-calculator.css"
+import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
 type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
@@ -323,85 +324,6 @@ function prettyDate(timestamp: number): string {
   const date = new Date(timestamp * 1000)
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Date unavailable"
 }
-function parseGymHistoryLog(log: HistoryLog): GymHistoryDetails {
-  const record = log.record || {}
-  const fields = new Map<string, unknown[]>()
-  const collectFields = (value: unknown, depth = 0): void => {
-    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 4) return
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "")
-      const values = fields.get(normalized) || []
-      values.push(nested)
-      fields.set(normalized, values)
-      if (nested && typeof nested === "object") collectFields(nested, depth + 1)
-    }
-  }
-  collectFields(record)
-
-  const parseNumber = (value: unknown): number | null => {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null
-    if (typeof value !== "string") return null
-    const normalized = value.replace(/,/g, "").trim()
-    if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return null
-    const parsed = Number(normalized)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  const readNumber = (...keys: string[]): number | null => {
-    for (const key of keys) {
-      for (const value of fields.get(key.toLowerCase().replace(/[^a-z0-9]/g, "")) || []) {
-        const parsed = parseNumber(value)
-        if (parsed !== null) return parsed
-      }
-    }
-    return null
-  }
-  const readString = (...keys: string[]): string | null => {
-    for (const key of keys) {
-      for (const value of fields.get(key.toLowerCase().replace(/[^a-z0-9]/g, "")) || []) {
-        if (typeof value === "string" && value.trim()) return value.trim()
-      }
-    }
-    return null
-  }
-  const statFromValue = (value: string | null): StatKey | null => {
-    if (!value) return null
-    const normalized = value.toLowerCase().replace(/[^a-z]/g, "")
-    if (["strength", "str"].includes(normalized)) return "strength"
-    if (["defense", "def"].includes(normalized)) return "defense"
-    if (["speed", "spd"].includes(normalized)) return "speed"
-    if (["dexterity", "dex"].includes(normalized)) return "dexterity"
-    return null
-  }
-
-  const textParts = [
-    readString("description"), readString("text"), readString("message"),
-    readString("result"), readString("title"), log.title,
-  ].filter((value): value is string => Boolean(value))
-  const resultText = textParts.join(" ")
-  const trainingText = resultText.match(/training\s+(?:your\s+)?(strength|defense|speed|dexterity)/i)
-  const shortText = resultText.match(/you\s+(?:have\s+)?gained\s+([\d,]+(?:\.\d+)?)\s+(strength|defense|speed|dexterity)/i)
-  const fullText = resultText.match(/(?:increasing|increased)\s+it\s+by\s+([\d,]+(?:\.\d+)?)\s+to\s+([\d,]+(?:\.\d+)?)/i)
-  const statKeyField = (["strength", "defense", "speed", "dexterity"] as StatKey[]).find(key => fields.has(key))
-
-  const stat = statFromValue(readString("stat", "statName", "battleStat", "targetStat", "trainedStat", "attribute"))
-    || statFromValue(trainingText?.[1] || shortText?.[2] || null)
-    || statKeyField
-    || null
-  let gain = readNumber("gain", "statGain", "gained", "increase", "increasedBy", "amountGained", "statIncrease", "increaseAmount", "gainAmount", "delta", "statDelta")
-    ?? parseNumber(fullText?.[1])
-    ?? parseNumber(shortText?.[1])
-  let statAfter = readNumber("statAfter", "afterStat", "newStat", "resultingStat", "totalAfter", "newValue", "currentValue", "resultValue", "finalStat")
-    ?? parseNumber(fullText?.[2])
-  let statBefore = readNumber("statBefore", "beforeStat", "previousStat", "oldStat", "priorStat", "startingStat", "initialStat")
-  if (statAfter !== null && gain !== null && statBefore === null) statBefore = statAfter - gain
-  if (statBefore !== null && gain !== null && statAfter === null) statAfter = statBefore + gain
-  if (statBefore !== null && statAfter !== null && gain === null) gain = statAfter - statBefore
-
-  const energy = readNumber("energyUsed", "energySpent", "energy", "amountEnergy", "amount")
-  const title = readString("title") || log.title || "Gym training"
-  return { title, stat, energy, gain, statBefore, statAfter }
-}
-
 type TrainingCalculatorProps = { playerName: string; apiBase: string; sessionToken: string; onNavigate: (path: string) => void }
 
 export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken, onNavigate }: TrainingCalculatorProps) {
@@ -1205,7 +1127,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             const statLabel = details.stat ? STAT_OPTIONS.find(option => option.value === details.stat)?.label || details.stat : "Battle stat"
             return <div className="tc-log-row" key={log.logId}>
               <div className="tc-log-date"><span>{prettyDate(log.timestamp)}</span><small>Log #{log.logId}</small></div>
-              <div className="tc-log-summary"><strong>{details.title}</strong><small>{statLabel}{details.energy !== null ? " · " + fmt(details.energy) + "E" : ""}</small></div>
+              <div className="tc-log-summary"><strong>{details.title}</strong><small>{statLabel}{details.energy !== null ? " · " + fmt(details.energy) + "E" : ""}{details.trains !== null ? " · " + fmt(details.trains) + (details.trains === 1 ? " train" : " trains") : ""}{details.happyUsed !== null ? " · " + fmt(details.happyUsed) + " happy used" : ""}{details.gym !== null ? " · " + (liveData?.gym && String(liveData.gym.id) === String(details.gym) ? liveData.gym.name : liveData?.gyms?.find(gym => String(gym.id) === String(details.gym))?.name || "Gym #" + fmt(details.gym)) : ""}</small></div>
               <div className="tc-log-gain"><strong>{details.gain !== null ? "+" + fmt(details.gain, 2) : "Not in log"}</strong><small>Stat delta</small></div>
               <div className="tc-log-after">
                 <strong>{details.statAfter !== null ? fmt(details.statAfter, 2) : "Not in log"}</strong>
