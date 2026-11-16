@@ -1,8 +1,7 @@
 name: Deploy Naughty Family acceptance staging
 
 on:
-  # Full acceptance staging is manual by default. Only commits that change
-  # these review harness files trigger a targeted staging validation run.
+  # Manual only. Pushes to portal-rebuild must never start a D1-backed staging run.
   workflow_dispatch:
     inputs:
       confirm_target:
@@ -11,41 +10,6 @@ on:
         type: choice
         options:
           - naughtyfamily-staging
-  push:
-    branches:
-      - portal-rebuild
-    paths:
-      - ".github/workflows/deploy-staging-acceptance.yml"
-      - "scripts/test-staging-admin-acceptance.mjs"
-      - "scripts/test-admin-role-registry.mjs"
-      - "src/components/floor/admin-panel.tsx"
-      - "scripts/test-staging-sustained-load.mjs"
-      - "scripts/refresh-staging-load-fixture.mjs"
-      - "scripts/seed-staging-private-history.mjs"
-      - "scripts/cleanup-staging-private-history.mjs"
-      - "scripts/test-staging-responsive.mjs"
-      - "scripts/test-staging-features.mjs"
-      - "migrations/auth/0033_gym_training_history.sql"
-      - "migrations/auth/0034_portal_api_key_usage_consent.sql"
-      - "migrations/auth/0035_portal_api_key_access_type.sql"
-      - "src/components/floor/floor-app.tsx"
-      - "src/lib/gym-training/logs.ts"
-      - "scripts/test-gym-training-history.mjs"
-      - "scripts/test-backend.mjs"
-      - "scripts/test-portal-first-login-consent.mjs"
-      - "scripts/test-private-live-consent.mjs"
-      - "scripts/test-torn-event-calendar-windows.mjs"
-      - "package.json"
-      - "src/worker/index.ts"
-      - "src/worker/daily-read-cache.ts"
-      - "wrangler.acceptance.toml"
-      - "src/components/portal/workspaces.tsx"
-      - "src/components/portal/christmas-town.tsx"
-      - "scripts/test-christmas-town-consent.mjs"
-      - "src/components/portal/workspaces.css"
-      - "migrations/auth/0029_halloween_historical_event_years.sql"
-      - "scripts/test-halloween-key-consent.mjs"
-
 permissions:
   contents: read
 
@@ -55,7 +19,7 @@ concurrency:
 
 jobs:
   deploy-staging:
-    if: github.ref == 'refs/heads/portal-rebuild' && (github.event_name == 'push' || inputs.confirm_target == 'naughtyfamily-staging')
+    if: github.ref == 'refs/heads/portal-rebuild' && github.event_name == 'workflow_dispatch' && inputs.confirm_target == 'naughtyfamily-staging'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
