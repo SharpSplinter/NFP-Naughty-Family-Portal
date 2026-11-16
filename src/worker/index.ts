@@ -9362,10 +9362,15 @@ export default {
       const db = requireDb(env)
       const rows = await db.prepare("SELECT company_id, company_name, company_type, fetched_at FROM companies WHERE player_id = ? ORDER BY fetched_at DESC").bind(session.player_id).all<Record<string, unknown>>()
       const keys = await db.prepare("SELECT company_id, company_name, company_type, last_four, updated_at FROM company_api_keys WHERE player_id = ? ORDER BY updated_at DESC").bind(session.player_id).all<Record<string, unknown>>()
-      const portalKey = await savedKey(env, session.player_id)
+      const companyKeyRows = keys.results ?? []
+      // The saved-company list is also used by members who have already
+      // disconnected every company-specific key. In that case there is no
+      // comparison to make, so do not decrypt the primary portal key merely
+      // to render the records already persisted for this member.
+      const portalKey = companyKeyRows.length ? await savedKey(env, session.player_id) : null
       const merged = new Map<string, Record<string, unknown>>()
       for (const row of rows.results ?? []) merged.set(String(row.company_id), row)
-      for (const row of keys.results ?? []) {
+      for (const row of companyKeyRows) {
         const id = String(row.company_id)
         const current = merged.get(id)
         const companyKey = await savedCompanyApiKey(env, session.player_id, id)
