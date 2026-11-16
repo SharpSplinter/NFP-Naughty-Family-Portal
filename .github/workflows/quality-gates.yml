@@ -39,5 +39,9 @@ jobs:
         run: |
           node --check scripts/ensure-faction-performance-integration-queues.mjs
           node --check scripts/run-faction-performance-staging-integration.mjs
+          node --check scripts/test-staging-features.mjs
+          node --check scripts/test-staging-admin-acceptance.mjs
+          node --check scripts/staging-d1-read-budget.mjs
+          node --check scripts/test-staging-safety-contract.mjs
       - name: Run backend regression suite
         run: npm test

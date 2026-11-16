@@ -11,6 +11,8 @@ assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "D1-backed accept
 assert.match(workflow, /inputs\.feature_suite/);
 assert.match(workflow, /Run exactly one selected feature suite/);
 assert.match(workflow, /Start hard account-wide D1 rows-read budget/);
+assert.match(workflow, /Enforce D1 rows-read budget before fixture seeding/);
+assert.match(workflow, /steps\.staging_fixtures\.outcome != 'skipped'/, "Cleanup must not touch D1 when the budget preflight blocks the run.");
 assert.match(workflow, /Enforce D1 rows-read budget after selected feature/);
 assert.match(workflow, /Final D1 rows-read budget check after cleanup/);
 assert.doesNotMatch(workflow, /test-staging-sustained-load\.mjs/, "Acceptance must not run the sustained D1 load test.");
