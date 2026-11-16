@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseGymHistoryLog } from "../src/lib/gym-training/history.js";
+import { normalizeTornGymDotValue } from "../src/lib/gym-training/dots.js";
 
 const read = path => readFileSync(resolve(process.cwd(), path), "utf8");
 const worker = read("src/worker/index.ts");
@@ -11,6 +12,12 @@ const classifier = read("src/lib/gym-training/logs.ts");
 const calculator = read("src/components/portal/training-calculator.tsx");
 
 assert.ok(classifier.includes("const explicitGymTraining ="));
+
+assert.equal(normalizeTornGymDotValue(0.729), 7.29, "Torn API v2 fractional multiplier must be converted to displayed gym dots");
+assert.equal(normalizeTornGymDotValue(7.29), 7.29, "already normalized gym dots must remain unchanged");
+assert.equal(normalizeTornGymDotValue(72.9), 7.29, "legacy API values scaled by ten must be normalized");
+assert.equal(normalizeTornGymDotValue(0), null, "zero gym modifiers represent an unavailable training stat");
+assert.equal(normalizeTornGymDotValue(null), null, "missing gym modifiers must remain unavailable");
 assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
 assert.ok(classifier.includes("return gymCategory && trainingSignal"));
