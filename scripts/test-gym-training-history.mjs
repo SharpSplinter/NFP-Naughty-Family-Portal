@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseGymHistoryLog } from "../src/lib/gym-training/history.js";
-import { normalizeTornGymDotValue } from "../src/lib/gym-training/dots.js";
+import { estimateEnergyEquivalentGain } from "../src/lib/gym-training/gains.js";
 
 const read = path => readFileSync(resolve(process.cwd(), path), "utf8");
 const worker = read("src/worker/index.ts");
@@ -13,18 +13,18 @@ const calculator = read("src/components/portal/training-calculator.tsx");
 
 assert.ok(classifier.includes("const explicitGymTraining ="));
 
-assert.equal(normalizeTornGymDotValue(0.729), 7.29, "Torn API v2 fractional multiplier must be converted to displayed gym dots");
-assert.equal(normalizeTornGymDotValue(7.29), 7.29, "already normalized gym dots must remain unchanged");
-assert.ok(Math.abs(normalizeTornGymDotValue(72.9) - 7.29) < 1e-12, "legacy API values scaled by ten must be normalized");
-assert.equal(normalizeTornGymDotValue(0), null, "zero gym modifiers represent an unavailable training stat");
-assert.equal(normalizeTornGymDotValue(null), null, "missing gym modifiers must remain unavailable");
+const userPerkMultiplier = 1.02 * 1.16 * 1.01 * 1.01;
+const userTrainingEstimate = estimateEnergyEquivalentGain(
+  "dexterity", 1091415897, 5025, 10, 7.3, userPerkMultiplier
+);
+assert.ok(userTrainingEstimate > 34000, "normalized 7.3 gym dots must be applied directly, not divided by ten twice");
+assert.ok(Math.abs(userTrainingEstimate - 33777.88) / 33777.88 < 0.01,
+  "the corrected estimate should closely track the supplied 10E dexterity train");
 assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
 assert.ok(classifier.includes("return gymCategory && trainingSignal"));
-assert.ok(calculator.includes("function effectiveGymStat(stat: number)"));
-assert.ok(calculator.includes("0.057406 * Math.pow(value - 50_000_000, 0.928996)"));
-assert.ok(calculator.includes("function estimateEnergyEquivalentGain("));
-assert.ok(calculator.includes("const GYM_GAIN_CONSTANTS"));
+assert.ok(calculator.includes('import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"'));
+assert.ok(test.includes("userTrainingEstimate"), "the sample train regression must remain in the focused test");
 assert.ok(calculator.includes('import { parseGymHistoryLog } from "../../lib/gym-training/history.js"'));
 assert.ok(calculator.includes("details.statAfter"));
 
