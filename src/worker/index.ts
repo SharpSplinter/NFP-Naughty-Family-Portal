@@ -7305,7 +7305,9 @@ export default {
       const fetchGymCatalogue = async (): Promise<Record<string, unknown> | null> => {
         const cached = publicCache.get("/torn/gyms")
         if (cached && !Array.isArray(cached.payload.gyms)) publicCache.delete("/torn/gyms")
-        const keys = [publicKey, env.TORN_API_KEY_CUSTOM?.trim() || "", memberKey]
+        // /torn/gyms requires public access. Keep this request on the
+        // dedicated service credential path; never borrow a member's personal key.
+        const keys = [workerServiceTornApiKey(env), env.TORN_API_KEY_CUSTOM?.trim() || ""]
           .filter((key, index, values) => Boolean(key) && values.indexOf(key) === index)
         for (const key of keys) {
           const payload = await getJson("/torn/gyms", key, "training-calculator-gym-catalogue", "gymCatalogue", false)

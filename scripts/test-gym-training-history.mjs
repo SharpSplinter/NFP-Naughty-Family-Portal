@@ -21,6 +21,8 @@ assert.ok(calculator.includes("function parseGymHistoryLog(log: HistoryLog)"));
 assert.ok(calculator.includes("details.statAfter"));
 assert.ok(calculator.includes("Before {fmt(details.statBefore, 2)}"));
 assert.ok(worker.includes("const fetchGymCatalogue = async"));
+assert.ok(worker.includes("const keys = [workerServiceTornApiKey(env), env.TORN_API_KEY_CUSTOM?.trim() || \"\"]"));
+assert.ok(!worker.includes("const keys = [publicKey, env.TORN_API_KEY_CUSTOM?.trim() || \"\", memberKey]"));
 assert.ok(worker.includes("delete errors.gymCatalogue"));
 assert.ok(worker.includes('selection (HTTP " + response.status'));
 assert.match(migration, /CREATE TABLE IF NOT EXISTS gym_training_historical_keys/);
