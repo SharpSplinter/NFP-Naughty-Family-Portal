@@ -1,0 +1,58 @@
+name: Live Torn calendar acceptance (staging only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: torn-calendar-live-staging-acceptance
+  cancel-in-progress: false
+
+jobs:
+  live-staging-calendar:
+    if: github.ref == 'refs/heads/portal-rebuild' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out portal-rebuild
+        uses: actions/checkout@v7
+        with:
+          ref: portal-rebuild
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Start hard account-wide D1 read budget
+        id: d1_budget_start
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-torn-calendar-d1-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs start
+
+      - name: Authenticate once and read the live Torn calendar through staging
+        env:
+          TORN_API_KEY: ${{ secrets.TORN_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-torn-calendar-d1-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs watch -- node scripts/staging-torn-calendar-e2e.mjs
+
+      - name: Enforce final D1 rows-read budget
+        if: always() && steps.d1_budget_start.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-torn-calendar-d1-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs check
