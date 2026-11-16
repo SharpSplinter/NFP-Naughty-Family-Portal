@@ -27,6 +27,23 @@ async function loadPrivateHistory(token, label, expectedPlayerId, expectedSeries
   const session = await sessionResponse.json();
   assert.equal(session.player.id, expectedPlayerId, label + " session should resolve to its own synthetic player ID.");
   assert.equal(session.isAdmin, false, label + " fixture must not receive administrator privileges.");
+  assert.equal(session.setupRequired, false, label + " synthetic consent fixture must pass the current portal setup gate.");
+
+  const consentResponse = await authenticatedGet(token, apiBase + "/api/me/portal-consent");
+  assert.equal(consentResponse.status, 200, label + " portal consent status should be readable.");
+  const consent = await consentResponse.json();
+  assert.equal(consent.required, false, label + " portal consent should be current: " + JSON.stringify({
+    consentVersion: consent.consent?.consentVersion,
+    policyVersion: consent.consent?.policyVersion,
+    apiKeyUsageAccepted: consent.consent?.apiKeyUsageAccepted,
+    apiKeyAccessType: consent.consent?.apiKeyAccessType,
+  }));
+
+  const companiesResponse = await authenticatedGet(token, apiBase + "/api/me/companies");
+  assert.equal(companiesResponse.status, 200, label + " authenticated company list should be readable.");
+  const companiesPayload = await companiesResponse.json();
+  assert.ok((companiesPayload.companies || []).some(company => String(company.company_id) === companyId),
+    label + " company list should contain the seeded private-history company.");
 
   const response = await authenticatedGet(token, historyUrl);
   const payload = await response.json().catch(() => null);
@@ -79,10 +96,24 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const failures = [];
-const browserDiagnostics = { pageErrors: [], consoleErrors: [], requestFailures: [] };
+const browserDiagnostics = { pageErrors: [], consoleErrors: [], requestFailures: [], apiRequests: [], apiResponses: [] };
 page.on("pageerror", error => browserDiagnostics.pageErrors.push(error.message));
 page.on("console", message => {
   if (message.type() === "error") browserDiagnostics.consoleErrors.push(message.text());
+});
+page.on("request", request => {
+  const url = new URL(request.url());
+  if (url.pathname.startsWith("/api/")) browserDiagnostics.apiRequests.push({
+    method: request.method(),
+    path: url.pathname,
+  });
+});
+page.on("response", response => {
+  const url = new URL(response.url());
+  if (url.pathname.startsWith("/api/")) browserDiagnostics.apiResponses.push({
+    status: response.status(),
+    path: url.pathname,
+  });
 });
 page.on("requestfailed", request => {
   if (request.url().includes("/api/")) browserDiagnostics.requestFailures.push({
@@ -110,17 +141,18 @@ try {
     new URL(response.url()).pathname === "/api/me/companies/" + companyId && response.request().method() === "GET",
   { timeout: 25000 }).catch(() => null);
 
-  const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
+  const response = await page.goto(baseUrl.replace(/\/$/, "") + "/company", { waitUntil: "networkidle", timeout: 30000 });
   assert.ok(response?.ok(), "Staging portal returned HTTP " + response?.status());
 
   const restoredSessionResponse = await restoredSessionPromise;
-  assert.ok(restoredSessionResponse, "The browser did not restore the authenticated staging session.");
+  assert.ok(restoredSessionResponse, "The browser did not restore the authenticated staging session. Browser diagnostics: " + JSON.stringify(browserDiagnostics));
   assert.equal(restoredSessionResponse.status(), 200, "The browser session restore should succeed.");
   const restoredSession = await restoredSessionResponse.json();
   assert.equal(String(restoredSession?.player?.id ?? ""), playerId, "The browser must restore the expected staging fixture player.");
+  assert.equal(restoredSession?.setupRequired, false, "The browser session must pass current policy setup before entering the company workspace.");
 
   const companiesResponse = await companiesPromise;
-  assert.ok(companiesResponse, "The browser did not load the authenticated company list.");
+  assert.ok(companiesResponse, "The browser did not load the authenticated company list. Browser diagnostics: " + JSON.stringify(browserDiagnostics));
   assert.equal(companiesResponse.status(), 200, "The authenticated company list should load.");
   const companyList = await companiesResponse.json();
   assert.ok((companyList.companies || []).some(company => String(company.company_id) === companyId),
