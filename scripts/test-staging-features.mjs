@@ -260,7 +260,7 @@ try {
   // Christmas Town archive and the calendar-derived current-season window.
   await page.getByRole("button", { name: "Return to portal" }).click();
   await page.getByRole("button", { name: "Christmas Town" }).click();
-  await page.getByRole("heading", { name: /Christmas Town/ }).waitFor({ state: "visible", timeout: 15000 });
+  await page.getByRole("heading", { name: "Christmas Town", exact: true }).waitFor({ state: "visible", timeout: 15000 });
   await page.getByText(/^PRESENT PICK$/i).waitFor({ state: "visible", timeout: 15000 });
   assert.ok((await page.locator("main").innerText()).includes("All time"));
   await page.screenshot({ path: "test-results/staging-features/christmas-town.png", fullPage: true });
