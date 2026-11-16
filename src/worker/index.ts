@@ -28,6 +28,7 @@ import { calculateHalloweenEventMetrics, calculateHalloweenRevitalizeMetrics, em
 import { calculateHalloweenExchangeMarketValue, type HalloweenExchangeMarketPriceRecord, type HalloweenExchangeMarketValue } from "../lib/halloween/market-value"
 import { applyChristmasTownMarketPrices, calculateChristmasTownMetrics, type ChristmasTownEventLogRow } from "../lib/christmas-town/metrics"
 import { isGymTrainingLog } from "../lib/gym-training/logs"
+import { normalizeTornGymDotValue } from "../lib/gym-training/dots.js"
 import { parsePrivateLiveBars, parsePrivateLiveCooldowns, parsePrivateLiveNetworth } from "../lib/faction-performance/private-live"
 import { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } from "./snapshot-provenance"
 import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company-history"
@@ -7445,8 +7446,7 @@ export default {
         const modifiers = isRecord(gym.modifiers) ? gym.modifiers : {}
         const rawDots = (stat: string): number | null => {
           const raw = modifiers[stat]
-          if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null
-          return raw > 10 ? raw / 10 : raw
+          return normalizeTornGymDotValue(raw)
         }
         const unlocked = unlockedById.get(String(gym.id))
         return {
