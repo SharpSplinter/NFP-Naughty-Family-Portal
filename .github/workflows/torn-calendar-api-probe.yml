@@ -16,6 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: Check out portal-rebuild for staging integration
+        uses: actions/checkout@v7
+        with:
+          ref: portal-rebuild
+
+      - name: Set up Node.js for staging integration
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
       - name: Query Torn calendar endpoints with the repository API key
         shell: bash
         env:
