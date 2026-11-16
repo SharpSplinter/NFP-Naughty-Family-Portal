@@ -112,7 +112,7 @@ if (mode === "start") {
     dailyStopRows,
     startedAt: new Date().toISOString(),
   };
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n", { flag: "wx" });
+  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", { flag: "wx" });
   console.log("D1 BUDGET START " + JSON.stringify({
     baselineRowsRead: currentRows,
     perRunBudgetRows: runBudgetRows,
@@ -146,7 +146,13 @@ if (mode === "start") {
       if (child.pid && process.platform !== "win32") process.kill(-child.pid, "SIGTERM");
       else child.kill("SIGTERM");
     } catch {}
-    const stopped = await Promise.race([childExit, sleep(5000).then(() => null)]);
+    const stopped = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(null), 5000);
+      childExit.then(result => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
     if (stopped === null) {
       try {
         if (child.pid && process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
@@ -159,10 +165,13 @@ if (mode === "start") {
 
   let outcome;
   for (;;) {
-    outcome = await Promise.race([
-      childExit.then(result => ({ type: "exit", result })),
-      sleep(pollIntervalMs).then(() => ({ type: "poll" })),
-    ]);
+    outcome = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve({ type: "poll" }), pollIntervalMs);
+      childExit.then(result => {
+        clearTimeout(timer);
+        resolve({ type: "exit", result });
+      });
+    });
     if (outcome.type === "exit") break;
     try {
       assertBudget(await readAccountRows(), state, "WATCH");
