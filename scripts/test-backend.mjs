@@ -23,6 +23,7 @@ const sourceFiles = [
   "src/lib/halloween/metrics.ts",
   "src/lib/christmas-town/metrics.ts",
    "src/lib/gym-training/logs.ts",
+  "src/lib/gym-training/dots.js",
   "src/lib/torn/types.ts",
   "src/worker/index.ts",
   "src/worker/snapshot-provenance.ts",
