@@ -279,9 +279,9 @@ jobs:
           STAGING_FEATURE_SUITE: ${{ inputs.feature_suite }}
         run: |
           case "${STAGING_FEATURE_SUITE}" in
-            halloween|christmas-town|gym-training|discord|consent) node scripts/test-staging-features.mjs ;;
-            company-dashboard) node scripts/test-staging-responsive.mjs ;;
-            admin) node scripts/refresh-staging-load-fixture.mjs && node scripts/test-staging-admin-acceptance.mjs ;;
+            halloween|christmas-town|gym-training|discord|consent) node scripts/staging-d1-read-budget.mjs watch -- node scripts/test-staging-features.mjs ;;
+            company-dashboard) node scripts/staging-d1-read-budget.mjs watch -- node scripts/test-staging-responsive.mjs ;;
+            admin) node scripts/staging-d1-read-budget.mjs watch -- bash -lc 'node scripts/refresh-staging-load-fixture.mjs && node scripts/test-staging-admin-acceptance.mjs' ;;
             *) echo "Unsupported selective staging feature: ${STAGING_FEATURE_SUITE}" >&2; exit 2 ;;
           esac
 
