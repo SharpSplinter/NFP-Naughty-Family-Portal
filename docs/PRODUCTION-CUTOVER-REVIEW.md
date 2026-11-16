@@ -461,7 +461,7 @@ No production portal migrations, portal Worker code deployment, `naughtyfamily` 
 ## 15. 2026-11-16 release-gate refresh (candidate `portal-rebuild`)
 
 **Runtime candidate used by the Christmas Town/Gym Training feature runs:** `ad08d8f11400b7478ba514e3d8cc30fbc6a2e709`  
-**Branch head after the live-calendar workflow and review updates:** `ae67a743560e14ed893a6090267511abb49958b1` (subsequent commits were workflow/script and documentation changes; no Worker runtime source change)
+**Branch head after the live-calendar workflow and review updates:** `113d4c922679cb3f694704c9a1c34f17eab77201` (subsequent commits were workflow/script and documentation changes; no Worker runtime source change)
 **Decision:** **NO-GO for production cutover.** This update is scoped to the `portal-rebuild` source branch and read-only production metadata inspection. No production Worker/Pages deploy, production D1 query or migration, secret change, or administrator-data mutation was performed.
 
 ### Current candidate acceptance
