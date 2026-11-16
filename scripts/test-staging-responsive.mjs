@@ -141,7 +141,7 @@ try {
     new URL(response.url()).pathname === "/api/me/companies/" + companyId && response.request().method() === "GET",
   { timeout: 25000 }).catch(() => null);
 
-  const response = await page.goto(baseUrl.replace(/\/$/, "") + "/company", { waitUntil: "networkidle", timeout: 30000 });
+  const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
   assert.ok(response?.ok(), "Staging portal returned HTTP " + response?.status());
 
   const restoredSessionResponse = await restoredSessionPromise;
