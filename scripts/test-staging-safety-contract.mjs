@@ -23,7 +23,7 @@ assert.match(budget, /HARD_DAILY_STOP_ROWS = 4000000/);
 assert.match(budget, /Refusing staging without a measurable D1 budget/);
 assert.match(budget, /deltaRows > state\.runBudgetRows/);
 assert.match(budget, /mode === "watch"/);
-assert.match(budget, /setTimeout\(resolve, pollIntervalMs\)/);
+assert.ok(budget.includes('setTimeout(() => resolve({ type: "poll" }), pollIntervalMs)'), "The watchdog must poll D1 analytics while the selected feature is running.");
 assert.match(budget, /D1 budget watchdog stopped the selected feature test/);
 assert.match(workflow, /staging-d1-read-budget\.mjs watch -- node scripts\/test-staging-features\.mjs/);
 assert.match(admin, /const adminEndpoints = \[\s*"\/api\/admin\/overview",\s*"\/api\/admin\/members\?limit=10",\s*"\/api\/admin\/data-governance\?limit=10"/);
