@@ -26,6 +26,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Check the live acceptance script syntax
+        run: node --check scripts/staging-torn-calendar-e2e.mjs
+
       - name: Start hard account-wide D1 read budget
         id: d1_budget_start
         env:
