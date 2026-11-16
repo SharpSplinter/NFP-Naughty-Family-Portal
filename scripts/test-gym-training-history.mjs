@@ -15,7 +15,7 @@ assert.ok(classifier.includes("const explicitGymTraining ="));
 
 assert.equal(normalizeTornGymDotValue(0.729), 7.29, "Torn API v2 fractional multiplier must be converted to displayed gym dots");
 assert.equal(normalizeTornGymDotValue(7.29), 7.29, "already normalized gym dots must remain unchanged");
-assert.equal(normalizeTornGymDotValue(72.9), 7.29, "legacy API values scaled by ten must be normalized");
+assert.ok(Math.abs(normalizeTornGymDotValue(72.9) - 7.29) < 1e-12, "legacy API values scaled by ten must be normalized");
 assert.equal(normalizeTornGymDotValue(0), null, "zero gym modifiers represent an unavailable training stat");
 assert.equal(normalizeTornGymDotValue(null), null, "missing gym modifiers must remain unavailable");
 assert.ok(classifier.includes("const gymCategory ="));
