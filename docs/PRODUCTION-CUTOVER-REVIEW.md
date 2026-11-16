@@ -60,9 +60,9 @@ These values were read from Cloudflare and the live production D1 database durin
 | Legacy Pages site | `https://naughty-company-dashboard.pages.dev` |
 | Legacy Pages canonical production deployment | `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13; PR #155 frontend) |
 | New Pages target | `https://naughtyfamily.pages.dev`; no production deployment yet |
-| New Pages API base | `https://naughty-company-api.kboone801.workers.dev` |
+| New Pages API base | `https://naughtyfamily-api.kboone801.workers.dev` |
 
-The live production D1 ledger now contains 16 migration records and ends with `0012_company_ranking_snapshots.sql`; the live schema has 41 tables. The pending portal branch migrations are `0012_administrator_registry.sql` and `0013` through `0025`. The two `0012` filenames are distinct migration records; the read-only ledger confirmed only the company-ranking file is applied in production. Production is not a clean or empty database. Do not repoint acceptance resources at production.
+At the last recorded read-only production D1 check (2026-11-14), the ledger contained 16 migration records and ended with `0012_company_ranking_snapshots.sql`; the schema had 41 tables. The portal branch additions after that recorded baseline are `0012_administrator_registry.sql` and `0013` through `0037`. The two `0012` filenames are distinct. This production ledger is not freshly re-read as part of the 2026-11-16 staging work; reconcile the exact live filenames immediately before any approved migration. Production is not a clean or empty database. Do not repoint acceptance resources at production.
 
 Cloudflare D1 Time Travel bookmarks are generated automatically; there is no manual bookmark-creation action. A fresh read-only `GET` of the current bookmark was completed at **2026-11-14T04:23:12.859Z** for production D1 `naughty-company-dashboard`. It returned `000004ca-0000033a-00005123-06be4f012000b1afd17db773eeaf4ef8`, unchanged from the export-time bookmark recorded in Section 6. This is a freshly revalidated current-bookmark reference, **not a newly minted snapshot**. Cloudflare documents that bookmarks advance automatically and can also move due to internal maintenance without application SQL writes. Re-read the current bookmark immediately before the actual migration if the cutover is delayed or any writes/maintenance events occur.
 
@@ -460,7 +460,8 @@ No production portal migrations, portal Worker code deployment, `naughtyfamily` 
 
 ## 15. 2026-11-16 release-gate refresh (candidate `portal-rebuild`)
 
-**Candidate:** `ad08d8f11400b7478ba514e3d8cc30fbc6a2e709`  
+**Runtime candidate used by the Christmas Town/Gym Training feature runs:** `ad08d8f11400b7478ba514e3d8cc30fbc6a2e709`  
+**Branch head after the live-calendar workflow and review updates:** `ae67a743560e14ed893a6090267511abb49958b1` (subsequent commits were workflow/script and documentation changes; no Worker runtime source change)
 **Decision:** **NO-GO for production cutover.** This update is scoped to the `portal-rebuild` source branch and read-only production metadata inspection. No production Worker/Pages deploy, production D1 query or migration, secret change, or administrator-data mutation was performed.
 
 ### Current candidate acceptance
