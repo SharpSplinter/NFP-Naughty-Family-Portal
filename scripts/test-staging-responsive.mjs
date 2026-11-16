@@ -302,8 +302,8 @@ try {
   const privateLiveCard = settingsModule.locator(".settings-private-live-card");
   await privateLiveCard.waitFor({ state: "visible", timeout: 10000 });
 
-  // Optional sharing toggles now live in the centralized privacy/setup workspace,
-  // not in Account Settings. Verify them there instead of expecting duplicate prompts.
+  // Central private-data visibility now lives in the setup/privacy workspace.
+  // Verify the three visibility choices and the separate networth checkbox there.
   // Use a separate first-login member/context. The authenticated Company
   // Dashboard account above is already onboarded and should not be expected to
   // see the mandatory setup workspace.
@@ -320,12 +320,14 @@ try {
   }, consentSessionToken);
   await setupPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
   await setupPage.locator(".portal-setup-page").waitFor({ state: "visible", timeout: 20000 });
-  const dataSharingSection = setupPage.locator(".portal-setup-section").filter({
-    has: setupPage.getByRole("heading", { name: "Data sharing", exact: true }),
+  const visibilitySection = setupPage.locator(".portal-setup-section").filter({
+    has: setupPage.getByRole("heading", { name: "Private-data visibility", exact: true }),
   });
-  await dataSharingSection.waitFor({ state: "visible", timeout: 10000 });
-  const sharingControls = dataSharingSection.locator("label.portal-setup-check");
-  assert.equal(await sharingControls.count(), 2, "Central setup should expose the optional live-sharing and networth choices.");
+  await visibilitySection.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await visibilitySection.locator('input[type="radio"][name="private-data-visibility"]').count(), 3,
+    "Central setup should expose Self only, Faction Leaders/Staff/Council, and All Naughty Souls members choices.");
+  assert.equal(await visibilitySection.locator("label.portal-setup-subcheck input[type=checkbox]").count(), 1,
+    "Detailed networth must remain a separate optional checkbox.");
   for (const viewport of viewports) {
     await settingsPage.setViewportSize({ width: viewport.width, height: viewport.height });
     await settingsPage.waitForTimeout(80);
@@ -361,30 +363,30 @@ try {
     await setupPage.waitForTimeout(80);
     const setupMetrics = await setupPage.evaluate(() => {
       const root = document.documentElement;
-      const sharing = [...document.querySelectorAll(".portal-setup-section")].find(section =>
-        section.querySelector("h2")?.textContent?.trim() === "Data sharing"
+      const visibility = [...document.querySelectorAll(".portal-setup-section")].find(section =>
+        section.querySelector("h2")?.textContent?.trim() === "Private-data visibility"
       );
-      const controls = [...(sharing?.querySelectorAll("label.portal-setup-check") || [])].map(label => {
+      const controls = [...(visibility?.querySelectorAll("label.portal-setup-check") || [])].map(label => {
         const box = label.getBoundingClientRect();
-        const checkbox = label.querySelector('input[type="checkbox"]')?.getBoundingClientRect();
+        const input = label.querySelector("input")?.getBoundingClientRect();
         return {
           left: Math.round(box.left),
           right: Math.round(box.right),
-          checkboxLeft: checkbox ? Math.round(checkbox.left) : null,
-          checkboxWidth: checkbox ? checkbox.width : 0,
+          inputLeft: input ? Math.round(input.left) : null,
+          inputWidth: input ? input.width : 0,
         };
       });
       return { documentWidth: root.scrollWidth, bodyWidth: document.body.scrollWidth, controls };
     });
-    const sharingLabelsReadable = setupMetrics.controls.length === 2 &&
+    const visibilityLabelsReadable = setupMetrics.controls.length === 4 &&
       setupMetrics.controls.every(control => control.left >= -1 && control.right <= viewport.width + 1 &&
-        control.checkboxLeft !== null && control.checkboxLeft >= control.left - 1 &&
-        control.checkboxLeft <= control.left + 20 && control.checkboxWidth >= 14 && control.checkboxWidth <= 22);
+        control.inputLeft !== null && control.inputLeft >= control.left - 1 &&
+        control.inputLeft <= control.left + 24 && control.inputWidth >= 14 && control.inputWidth <= 24);
     const setupWithinViewport = setupMetrics.documentWidth <= viewport.width + 1 &&
       setupMetrics.bodyWidth <= viewport.width + 1;
-    console.log((withinViewport && sharingLabelsReadable && setupWithinViewport ? "PASS " : "FAIL ") + "settings-" + viewport.label + ": " + JSON.stringify({ settings: metrics, setup: setupMetrics }));
+    console.log((withinViewport && visibilityLabelsReadable && setupWithinViewport ? "PASS " : "FAIL ") + "settings-" + viewport.label + ": " + JSON.stringify({ settings: metrics, setup: setupMetrics }));
     assert.ok(withinViewport, "Account Settings overflowed or a card exceeded the viewport at " + viewport.label);
-    assert.ok(sharingLabelsReadable, "Central data-sharing controls are missing or misaligned at " + viewport.label);
+    assert.ok(visibilityLabelsReadable, "Central private-data visibility controls are missing or misaligned at " + viewport.label);
     assert.ok(setupWithinViewport, "Central setup overflowed the viewport at " + viewport.label);
     assert.ok(metrics.rowGap >= 8, "Account Settings cards are too tightly spaced at " + viewport.label);
     await settingsPage.screenshot({ path: "test-results/staging-responsive/settings-" + viewport.label + ".png", fullPage: true });
@@ -392,7 +394,7 @@ try {
   }
   await settingsPage.close();
   await setupContext.close();
-  console.log("PASS Account Settings and centralized sharing controls at " + viewports.length + " viewports.");
+  console.log("PASS Account Settings and centralized privacy controls at " + viewports.length + " viewports.");
 
   // Confirm a narrow screen can switch to another top-level area without losing the Company shell.
   await page.setViewportSize({ width: 390, height: 844 });
