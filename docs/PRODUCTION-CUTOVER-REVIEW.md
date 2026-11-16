@@ -1,7 +1,7 @@
 # Production backup, migration, rollback and cutover review
 
 **Original review date:** 2026-11-03  
-**State refresh:** 2026-11-14 04:24 UTC (current Time Travel bookmark re-read, production D1/Worker/Pages baseline rechecked, PR-head quality gates reviewed)  
+**State refresh:** 2026-11-16 02:37 UTC (selected staging acceptance, Torn calendar probe, migration inventory, rollback Pages configuration and outstanding restore/service-key gates refreshed)
 **Scope:** PR #152, branch `portal-rebuild`  
 **Decision:** **NO-GO for production cutover at this review.** The production Time Travel current bookmark and live D1/Worker/Pages baseline have been rechecked, and the release workflow/configuration safeguards are present. PR #152 remains OPEN/DRAFT with no submitted GitHub review approvals. The latest Halloween/Revitalize changes have not had a functional staging acceptance run on the current release candidate, production service-key fallback acceptance remains to be confirmed, and explicit approval to merge/deploy has not been given. This review performs no production mutation.
 
@@ -399,3 +399,76 @@ No production portal migrations, portal Worker code deployment, `naughtyfamily` 
 - [Cloudflare Pages branch deployment controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
 - [Cloudflare Pages rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/)
 - [Cloudflare Worker rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)
+
+
+## 15. 2026-11-16 release-gate refresh (candidate `portal-rebuild`)
+
+**Candidate:** `ad08d8f11400b7478ba514e3d8cc30fbc6a2e709`  
+**Decision:** **NO-GO for production cutover.** This update is scoped to the `portal-rebuild` source branch and read-only production metadata inspection. No production Worker/Pages deploy, production D1 query or migration, secret change, or administrator-data mutation was performed.
+
+### Current candidate acceptance
+
+| Area | Result | Evidence |
+|---|---|---|
+| Halloween | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Consent / Privacy | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Discord | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Christmas Town | **PASS** | [Staging workflow #316](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43792813370), selected `christmas-town` suite |
+| Gym Training | **PASS** | [Staging workflow #317](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793005243), selected `gym-training` suite |
+
+Both feature runs checked out this exact candidate from `portal-rebuild`, passed repository quality gates, verified isolated staging targets, applied any pending migrations to staging D1 only, deployed the staging Worker and Pages bundle, executed one selected feature suite, passed the configured D1 budget checks, removed synthetic private-history fixtures, and completed the final budget check. The Gym Training suite verified the private-history response, two synthetic records, and idempotent handling of a collection request when the archive is already complete. The Christmas Town suite verified the normalized 2026 calendar window and synthetic historical archive. These are staging acceptance results, not production acceptance.
+
+### Torn event-calendar integration
+
+The current-candidate repository quality gates passed. The package test suite includes `scripts/test-torn-event-calendar-windows.mjs`, which checks the Worker/UI/migration contract for the Torn V2 calendar endpoints, six-hour cache, nominal versus personal event windows, historical fallback/confirmation behavior, and Christmas Town year gating.
+
+The separate [Torn calendar API probe run #3](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793004998) also passed on this candidate. It made read-only GET requests to Torn V2 `/torn/calendar` and `/user/calendar` using the repository Actions secret `torn_api_key`, and validated the expected response structures.
+
+**Acceptance boundary:** the source-contract tests and upstream Torn endpoint probe passed, but the selected Christmas Town staging feature suite intentionally reads a synthetic cached calendar fixture and makes no Torn call. The API probe does not traverse the authenticated portal Worker route, and its repository secret is not proof that the production Worker binding `TORN_API_KEY_SERVICE` is authorized. Therefore this is upstream/API-contract acceptance, not a complete live member-to-Worker-to-Torn end-to-end acceptance. Keep the live integration gate open until it is exercised with an authorized member session in an isolated environment and the returned Torn window is observed through the portal route.
+
+### Migration inventory through 0037
+
+The current `migrations/auth` chain contains 42 SQL files. The previous review's migration inventory ending at `0031_torn_event_calendar_windows.sql` is superseded. The following later migrations are present on this candidate:
+
+| Migration | Change |
+|---|---|
+| `0032_portal_first_login_consent.sql` | Creates centralized first-login/policy consent state, historical-collection and sharing preferences, and its lookup index |
+| `0033_gym_training_history.sql` | Adds member-owned Gym Training key metadata, collection jobs, event-log history, and supporting indexes |
+| `0034_portal_api_key_usage_consent.sql` | Adds API-key usage consent, acknowledgement timestamp, and key fingerprint |
+| `0035_portal_api_key_access_type.sql` | Adds the constrained `custom` / `full` access-type declaration |
+| `0036_admin_read_path_indexes.sql` | Adds indexes for company/player administrative read paths and faction membership boundary queries |
+| `0037_private_data_visibility.sql` | Adds private-data visibility preferences, member-key capability metadata, and supporting indexes |
+
+The current-candidate staging workflows verified and applied the pending migration chain to the isolated acceptance D1. This does not substitute for a replay against a restored copy of production data.
+
+### Restored-production-backup rehearsal status
+
+The earlier isolated restore rehearsal is still the last evidenced backup replay: normalized SQL SHA-256 `1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2`, source archive SHA-256 `052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b`, 1,270 statements, 40 tables, 22 explicit indexes, 934 application rows, matching local replay table counts, and zero foreign-key violations. That restored copy's migration ledger ended at `0012_company_ranking_snapshots.sql`. It did **not** replay migrations `0013` through `0037`.
+
+I searched the currently available conversation/Project/Library files for the referenced production archive and normalized SQL but could not retrieve the restore input. A read-only Cloudflare D1 database metadata listing also found no retained database named for the prior restore rehearsal. The two old October companion JSON exports are not a full D1 database backup and were not substituted. Consequently, a fresh replay of migrations `0013` through `0037` against the restored production backup is **blocked**, not passed. Do not run that replay against production D1. Make the encrypted archive and its authorized decryption material available in the working environment, then restore to a newly isolated temporary D1 and verify counts, migration ledger, foreign keys, and key business-history preservation before deleting the rehearsal database.
+
+### Production service credential authorization
+
+Cloudflare secret-binding metadata previously confirmed that production Worker `naughtyfamily-api` has a `TORN_API_KEY_SERVICE` secret binding. The binding name/type proves configuration presence only; it does not expose the value or prove Torn authorization, access selections, or key validity.
+
+No existing safe, unauthenticated read-only production diagnostic was found that calls Torn with that exact secret. The `/api/me/training-calculator` GET path uses `TORN_API_KEY_SERVICE` for the public `/torn/gyms` request, but requires a live member session and also performs other member-scoped Torn requests; it was not invoked without an authorized session. The calendar API probe above uses the separate repository Actions secret, not this Worker secret. Accordingly, production `TORN_API_KEY_SERVICE` authorization/permission remains **UNVERIFIED**. No secret value was read, changed, rotated, or emitted. Do not infer authorization from the binding listing.
+
+### Rollback Pages compatibility check
+
+Cloudflare Pages project metadata for legacy `naughty-company-dashboard` confirms its current production configuration and latest deployment still build with:
+
+```text
+VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev
+```
+
+The latest legacy Pages deployment is `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13, source commit `097762ac6f1d8afc071b37c1518f235073834644`). The active renamed production API target is `naughtyfamily-api` at `https://naughtyfamily-api.kboone801.workers.dev`. Therefore the preserved legacy Pages bundle is **NOT a verified rollback** against the renamed Worker: its recorded production build configuration still points at the retired hostname. The project has not been rebuilt or redeployed as part of this verification. Updating its environment and publishing a rebuilt legacy bundle is a separate production Pages change and must be scheduled/approved as such.
+
+### Remaining cutover gates
+
+1. Complete authenticated live Torn calendar integration acceptance through the portal Worker route.
+2. Obtain a safe, authorized read-only check that exercises the exact production `TORN_API_KEY_SERVICE` binding against Torn and reports only sanitized status/permission metadata.
+3. Provide the encrypted production backup archive and authorized decryption material, then replay migrations `0013` through `0037` on an isolated restored copy and validate data preservation.
+4. Rebuild and verify the legacy rollback Pages project against `https://naughtyfamily-api.kboone801.workers.dev`, with explicit approval for that Pages deployment.
+5. Complete PR review/approval, reconcile the live production migration ledger immediately before cutover, confirm the rollback plan, and obtain explicit production release approval.
+
+No production migration or deployment is authorized by this review. Production remains unchanged.
