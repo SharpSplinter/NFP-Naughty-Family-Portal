@@ -6,13 +6,16 @@ const baseUrl = process.env.STAGING_PAGES_URL || "https://naughtyfamily-staging.
 const apiBase = process.env.STAGING_API_URL || "https://naughtyfamily-api-staging.kboone801.workers.dev";
 const sessionToken = process.env.STAGING_TEST_SESSION_TOKEN || "";
 const otherSessionToken = process.env.STAGING_TEST_OTHER_SESSION_TOKEN || "";
+const consentSessionToken = process.env.STAGING_CONSENT_SESSION_TOKEN || "";
+const consentPlayerId = process.env.STAGING_CONSENT_PLAYER_ID || "";
 const companyId = process.env.STAGING_TEST_COMPANY_ID || "";
 const playerId = process.env.STAGING_TEST_PLAYER_ID || "";
 const otherPlayerId = process.env.STAGING_TEST_OTHER_PLAYER_ID || "";
 const primarySeries = JSON.parse(process.env.STAGING_TEST_EXPECTED_INCOME_SERIES || "[]");
 const otherSeries = JSON.parse(process.env.STAGING_TEST_OTHER_INCOME_SERIES || "[]");
 
-assert.ok(sessionToken && otherSessionToken && companyId && playerId && otherPlayerId, "Authenticated staging fixture variables are missing.");
+assert.ok(sessionToken && otherSessionToken && consentSessionToken && companyId && playerId && otherPlayerId, "Authenticated staging fixture variables are missing.");
+assert.equal(consentPlayerId, "999999007", "The data-sharing setup viewport must use the dedicated unconsented staging member.");
 assert.equal(primarySeries.length, 7, "Expected seven primary-owner historical income points.");
 assert.equal(otherSeries.length, 7, "Expected seven second-owner historical income points.");
 
@@ -301,8 +304,21 @@ try {
 
   // Optional sharing toggles now live in the centralized privacy/setup workspace,
   // not in Account Settings. Verify them there instead of expecting duplicate prompts.
-  const setupPage = await context.newPage();
-  await setupPage.goto(baseUrl + "/setup", { waitUntil: "networkidle", timeout: 30000 });
+  // Use a separate first-login member/context. The authenticated Company
+  // Dashboard account above is already onboarded and should not be expected to
+  // see the mandatory setup workspace.
+  const setupContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 1,
+    isMobile: true,
+    hasTouch: true,
+  });
+  const setupPage = await setupContext.newPage();
+  await setupPage.addInitScript(token => {
+    localStorage.setItem("ncd_session", token);
+    sessionStorage.removeItem("ncd_active_view");
+  }, consentSessionToken);
+  await setupPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
   await setupPage.locator(".portal-setup-page").waitFor({ state: "visible", timeout: 20000 });
   const dataSharingSection = setupPage.locator(".portal-setup-section").filter({
     has: setupPage.getByRole("heading", { name: "Data sharing", exact: true }),
@@ -375,7 +391,7 @@ try {
     await setupPage.screenshot({ path: "test-results/staging-responsive/setup-" + viewport.label + ".png", fullPage: true });
   }
   await settingsPage.close();
-  await setupPage.close();
+  await setupContext.close();
   console.log("PASS Account Settings and centralized sharing controls at " + viewports.length + " viewports.");
 
   // Confirm a narrow screen can switch to another top-level area without losing the Company shell.
