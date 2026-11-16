@@ -215,9 +215,10 @@ const gymTimestamp2 = Math.floor(Date.parse("2026-11-14T12:00:00.000Z") / 1000);
 // Recreate only the exact, named synthetic feature fixtures if this workflow is re-run.
 statements.push("DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + "));");
 statements.push("DELETE FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + ");");
-// The second synthetic member explicitly shares its own staged Halloween history so
-// the feature walkthrough can exercise comparison and visibility controls.
-statements.push("UPDATE portal_user_consents SET historical_collection_enabled = 1, share_halloween_history = 1, updated_at = " + sqlQuote(nowIso) + " WHERE player_id = " + sqlQuote(MEMBERS[1].id) + ";");
+// The second synthetic member explicitly shares its staged Halloween archive and
+// opts into faction-member visibility for the live board. These are separate
+// policy controls: archive sharing does not implicitly expose live private data.
+statements.push("UPDATE portal_user_consents SET historical_collection_enabled = 1, share_halloween_history = 1, private_data_visibility = 'faction_members', updated_at = " + sqlQuote(nowIso) + " WHERE player_id = " + sqlQuote(MEMBERS[1].id) + ";");
 statements.push("INSERT OR IGNORE INTO event_history_consent_records (player_id, event_key, first_consented_at) VALUES (" + [MEMBERS[1].id, "halloween", nowIso].map(sqlQuote).join(", ") + ");");
 
 for (const member of [FEATURE_MEMBER, PARTIAL_MEMBER]) {
