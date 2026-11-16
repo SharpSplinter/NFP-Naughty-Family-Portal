@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react"
 import "./training-calculator.css"
 import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
+import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
 type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
@@ -168,45 +169,6 @@ function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: nu
   const ticks = waitSeconds < untilNext ? 0 : 1 + Math.floor((waitSeconds - untilNext) / interval)
   return Math.min(maximum - current, ticks * increment)
 }
-const GYM_GAIN_CONSTANTS: Record<StatKey, { a: number; b: number }> = {
-  strength: { a: 1600, b: 1700 },
-  defense: { a: 2100, b: -600 },
-  speed: { a: 1600, b: 2000 },
-  dexterity: { a: 1800, b: 1500 },
-}
-
-function effectiveGymStat(stat: number): number {
-  const value = Math.max(0, stat)
-  if (value <= 50_000_000) return value
-  // Torn's post-50M gym stat soft cap. Continued growth is retained at a
-  // decreasing rate rather than feeding the full raw stat into the formula.
-  return 50_000_000 + 0.057406 * Math.pow(value - 50_000_000, 0.928996)
-}
-
-function estimateEnergyEquivalentGain(
-  statKey: StatKey,
-  stat: number,
-  happy: number,
-  energy: number,
-  dots: number,
-  modifier: number,
-): number {
-  const currentHappy = clamp(happy, 0, HAPPY_CAP)
-  const constants = GYM_GAIN_CONSTANTS[statKey]
-  const happyLog = Math.round(Math.log(1 + currentHappy / 250) * 10_000) / 10_000
-  const happyMultiplier = Math.round((1 + 0.07 * happyLog) * 10_000) / 10_000
-  const happyAdjustment = (1 - Math.pow(Math.min(currentHappy, 99_999) / 99_999, 2)) * constants.a
-  const expectedPerEnergy = (
-    effectiveGymStat(stat) * happyMultiplier
-    + 8 * Math.pow(currentHappy, 1.05)
-    + happyAdjustment
-    + constants.b
-  ) / 200_000
-  // The game's small per-train random term is intentionally omitted, so this
-  // reports the expected gain rather than presenting one roll as exact.
-  return Math.max(0, expectedPerEnergy * (Math.max(0, dots) / 10) * Math.max(0, energy) * Math.max(0, modifier))
-}
-
 function applyDailyHappyRegeneration(
   happyBefore: number,
   happyLost: number,
