@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseGymHistoryLog } from "../src/lib/gym-training/history.js";
 
 const read = path => readFileSync(resolve(process.cwd(), path), "utf8");
 const worker = read("src/worker/index.ts");
@@ -17,8 +18,40 @@ assert.ok(calculator.includes("function effectiveGymStat(stat: number)"));
 assert.ok(calculator.includes("0.057406 * Math.pow(value - 50_000_000, 0.928996)"));
 assert.ok(calculator.includes("function estimateEnergyEquivalentGain("));
 assert.ok(calculator.includes("const GYM_GAIN_CONSTANTS"));
-assert.ok(calculator.includes("function parseGymHistoryLog(log: HistoryLog)"));
+assert.ok(calculator.includes('import { parseGymHistoryLog } from "../../lib/gym-training/history.js"'));
 assert.ok(calculator.includes("details.statAfter"));
+
+const parsedLog = parseGymHistoryLog({
+  logId: "OTHKwCbOjctm4nFTQUmk",
+  timestamp: 1794786328,
+  title: "Gym train dexterity",
+  record: {
+    id: "OTHKwCbOjctm4nFTQUmk",
+    timestamp: 1794786328,
+    details: { id: 5303, title: "Gym train dexterity", category: "Gym" },
+    data: {
+      trains: 9,
+      energy_used: 90,
+      dexterity_before: "1091078227.1017",
+      dexterity_after: 1091382128.5210853,
+      dexterity_increased: 303901.4193850948,
+      happy_used: 47,
+      gym: 24
+    },
+    params: { color: "green", changed: 1591103100 }
+  }
+});
+assert.deepEqual(parsedLog, {
+  title: "Gym train dexterity",
+  stat: "dexterity",
+  energy: 90,
+  gain: 303901.4193850948,
+  statBefore: 1091078227.1017,
+  statAfter: 1091382128.5210853,
+  happyUsed: 47,
+  gym: 24,
+  trains: 9
+});
 assert.ok(calculator.includes("Before {fmt(details.statBefore, 2)}"));
 assert.ok(worker.includes("const fetchGymCatalogue = async"));
 assert.ok(worker.includes("const keys = [workerServiceTornApiKey(env), env.TORN_API_KEY_CUSTOM?.trim() || \"\"]"));
