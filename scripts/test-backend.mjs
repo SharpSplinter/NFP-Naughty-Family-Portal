@@ -4606,6 +4606,46 @@ try {
     }
   }
 
+  await test("saved-company list does not decrypt the primary portal key when no company-key rows need comparison", async () => {
+    const fixture = await makeMembershipFixture({
+      members: [{
+        playerId: "227",
+        playerName: "Saved Company List Member",
+        apiKey: "synthetic-list-only-key",
+        verifiedAt: new Date().toISOString(),
+      }],
+    })
+    // A persisted-company-only member does not need key decryption just to
+    // render their list. Deliberately make the envelope non-decryptable while
+    // keeping its consent fingerprint accurate for the active session.
+    const ciphertext = "non-decryptable-company-list-envelope"
+    const iv = "non-decryptable-company-list-iv"
+    fixture.apiKeys.set("227", { ciphertext, iv })
+    const fingerprintDigest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode("227:" + ciphertext + ":" + iv),
+    )
+    const consent = fixture.portalConsents.get("227")
+    consent.consent_version = "portal-data-policy-v4"
+    consent.policy_version = "2026-11-15-v2"
+    consent.api_key_usage_accepted = 1
+    consent.api_key_access_type = "custom"
+    consent.api_key_consent_fingerprint = Array.from(
+      new Uint8Array(fingerprintDigest),
+      byte => byte.toString(16).padStart(2, "0"),
+    ).join("")
+
+    const response = await worker.fetch(new Request("https://worker.test/api/me/companies", {
+      headers: {
+        Origin: fixture.env.ALLOWED_ORIGIN,
+        Authorization: "Bearer " + fixture.tokenByPlayer.get("227"),
+      },
+    }), fixture.env, { waitUntil() {} })
+    assert.equal(response.status, 200, "saved company rows must remain listable without decrypting an unused portal key")
+    const payload = await response.json()
+    assert.deepEqual(payload.companies, [], "members without saved companies or company-key rows receive an empty list")
+  })
+
   await test("confirmed faction departure invalidates sessions, credentials, Halloween data, director cache, sharing, and administrator role end-to-end", async () => {
     const originalFetch = globalThis.fetch
     const fixture = await makeMembershipFixture({
