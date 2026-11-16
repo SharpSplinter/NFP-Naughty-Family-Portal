@@ -10,7 +10,7 @@ function parseNumber(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value !== "string") return null;
   const normalized = value.replace(/,/g, "").trim();
-  if (!/^-?\\d+(?:\\.\\d+)?$/.test(normalized)) return null;
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -70,9 +70,9 @@ export function parseGymHistoryLog(log) {
     readString("result"), title, log.title,
   ].filter(value => typeof value === "string" && value.trim());
   const resultText = textParts.join(" ");
-  const trainingText = resultText.match(/(?:gym\\s+)?train(?:ing)?\\s+(?:your\\s+)?(strength|defense|speed|dexterity)/i);
-  const shortText = resultText.match(/you\\s+(?:have\\s+)?gained\\s+([\\d,]+(?:\\.\\d+)?)\\s+(strength|defense|speed|dexterity)/i);
-  const fullText = resultText.match(/(?:increasing|increased)\\s+it\\s+by\\s+([\\d,]+(?:\\.\\d+)?)\\s+to\\s+([\\d,]+(?:\\.\\d+)?)/i);
+  const trainingText = resultText.match(/(?:gym\s+)?train(?:ing)?\s+(?:your\s+)?(strength|defense|speed|dexterity)/i);
+  const shortText = resultText.match(/you\s+(?:have\s+)?gained\s+([\d,]+(?:\.\d+)?)\s+(strength|defense|speed|dexterity)/i);
+  const fullText = resultText.match(/(?:increasing|increased)\s+it\s+by\s+([\d,]+(?:\.\d+)?)\s+to\s+([\d,]+(?:\.\d+)?)/i);
 
   const statKeys = ["strength", "defense", "speed", "dexterity"];
   const keyedStat = statKeys.find(key =>
