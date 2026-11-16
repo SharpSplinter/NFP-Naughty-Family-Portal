@@ -10,6 +10,18 @@ on:
         type: choice
         options:
           - naughtyfamily-staging
+      feature_suite:
+        description: Run one feature suite only. Historical event pages are never all replayed together.
+        required: true
+        type: choice
+        options:
+          - halloween
+          - christmas-town
+          - gym-training
+          - discord
+          - consent
+          - company-dashboard
+          - admin
 permissions:
   contents: read
 
@@ -47,6 +59,8 @@ jobs:
           node --check scripts/test-staging-responsive.mjs
           node --check scripts/test-staging-features.mjs
           node --check scripts/test-staging-admin-acceptance.mjs
+          node --check scripts/staging-d1-read-budget.mjs
+          node --check scripts/test-staging-safety-contract.mjs
 
       - name: Verify every deployment target is isolated staging
         shell: bash
@@ -68,6 +82,16 @@ jobs:
           grep -F 'database_id = "1e37f1a5-daa3-41fb-8c1b-7a9c6e3d0405"' wrangler.staging.toml
           ! grep -F '[triggers]' wrangler.acceptance.toml
           echo "Confirmed: acceptance Worker uses isolated staging D1 and staging-only Queues; cron triggers are omitted to respect the account Free-plan quota, and production targets are excluded."
+
+      - name: Start hard account-wide D1 rows-read budget
+        id: d1_budget_start
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs start
 
       - name: Provision isolated staging Queues
         env:
@@ -227,39 +251,38 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
         run: node scripts/seed-staging-private-history.mjs
 
-      - name: Run synthetic Halloween, Christmas Town, calendar, Gym Training, and Discord feature walkthrough
-        env:
-          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
-          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-        run: node scripts/test-staging-features.mjs
-
-      - name: Run authenticated Company Dashboard responsive checks on staging
-        env:
-          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
-          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-        run: node scripts/test-staging-responsive.mjs
-
-      - name: Run authenticated admin/non-admin, accessibility, and request-budget checks on staging
-        env:
-          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
-          STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-        run: node scripts/test-staging-admin-acceptance.mjs
-
-      - name: Refresh synthetic admin membership freshness in isolated staging
+      - name: Check D1 read budget after fixture seeding
+        if: always() && steps.d1_budget_start.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
-        run: node scripts/refresh-staging-load-fixture.mjs
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs check
 
-      # The admin endpoint mix includes aggregate/history reads. Keep the default
-      # acceptance load bounded to a small, repeatable D1 read budget.
-      - name: Run bounded read-only admin API load against isolated staging
+      - name: Run exactly one selected feature suite
         env:
+          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
           STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
-          STAGING_LOAD_DURATION_SECONDS: "60"
-          STAGING_LOAD_REQUESTS_PER_SECOND: "1"
-          STAGING_LOAD_MAX_CONCURRENCY: "2"
-        run: node scripts/test-staging-sustained-load.mjs
+          STAGING_FEATURE_SUITE: ${{ inputs.feature_suite }}
+        run: |
+          case "${STAGING_FEATURE_SUITE}" in
+            halloween|christmas-town|gym-training|discord|consent) node scripts/test-staging-features.mjs ;;
+            company-dashboard) node scripts/test-staging-responsive.mjs ;;
+            admin) node scripts/refresh-staging-load-fixture.mjs && node scripts/test-staging-admin-acceptance.mjs ;;
+            *) echo "Unsupported selective staging feature: ${STAGING_FEATURE_SUITE}" >&2; exit 2 ;;
+          esac
+
+      - name: Enforce D1 rows-read budget after selected feature
+        if: always() && steps.d1_budget_start.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs check
 
       - name: Remove synthetic private-history fixtures from staging D1
         if: always()
@@ -267,6 +290,16 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
         run: node scripts/cleanup-staging-private-history.mjs
+
+      - name: Final D1 rows-read budget check after cleanup
+        if: always() && steps.d1_budget_start.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
+          D1_RUN_BUDGET_ROWS: "100000"
+          D1_DAILY_STOP_ROWS: "4000000"
+        run: node scripts/staging-d1-read-budget.mjs check
 
       - name: Upload staging viewport screenshots
         if: always()

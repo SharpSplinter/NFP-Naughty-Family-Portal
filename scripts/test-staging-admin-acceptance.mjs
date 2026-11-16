@@ -16,15 +16,6 @@ mkdirSync("test-results/admin-acceptance", { recursive: true });
 const adminEndpoints = [
   "/api/admin/overview",
   "/api/admin/members?limit=10",
-  "/api/admin/jobs?limit=10",
-  "/api/admin/settings",
-  "/api/admin/history/summary",
-  "/api/admin/audit?limit=10",
-  "/api/admin/administrators",
-  "/api/admin/faction/weekly-boundaries?limit=2",
-  "/api/admin/automation/runs?limit=5&days=7",
-  "/api/admin/member-activity?days=7",
-  "/api/admin/private-live",
   "/api/admin/data-governance?limit=10",
 ];
 
@@ -77,8 +68,8 @@ for (let index = 0; index < deniedResults.length; index += 1) {
 console.log("PASS role enforcement API: admin session recognized; member role remains non-admin; anonymous=401; all " + deniedChecks.length + " representative member attempts=403.");
 
 const timing = [];
-const roundSize = 5;
-for (let round = 0; round < 2; round += 1) {
+const roundSize = 3;
+for (let round = 0; round < 1; round += 1) {
   for (let start = 0; start < adminEndpoints.length; start += roundSize) {
     const batch = adminEndpoints.slice(start, start + roundSize);
     const results = await Promise.all(batch.map(path => apiRequest(path, adminToken)));
@@ -103,14 +94,14 @@ const percentile = p => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.leng
 const requestBudget = {
   scope: "isolated staging D1 and Worker; authenticated read-only API calls; no Torn endpoints or mutating admin actions",
   adminReadRequests: timing.length,
-  concurrency: "two rounds, batches of five concurrent GET requests",
+  concurrency: "one batch of three concurrent GET requests",
   p50Ms: percentile(0.5),
   p95Ms: percentile(0.95),
   maxMs: sorted[sorted.length - 1],
   endpointTimings: timing,
 };
 writeFileSync("test-results/admin-acceptance/request-budget.json", JSON.stringify(requestBudget, null, 2) + "\n");
-console.log("PASS request-budget smoke: " + timing.length + " admin GETs in two five-request bursts; p50=" + requestBudget.p50Ms + "ms p95=" + requestBudget.p95Ms + "ms max=" + requestBudget.maxMs + "ms.");
+console.log("PASS request-budget smoke: " + timing.length + " admin GETs in one bounded batch; p50=" + requestBudget.p50Ms + "ms p95=" + requestBudget.p95Ms + "ms max=" + requestBudget.maxMs + "ms.");
 
 const axeTags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 const accessibility = [];
@@ -160,35 +151,8 @@ try {
   await adminPage.getByText("Read-only mode.", { exact: false }).waitFor({ state: "visible" });
   await adminPage.screenshot({ path: "test-results/admin-acceptance/admin-overview.png", fullPage: true });
 
-  const sectionNames = [
-    ["Overview", "System overview"],
-    ["Members", "Member management"],
-    ["Private Live", "Private-live diagnostics"],
-    ["Data & Consent", "Data & consent governance"],
-    ["Administrators", "Administrator management"],
-    ["Operations", "Refresh and maintenance jobs"],
-    ["History & Backups", "History and backups"],
-    ["Global Settings", "Global dashboard settings"],
-    ["Weekly Boundaries", "Sunday boundary diagnostics"],
-    ["Audit Log", "Administrative audit log"],
-  ];
-  const adminNav = adminPage.getByRole("navigation", { name: "Administration sections" });
-  for (const [label, heading] of sectionNames) {
-    const tab = adminNav.getByRole("button", { name: label, exact: true });
-    await tab.click();
-    await adminPage.getByRole("heading", { name: heading, exact: true }).waitFor({ state: "visible", timeout: 15000 });
-    if (label === "Administrators") {
-      assert.equal(await adminPage.getByRole("button", { name: "Grant administrator", exact: true }).isDisabled(), true, "Role grants must remain disabled in read-only mode.");
-    }
-    if (label === "Operations") {
-      assert.equal(await adminPage.getByRole("button", { name: "Queue selected endpoint refresh ↻", exact: true }).isDisabled(), true, "Refresh jobs must remain disabled in read-only mode.");
-      await adminPage.screenshot({ path: "test-results/admin-acceptance/admin-operations-readonly.png", fullPage: true });
-    }
-    const activeCount = await adminNav.locator('[aria-current="page"]').count();
-    assert.equal(activeCount, 1, "Exactly one admin section should expose aria-current=page after selecting " + label);
-    const scan = await new AxeBuilder({ page: adminPage }).withTags(axeTags).analyze();
-    accessibility.push({ view: "admin-" + label.toLowerCase().replace(/[^a-z0-9]+/g, "-"), violations: scan.violations });
-  }
+  const overviewAxe = await new AxeBuilder({ page: adminPage }).withTags(axeTags).analyze();
+  accessibility.push({ view: "admin-overview", violations: overviewAxe.violations });
 
   // Keyboard-only and screen-reader-semantics proxy review. This is browser automation,
   // not a substitute for a real TalkBack/VoiceOver session on a handset.

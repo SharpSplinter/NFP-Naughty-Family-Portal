@@ -11,9 +11,12 @@ const privatePlayerId = process.env.STAGING_TEST_PLAYER_ID || "999999001";
 const partialPlayerId = "999999006";
 const consentToken = process.env.STAGING_CONSENT_SESSION_TOKEN || "";
 const consentPlayerId = process.env.STAGING_CONSENT_PLAYER_ID || "999999007";
+const featureSuite = process.env.STAGING_FEATURE_SUITE || "";
+const supportedSuites = new Set(["halloween", "christmas-town", "gym-training", "discord", "consent"]);
+assert.ok(supportedSuites.has(featureSuite), "STAGING_FEATURE_SUITE must select exactly one supported feature; full-suite runs are deliberately disabled.");
 
 assert.ok(token, "Synthetic feature-walkthrough session is missing.");
-assert.ok(consentToken, "Synthetic unconsented first-login session is missing.");
+if (featureSuite === "consent") assert.ok(consentToken, "Synthetic unconsented first-login session is missing.");
 assert.equal(consentPlayerId, "999999007", "First-login consent walkthrough must use its dedicated staging member.");
 assert.equal(playerId, "999999005", "Feature walkthrough must use its dedicated synthetic staging member.");
 
@@ -35,266 +38,284 @@ ok(session, "Feature walkthrough session");
 assert.equal(String(session.payload?.player?.id), playerId);
 assert.equal(session.payload?.isAdmin, false, "Feature walkthrough member must remain an ordinary member.");
 
-// Verify that an unconsented member is routed into the consent form rather than
-// stranded behind the generic 428 privacy notice.
-const consentSession = await api("/api/auth/session", {}, consentToken);
-ok(consentSession, "Unconsented member session");
-assert.equal(String(consentSession.payload?.player?.id), consentPlayerId);
-assert.equal(consentSession.payload?.setupRequired, true, "New member must be told that setup is required.");
-const consentStatus = await api("/api/me/portal-consent", {}, consentToken);
-ok(consentStatus, "Unconsented member preference endpoint");
-assert.equal(consentStatus.payload?.required, true);
-assert.equal(consentStatus.payload?.policyAcknowledgementRequired, true);
-assert.equal(consentStatus.payload?.consent, null);
-const blockedBeforeConsent = await api("/api/me/companies", {}, consentToken);
-assert.equal(blockedBeforeConsent.response.status, 428, "Member portal API remains gated until the required form is saved.");
-
-// Torn calendar paths use fresh, synthetic cache rows. No request below is allowed
-// to validate a member key or call Torn; only the cached calendar response is read.
-const christmasCalendar = await api("/api/me/christmas-town/calendar");
-ok(christmasCalendar, "Christmas Town calendar");
-assert.equal(christmasCalendar.payload?.event?.title, "Christmas Town");
-assert.equal(christmasCalendar.payload?.event?.fixedStartTime, true);
-assert.equal(christmasCalendar.payload?.event?.startAt, "2026-12-01T00:00:00.000Z");
-assert.equal(christmasCalendar.payload?.event?.nominalEndAt, "2027-01-01T00:00:00.000Z");
-assert.equal(christmasCalendar.payload?.event?.endAt, "2027-01-01T00:00:01.000Z", "The normalized calendar window uses an exclusive end boundary.");
-assert.equal(christmasCalendar.payload?.event?.personalStartTimeDetected, false);
-
-const halloweenWindow = await api("/api/me/halloween/event-window?year=2026");
-ok(halloweenWindow, "Halloween personal event window");
-assert.equal(halloweenWindow.payload?.myWindow?.configured, true);
-assert.equal(halloweenWindow.payload?.myWindow?.startTime, "12:00");
-assert.equal(halloweenWindow.payload?.myWindow?.source, "torn_api");
-assert.equal(halloweenWindow.payload?.myWindow?.startAt, "2026-10-25T12:00:00.000Z");
-assert.equal(halloweenWindow.payload?.myWindow?.endAt, "2026-11-01T12:00:00.000Z");
-
-const halloweenLive = await api("/api/me/halloween/live?year=2026");
-ok(halloweenLive, "Halloween live/current-year board");
-assert.equal(halloweenLive.payload?.event?.eventYear, 2026);
-assert.equal(halloweenLive.payload?.mySnapshot?.coverage, "captured");
-assert.equal(halloweenLive.payload?.mySnapshot?.currentTreats, 35);
-assert.equal(halloweenLive.payload?.mySnapshot?.totalTreats, 500);
-assert.ok(halloweenLive.payload?.leaderboard?.some(row => row.playerId === playerId && row.coverage === "captured"));
-assert.ok(halloweenLive.payload?.leaderboard?.some(row => row.playerId === otherPlayerId && row.coverage === "captured"));
-
-const halloweenAll = await api("/api/me/halloween/archive?year=all");
-ok(halloweenAll, "Halloween all-time archive");
-assert.ok(halloweenAll.payload?.eventYears?.includes(2026));
-assert.equal(halloweenAll.payload?.myCollection?.playerId, playerId);
-assert.equal(halloweenAll.payload?.myCollection?.coverage, "complete");
-assert.equal(halloweenAll.payload?.myCollection?.attackMetricsStatus, "complete");
-assert.equal(halloweenAll.payload?.myCollection?.attackOutcomesStatus, "complete");
-assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeProcs, 12);
-assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64);
-assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80);
-assert.ok((halloweenAll.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "All-time event totals must include the synthetic current-season Revitalize procs.");
-assert.ok((halloweenAll.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "All-time event totals must include the synthetic current-season finishing hits.");
-const allTimeComparison = halloweenAll.payload?.memberComparisons?.find(row => row.playerId === otherPlayerId);
-assert.ok(allTimeComparison?.metrics, "All-time archive should expose the explicitly shared synthetic member comparison.");
-assert.equal(allTimeComparison.metrics.revitalizeProcs, 5);
-const partialAllTime = halloweenAll.payload?.leaderboard?.find(row => row.playerId === partialPlayerId);
-assert.equal(partialAllTime?.coverage, "partial", "Failed archive with retained logs must be shown as partial, not zero or complete.");
-
-const halloweenYear = await api("/api/me/halloween/archive?year=2026");
-ok(halloweenYear, "Halloween year-specific archive");
-assert.equal(halloweenYear.payload?.event?.eventYear, 2026);
-assert.equal(halloweenYear.payload?.myCollection?.coverage, "complete");
-assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeProcs, 12, "The year-specific personal Revitalize metrics should match the synthetic season fixtures.");
-assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64, "The year-specific personal finishing-hit metrics should match the synthetic season fixtures.");
-assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80, "The year-specific personal reviewed-attack coverage should match the synthetic season fixtures.");
-assert.ok((halloweenYear.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "Year-filtered event totals retain the all-time faction aggregate.");
-assert.ok((halloweenYear.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "Year-filtered event totals retain the all-time faction aggregate.");
-assert.ok(halloweenYear.payload?.memberComparisons?.some(row => row.playerId === otherPlayerId));
-assert.equal(halloweenYear.payload?.leaderboard?.find(row => row.playerId === partialPlayerId)?.coverage, "partial");
-
-const sharedMemberDetail = await api("/api/me/halloween/members/" + otherPlayerId + "?year=2026");
-ok(sharedMemberDetail, "Shared Halloween member detail");
-assert.equal(sharedMemberDetail.payload?.collection?.coverage, "complete");
-const privateMemberDetail = await api("/api/me/halloween/members/" + privatePlayerId + "?year=2026");
-assert.equal(privateMemberDetail.response.status, 403, "A member who has not opted to share Halloween history must remain hidden.");
-
-const christmasKey = await api("/api/me/christmas-town/key");
-ok(christmasKey, "Christmas Town retained-key status");
-assert.equal(christmasKey.payload?.connected, false, "Synthetic archive represents a disconnected event key.");
-assert.equal(christmasKey.payload?.previouslyConsented, true, "Initial consent should remain recorded after disconnection.");
-const today = new Date().toISOString().slice(0, 10);
-const christmasArchive = await api("/api/me/christmas-town/archive?from=2021-12-01&to=" + today);
-ok(christmasArchive, "Christmas Town all-time archive");
-assert.ok(christmasArchive.payload?.metrics?.logCount >= 1, "Christmas Town archive should retain the synthetic season record.");
-assert.ok(christmasArchive.payload?.metrics?.minigames?.some(game => game.key === "present_pick" && game.count === 1));
-assert.ok(christmasArchive.payload?.collection?.some(job => job.eventYear === 2025 && job.status === "complete"));
-
-const gymHistory = await api("/api/me/gym-training/history");
-ok(gymHistory, "Gym Training private history");
-assert.equal(gymHistory.payload?.collectionEnabled, true);
-assert.equal(gymHistory.payload?.connected, true);
-assert.equal(gymHistory.payload?.key?.lastFour, "4242");
-assert.equal(gymHistory.payload?.job?.status, "complete");
-assert.equal(gymHistory.payload?.totalLogs, 2);
-assert.deepEqual(gymHistory.payload?.logs?.map(row => row.title).sort(), [
-  "Gym training - Endurance",
-  "Gym training - Strength",
-]);
-const gymCollect = await api("/api/me/gym-training/collect", { method: "POST", body: "{}" });
-ok(gymCollect, "Gym Training idempotent collection request");
-assert.equal(gymCollect.payload?.alreadyComplete, true);
-assert.equal(gymCollect.payload?.queued, false, "A completed archive must not enqueue another Torn collection job.");
-
-// Exercise the one-time Discord /link-code hand-off with a synthetic Discord snowflake.
-// This creates a temporary row for the synthetic member only; it is disconnected below.
-const generatedCode = await api("/api/me/discord-link-code", { method: "POST", body: "{}" });
-ok(generatedCode, "Discord one-time link-code creation");
-assert.match(generatedCode.payload?.code ?? "", /^[a-f0-9]{48}$/);
-assert.equal(generatedCode.payload?.expiresInSeconds, 300);
-const discordUserId = "999999999999999999";
-const redemption = await api("/api/discord/link/redeem", {
-  method: "POST",
-  body: JSON.stringify({ code: generatedCode.payload.code, discordUserId }),
-}, "");
-ok(redemption, "Discord link-code redemption");
-assert.equal(redemption.payload?.playerId, playerId);
-assert.equal(redemption.payload?.token, token, "Discord redemption must return the original synthetic portal session.");
-const replay = await api("/api/discord/link/redeem", {
-  method: "POST",
-  body: JSON.stringify({ code: generatedCode.payload.code, discordUserId }),
-}, "");
-assert.equal(replay.response.status, 400, "A redeemed one-time code must not be reusable.");
-const linkStatus = await api("/api/me/discord-link");
-ok(linkStatus, "Discord linked-account status");
-assert.equal(linkStatus.payload?.linked, true);
-assert.equal(linkStatus.payload?.alertsEnabled, false, "A newly linked Discord account must start with private alerts disabled.");
-const disconnect = await api("/api/me/discord-link", { method: "DELETE" });
-ok(disconnect, "Discord disconnect");
-const disconnectedStatus = await api("/api/me/discord-link");
-ok(disconnectedStatus, "Discord disconnected status");
-assert.equal(disconnectedStatus.payload?.linked, false);
-
-const botSource = readFileSync("bot/production-worker.js", "utf8");
-assert.ok(botSource.includes('if (name === "link-code")'), "Production bot must retain the /link-code modal interaction.");
-assert.ok(botSource.includes("https://naughtyfamily.pages.dev"), "The bot's /link instructions must point at the new portal.");
-
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 1365, height: 950 } });
-const page = await context.newPage();
-mkdirSync("test-results/staging-features", { recursive: true });
-const consoleErrors = [];
-page.on("pageerror", error => consoleErrors.push(error.message));
-
-try {
-  const consentContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  try {
-    const consentPage = await consentContext.newPage();
-    const consentConsoleErrors = [];
-    consentPage.on("pageerror", error => consentConsoleErrors.push(error.message));
-    await consentPage.addInitScript(value => {
-      localStorage.setItem("ncd_session", value);
-      sessionStorage.removeItem("ncd_active_view");
-    }, consentToken);
-    const consentHome = await consentPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
-    assert.ok(consentHome?.ok(), "Consent walkthrough portal shell should load.");
-    await consentPage.getByRole("heading", { name: /Welcome to the Naughty Family/ }).waitFor({ state: "visible", timeout: 15000 });
-    await consentPage.getByRole("heading", { name: "Data policy & privacy" }).waitFor({ state: "visible" });
-    await consentPage.getByRole("heading", { name: "Primary Torn API key use & permissions" }).waitFor({ state: "visible" });
-    const customAccess = consentPage.getByRole("radio", { name: "Custom Access · Recommended" });
-    await customAccess.check();
-    const policyAcknowledgement = consentPage.locator("label.portal-setup-check").filter({ hasText: "I have read and acknowledge the current Naughty Family data policy" }).locator("input");
-    await policyAcknowledgement.check();
-    const primaryKeyAuthorization = consentPage.locator("label.portal-setup-check").filter({ hasText: "I own this primary Torn Custom Access key" }).locator("input");
-    await primaryKeyAuthorization.check();
-    const finishSetup = consentPage.getByRole("button", { name: "Save preferences & finish setup" });
-    await finishSetup.waitFor({ state: "visible" });
-    assert.equal(await finishSetup.isEnabled(), true, "The form should submit only after policy, key type and key-use choices are selected.");
-    await finishSetup.click();
-    await consentPage.getByRole("status").filter({ hasText: "Setup saved" }).waitFor({ state: "visible", timeout: 15000 });
-    const savedConsent = await api("/api/me/portal-consent", {}, consentToken);
-    ok(savedConsent, "Saved first-login consent");
-    assert.equal(savedConsent.payload?.required, false);
-    assert.equal(savedConsent.payload?.consent?.apiKeyUsageAccepted, true);
-    assert.equal(savedConsent.payload?.consent?.apiKeyAccessType, "custom");
-    assert.deepEqual(consentConsoleErrors, [], "First-login consent form should not create browser errors.");
-    console.log("PASS first-login route automatically opens privacy setup; policy acknowledgement, Custom Access declaration and primary-key authorization save successfully without Torn API calls.");
-  } finally {
-    await consentContext.close();
-  }
-
-  await page.addInitScript(value => {
-    localStorage.setItem("ncd_session", value);
-    sessionStorage.removeItem("ncd_active_view");
-  }, token);
-
-  const home = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
-  assert.ok(home?.ok(), "Staging portal shell should load.");
-  await page.getByRole("heading", { name: /One faction/ }).waitFor({ state: "visible", timeout: 15000 });
-
-  // Halloween Live/current-year, then all-time and year-specific archive.
-  await page.getByRole("button", { name: "Halloween Dashboard" }).click();
-  await page.getByRole("heading", { name: /Halloween Dashboard/ }).waitFor({ state: "visible", timeout: 15000 });
-  const halloweenTabs = page.getByRole("navigation", { name: "Halloween dashboard sections" });
-  await halloweenTabs.getByRole("button", { name: /Live \/ Current Year/ }).waitFor({ state: "visible" });
-  await page.getByText("MY CURRENT TREATS", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  const liveSnapshotGrid = page.getByText("MY CURRENT TREATS", { exact: true }).locator("xpath=../..");
-  const liveSnapshotText = await liveSnapshotGrid.innerText();
-  assert.ok(liveSnapshotText.includes("35") && liveSnapshotText.includes("500"), "Live/current-year view should render the seeded personal snapshot in the personal metrics grid.");
-  await halloweenTabs.getByRole("button", { name: /Historical$/ }).click();
-  await page.getByRole("heading", { name: "Historical event records" }).waitFor({ state: "visible", timeout: 15000 });
-  await page.locator("#halloween-compare-member option[value='" + otherPlayerId + "']").waitFor({ state: "attached", timeout: 15000 });
-  await page.locator("#halloween-compare-member").selectOption(otherPlayerId);
-  const comparison = page.locator(".halloween-comparison-table");
-  await comparison.waitFor({ state: "visible", timeout: 10000 });
-  const comparisonText = await comparison.innerText();
-  assert.ok(comparisonText.includes("Staging Private History Other Member"));
-  assert.ok(comparisonText.includes("5"), "Comparison should show the second member's staged Revitalize proc count.");
-  const halloweenText = await page.locator(".halloween-module").innerText().catch(async () => page.locator("main").innerText());
-  assert.ok(halloweenText.includes("18.75%"), "Feature member's Revitalize rate should render as 12 / 64 = 18.75%.");
-  assert.ok(halloweenText.includes("Staging Partial Archive Member"), "Partial member should remain visible in the archive.");
-  assert.ok(/Partial/i.test(halloweenText), "The archive UI should label incomplete coverage as Partial.");
-
-  await page.locator("#halloween-year-scope").selectOption("2026");
-  await page.getByText("Event year 2026", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  assert.ok((await page.locator("main").innerText()).includes("Historical event records"));
-
-  await halloweenTabs.getByRole("button", { name: /Live \/ Current Year/ }).click();
-  await page.getByText("MY TOTAL TREATS", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
-  assert.ok((await page.locator("main").innerText()).includes("35"));
-
-  // Christmas Town archive and the calendar-derived current-season window.
-  await page.getByRole("button", { name: "Return to portal" }).click();
-  await page.getByRole("button", { name: "Christmas Town" }).click();
-  await page.getByRole("heading", { name: "Christmas Town", exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  await page.getByText(/^PRESENT PICK$/i).waitFor({ state: "visible", timeout: 15000 });
-  assert.ok((await page.locator("main").innerText()).includes("All time"));
-  await page.screenshot({ path: "test-results/staging-features/christmas-town.png", fullPage: true });
-
-  // Account Settings displays only this member's own Gym Training history.
-  await page.getByRole("button", { name: "Return to portal" }).click();
-  await page.getByRole("button", { name: "Account Settings" }).click();
-  const gymCard = page.locator(".gym-training-history");
-  await gymCard.waitFor({ state: "visible", timeout: 15000 });
-  // The card mounts before its authenticated history request resolves.
-  // Wait for the final status and both saved records before reading its text.
-  await gymCard.getByText(/Connected securely/).waitFor({ state: "visible", timeout: 15000 });
-  await gymCard.getByText("Recent training activity", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  await gymCard.getByText("Gym training - Strength", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  await gymCard.getByText("Gym training - Endurance", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-  const gymUiText = await gymCard.innerText();
-  assert.ok(gymUiText.includes("Connected securely"));
-  assert.ok(gymUiText.includes("Recent training activity"));
-  assert.ok(gymUiText.includes("Gym training - Strength"));
-  assert.ok(gymUiText.includes("Gym training - Endurance"));
-  await page.screenshot({ path: "test-results/staging-features/gym-training-history.png", fullPage: true });
-
-  assert.deepEqual(consoleErrors, [], "Staging feature walkthrough should not produce uncaught browser errors.");
-  await page.screenshot({ path: "test-results/staging-features/account-settings.png", fullPage: true });
-} finally {
-  await context.close();
-  await browser.close();
+if (featureSuite === "consent") {
+  // Verify that an unconsented member is routed into the consent form rather than
+  // stranded behind the generic 428 privacy notice.
+  const consentSession = await api("/api/auth/session", {}, consentToken);
+  ok(consentSession, "Unconsented member session");
+  assert.equal(String(consentSession.payload?.player?.id), consentPlayerId);
+  assert.equal(consentSession.payload?.setupRequired, true, "New member must be told that setup is required.");
+  const consentStatus = await api("/api/me/portal-consent", {}, consentToken);
+  ok(consentStatus, "Unconsented member preference endpoint");
+  assert.equal(consentStatus.payload?.required, true);
+  assert.equal(consentStatus.payload?.policyAcknowledgementRequired, true);
+  assert.equal(consentStatus.payload?.consent, null);
+  const blockedBeforeConsent = await api("/api/me/companies", {}, consentToken);
+  assert.equal(blockedBeforeConsent.response.status, 428, "Member portal API remains gated until the required form is saved.");
 }
 
-console.log("PASS feature-specific staging API and UI walkthrough:");
-console.log("- Halloween live/current-year snapshot, all-time/year-specific archive, member comparison, partial coverage and Revitalize 12/64 = 18.75%.");
-console.log("- Per-member Halloween sharing boundary and Torn-calendar-derived event windows.");
-console.log("- Christmas Town cached calendar and retained personal archive.");
-console.log("- Private Gym Training history, completed-job idempotency and no duplicate queue submission.");
-console.log("- Synthetic Discord /link-code creation, redemption, replay rejection and disconnect.");
-console.log("- New: automatic first-login privacy form routing, required policy/key-use acknowledgement and persisted Custom Access key declaration.");
-console.log("NOTE: Real Torn API-key permission acceptance is not simulated; no real key or upstream Torn request was used.");
+if (featureSuite === "christmas-town") {
+  // Torn calendar paths use fresh, synthetic cache rows. No request below is allowed
+  // to validate a member key or call Torn; only the cached calendar response is read.
+  const christmasCalendar = await api("/api/me/christmas-town/calendar");
+  ok(christmasCalendar, "Christmas Town calendar");
+  assert.equal(christmasCalendar.payload?.event?.title, "Christmas Town");
+  assert.equal(christmasCalendar.payload?.event?.fixedStartTime, true);
+  assert.equal(christmasCalendar.payload?.event?.startAt, "2026-12-01T00:00:00.000Z");
+  assert.equal(christmasCalendar.payload?.event?.nominalEndAt, "2027-01-01T00:00:00.000Z");
+  assert.equal(christmasCalendar.payload?.event?.endAt, "2027-01-01T00:00:01.000Z", "The normalized calendar window uses an exclusive end boundary.");
+  assert.equal(christmasCalendar.payload?.event?.personalStartTimeDetected, false);
+}
+
+if (featureSuite === "halloween") {
+  const halloweenWindow = await api("/api/me/halloween/event-window?year=2026");
+  ok(halloweenWindow, "Halloween personal event window");
+  assert.equal(halloweenWindow.payload?.myWindow?.configured, true);
+  assert.equal(halloweenWindow.payload?.myWindow?.startTime, "12:00");
+  assert.equal(halloweenWindow.payload?.myWindow?.source, "torn_api");
+  assert.equal(halloweenWindow.payload?.myWindow?.startAt, "2026-10-25T12:00:00.000Z");
+  assert.equal(halloweenWindow.payload?.myWindow?.endAt, "2026-11-01T12:00:00.000Z");
+  
+  const halloweenLive = await api("/api/me/halloween/live?year=2026");
+  ok(halloweenLive, "Halloween live/current-year board");
+  assert.equal(halloweenLive.payload?.event?.eventYear, 2026);
+  assert.equal(halloweenLive.payload?.mySnapshot?.coverage, "captured");
+  assert.equal(halloweenLive.payload?.mySnapshot?.currentTreats, 35);
+  assert.equal(halloweenLive.payload?.mySnapshot?.totalTreats, 500);
+  assert.ok(halloweenLive.payload?.leaderboard?.some(row => row.playerId === playerId && row.coverage === "captured"));
+  assert.ok(halloweenLive.payload?.leaderboard?.some(row => row.playerId === otherPlayerId && row.coverage === "captured"));
+  
+  const halloweenAll = await api("/api/me/halloween/archive?year=all");
+  ok(halloweenAll, "Halloween all-time archive");
+  assert.ok(halloweenAll.payload?.eventYears?.includes(2026));
+  assert.equal(halloweenAll.payload?.myCollection?.playerId, playerId);
+  assert.equal(halloweenAll.payload?.myCollection?.coverage, "complete");
+  assert.equal(halloweenAll.payload?.myCollection?.attackMetricsStatus, "complete");
+  assert.equal(halloweenAll.payload?.myCollection?.attackOutcomesStatus, "complete");
+  assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeProcs, 12);
+  assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64);
+  assert.equal(halloweenAll.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80);
+  assert.ok((halloweenAll.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "All-time event totals must include the synthetic current-season Revitalize procs.");
+  assert.ok((halloweenAll.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "All-time event totals must include the synthetic current-season finishing hits.");
+  const allTimeComparison = halloweenAll.payload?.memberComparisons?.find(row => row.playerId === otherPlayerId);
+  assert.ok(allTimeComparison?.metrics, "All-time archive should expose the explicitly shared synthetic member comparison.");
+  assert.equal(allTimeComparison.metrics.revitalizeProcs, 5);
+  const partialAllTime = halloweenAll.payload?.leaderboard?.find(row => row.playerId === partialPlayerId);
+  assert.equal(partialAllTime?.coverage, "partial", "Failed archive with retained logs must be shown as partial, not zero or complete.");
+  
+  const halloweenYear = await api("/api/me/halloween/archive?year=2026");
+  ok(halloweenYear, "Halloween year-specific archive");
+  assert.equal(halloweenYear.payload?.event?.eventYear, 2026);
+  assert.equal(halloweenYear.payload?.myCollection?.coverage, "complete");
+  assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeProcs, 12, "The year-specific personal Revitalize metrics should match the synthetic season fixtures.");
+  assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeSuccessfulAttacks, 64, "The year-specific personal finishing-hit metrics should match the synthetic season fixtures.");
+  assert.equal(halloweenYear.payload?.myEventMetrics?.revitalizeAttacksReviewed, 80, "The year-specific personal reviewed-attack coverage should match the synthetic season fixtures.");
+  assert.ok((halloweenYear.payload?.eventTotals?.revitalizeProcs ?? 0) >= 17, "Year-filtered event totals retain the all-time faction aggregate.");
+  assert.ok((halloweenYear.payload?.eventTotals?.revitalizeSuccessfulAttacks ?? 0) >= 114, "Year-filtered event totals retain the all-time faction aggregate.");
+  assert.ok(halloweenYear.payload?.memberComparisons?.some(row => row.playerId === otherPlayerId));
+  assert.equal(halloweenYear.payload?.leaderboard?.find(row => row.playerId === partialPlayerId)?.coverage, "partial");
+  
+  const sharedMemberDetail = await api("/api/me/halloween/members/" + otherPlayerId + "?year=2026");
+  ok(sharedMemberDetail, "Shared Halloween member detail");
+  assert.equal(sharedMemberDetail.payload?.collection?.coverage, "complete");
+  const privateMemberDetail = await api("/api/me/halloween/members/" + privatePlayerId + "?year=2026");
+  assert.equal(privateMemberDetail.response.status, 403, "A member who has not opted to share Halloween history must remain hidden.");
+}
+
+if (featureSuite === "christmas-town") {
+  const christmasKey = await api("/api/me/christmas-town/key");
+  ok(christmasKey, "Christmas Town retained-key status");
+  assert.equal(christmasKey.payload?.connected, false, "Synthetic archive represents a disconnected event key.");
+  assert.equal(christmasKey.payload?.previouslyConsented, true, "Initial consent should remain recorded after disconnection.");
+  const today = new Date().toISOString().slice(0, 10);
+  const christmasArchive = await api("/api/me/christmas-town/archive?from=2021-12-01&to=" + today);
+  ok(christmasArchive, "Christmas Town all-time archive");
+  assert.ok(christmasArchive.payload?.metrics?.logCount >= 1, "Christmas Town archive should retain the synthetic season record.");
+  assert.ok(christmasArchive.payload?.metrics?.minigames?.some(game => game.key === "present_pick" && game.count === 1));
+  assert.ok(christmasArchive.payload?.collection?.some(job => job.eventYear === 2025 && job.status === "complete"));
+}
+
+if (featureSuite === "gym-training") {
+  const gymHistory = await api("/api/me/gym-training/history");
+  ok(gymHistory, "Gym Training private history");
+  assert.equal(gymHistory.payload?.collectionEnabled, true);
+  assert.equal(gymHistory.payload?.connected, true);
+  assert.equal(gymHistory.payload?.key?.lastFour, "4242");
+  assert.equal(gymHistory.payload?.job?.status, "complete");
+  assert.equal(gymHistory.payload?.totalLogs, 2);
+  assert.deepEqual(gymHistory.payload?.logs?.map(row => row.title).sort(), [
+    "Gym training - Endurance",
+    "Gym training - Strength",
+  ]);
+  const gymCollect = await api("/api/me/gym-training/collect", { method: "POST", body: "{}" });
+  ok(gymCollect, "Gym Training idempotent collection request");
+  assert.equal(gymCollect.payload?.alreadyComplete, true);
+  assert.equal(gymCollect.payload?.queued, false, "A completed archive must not enqueue another Torn collection job.");
+}
+
+if (featureSuite === "discord") {
+  // Exercise the one-time Discord /link-code hand-off with a synthetic Discord snowflake.
+  // This creates a temporary row for the synthetic member only; it is disconnected below.
+  const generatedCode = await api("/api/me/discord-link-code", { method: "POST", body: "{}" });
+  ok(generatedCode, "Discord one-time link-code creation");
+  assert.match(generatedCode.payload?.code ?? "", /^[a-f0-9]{48}$/);
+  assert.equal(generatedCode.payload?.expiresInSeconds, 300);
+  const discordUserId = "999999999999999999";
+  const redemption = await api("/api/discord/link/redeem", {
+    method: "POST",
+    body: JSON.stringify({ code: generatedCode.payload.code, discordUserId }),
+  }, "");
+  ok(redemption, "Discord link-code redemption");
+  assert.equal(redemption.payload?.playerId, playerId);
+  assert.equal(redemption.payload?.token, token, "Discord redemption must return the original synthetic portal session.");
+  const replay = await api("/api/discord/link/redeem", {
+    method: "POST",
+    body: JSON.stringify({ code: generatedCode.payload.code, discordUserId }),
+  }, "");
+  assert.equal(replay.response.status, 400, "A redeemed one-time code must not be reusable.");
+  const linkStatus = await api("/api/me/discord-link");
+  ok(linkStatus, "Discord linked-account status");
+  assert.equal(linkStatus.payload?.linked, true);
+  assert.equal(linkStatus.payload?.alertsEnabled, false, "A newly linked Discord account must start with private alerts disabled.");
+  const disconnect = await api("/api/me/discord-link", { method: "DELETE" });
+  ok(disconnect, "Discord disconnect");
+  const disconnectedStatus = await api("/api/me/discord-link");
+  ok(disconnectedStatus, "Discord disconnected status");
+  assert.equal(disconnectedStatus.payload?.linked, false);
+}
+
+if (featureSuite === "discord") {
+  const botSource = readFileSync("bot/production-worker.js", "utf8");
+  assert.ok(botSource.includes('if (name === "link-code")'), "Production bot must retain the /link-code modal interaction.");
+  assert.ok(botSource.includes("https://naughtyfamily.pages.dev"), "The bot's /link instructions must point at the new portal.");
+}
+
+if (["consent", "halloween", "christmas-town", "gym-training"].includes(featureSuite)) {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1365, height: 950 } });
+  const page = await context.newPage();
+  mkdirSync("test-results/staging-features", { recursive: true });
+  const consoleErrors = [];
+  page.on("pageerror", error => consoleErrors.push(error.message));
+  
+  try {
+    if (featureSuite === "consent") {
+  const consentContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      try {
+        const consentPage = await consentContext.newPage();
+        const consentConsoleErrors = [];
+        consentPage.on("pageerror", error => consentConsoleErrors.push(error.message));
+        await consentPage.addInitScript(value => {
+          localStorage.setItem("ncd_session", value);
+          sessionStorage.removeItem("ncd_active_view");
+        }, consentToken);
+        const consentHome = await consentPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
+        assert.ok(consentHome?.ok(), "Consent walkthrough portal shell should load.");
+        await consentPage.getByRole("heading", { name: /Welcome to the Naughty Family/ }).waitFor({ state: "visible", timeout: 15000 });
+        await consentPage.getByRole("heading", { name: "Data policy & privacy" }).waitFor({ state: "visible" });
+        await consentPage.getByRole("heading", { name: "Primary Torn API key use & permissions" }).waitFor({ state: "visible" });
+        const customAccess = consentPage.getByRole("radio", { name: "Custom Access · Recommended" });
+        await customAccess.check();
+        const policyAcknowledgement = consentPage.locator("label.portal-setup-check").filter({ hasText: "I have read and acknowledge the current Naughty Family data policy" }).locator("input");
+        await policyAcknowledgement.check();
+        const primaryKeyAuthorization = consentPage.locator("label.portal-setup-check").filter({ hasText: "I own this primary Torn Custom Access key" }).locator("input");
+        await primaryKeyAuthorization.check();
+        const finishSetup = consentPage.getByRole("button", { name: "Save preferences & finish setup" });
+        await finishSetup.waitFor({ state: "visible" });
+        assert.equal(await finishSetup.isEnabled(), true, "The form should submit only after policy, key type and key-use choices are selected.");
+        await finishSetup.click();
+        await consentPage.getByRole("status").filter({ hasText: "Setup saved" }).waitFor({ state: "visible", timeout: 15000 });
+        const savedConsent = await api("/api/me/portal-consent", {}, consentToken);
+        ok(savedConsent, "Saved first-login consent");
+        assert.equal(savedConsent.payload?.required, false);
+        assert.equal(savedConsent.payload?.consent?.apiKeyUsageAccepted, true);
+        assert.equal(savedConsent.payload?.consent?.apiKeyAccessType, "custom");
+        assert.deepEqual(consentConsoleErrors, [], "First-login consent form should not create browser errors.");
+        console.log("PASS first-login route automatically opens privacy setup; policy acknowledgement, Custom Access declaration and primary-key authorization save successfully without Torn API calls.");
+      } finally {
+        await consentContext.close();
+      }
+}
+
+if (featureSuite !== "consent") {
+  await page.addInitScript(value => {
+        localStorage.setItem("ncd_session", value);
+        sessionStorage.removeItem("ncd_active_view");
+      }, token);
+    
+      const home = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
+      assert.ok(home?.ok(), "Staging portal shell should load.");
+      await page.getByRole("heading", { name: /One faction/ }).waitFor({ state: "visible", timeout: 15000 });
+}
+
+if (featureSuite === "halloween") {
+  // Halloween Live/current-year, then all-time and year-specific archive.
+      await page.getByRole("button", { name: "Halloween Dashboard" }).click();
+      await page.getByRole("heading", { name: /Halloween Dashboard/ }).waitFor({ state: "visible", timeout: 15000 });
+      const halloweenTabs = page.getByRole("navigation", { name: "Halloween dashboard sections" });
+      await halloweenTabs.getByRole("button", { name: /Live \/ Current Year/ }).waitFor({ state: "visible" });
+      await page.getByText("MY CURRENT TREATS", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      const liveSnapshotGrid = page.getByText("MY CURRENT TREATS", { exact: true }).locator("xpath=../..");
+      const liveSnapshotText = await liveSnapshotGrid.innerText();
+      assert.ok(liveSnapshotText.includes("35") && liveSnapshotText.includes("500"), "Live/current-year view should render the seeded personal snapshot in the personal metrics grid.");
+      await halloweenTabs.getByRole("button", { name: /Historical$/ }).click();
+      await page.getByRole("heading", { name: "Historical event records" }).waitFor({ state: "visible", timeout: 15000 });
+      await page.locator("#halloween-compare-member option[value='" + otherPlayerId + "']").waitFor({ state: "attached", timeout: 15000 });
+      await page.locator("#halloween-compare-member").selectOption(otherPlayerId);
+      const comparison = page.locator(".halloween-comparison-table");
+      await comparison.waitFor({ state: "visible", timeout: 10000 });
+      const comparisonText = await comparison.innerText();
+      assert.ok(comparisonText.includes("Staging Private History Other Member"));
+      assert.ok(comparisonText.includes("5"), "Comparison should show the second member's staged Revitalize proc count.");
+      const halloweenText = await page.locator(".halloween-module").innerText().catch(async () => page.locator("main").innerText());
+      assert.ok(halloweenText.includes("18.75%"), "Feature member's Revitalize rate should render as 12 / 64 = 18.75%.");
+      assert.ok(halloweenText.includes("Staging Partial Archive Member"), "Partial member should remain visible in the archive.");
+      assert.ok(/Partial/i.test(halloweenText), "The archive UI should label incomplete coverage as Partial.");
+    
+      await page.locator("#halloween-year-scope").selectOption("2026");
+      await page.getByText("Event year 2026", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      assert.ok((await page.locator("main").innerText()).includes("Historical event records"));
+    
+      await halloweenTabs.getByRole("button", { name: /Live \/ Current Year/ }).click();
+      await page.getByText("MY TOTAL TREATS", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+      assert.ok((await page.locator("main").innerText()).includes("35"));
+}
+
+if (featureSuite === "christmas-town") {
+  // Christmas Town archive and the calendar-derived current-season window.
+            await page.getByRole("button", { name: "Christmas Town" }).click();
+      await page.getByRole("heading", { name: "Christmas Town", exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      await page.getByText(/^PRESENT PICK$/i).waitFor({ state: "visible", timeout: 15000 });
+      assert.ok((await page.locator("main").innerText()).includes("All time"));
+      await page.screenshot({ path: "test-results/staging-features/christmas-town.png", fullPage: true });
+}
+
+if (featureSuite === "gym-training") {
+  // Account Settings displays only this member's own Gym Training history.
+            await page.getByRole("button", { name: "Account Settings" }).click();
+      const gymCard = page.locator(".gym-training-history");
+      await gymCard.waitFor({ state: "visible", timeout: 15000 });
+      // The card mounts before its authenticated history request resolves.
+      // Wait for the final status and both saved records before reading its text.
+      await gymCard.getByText(/Connected securely/).waitFor({ state: "visible", timeout: 15000 });
+      await gymCard.getByText("Recent training activity", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      await gymCard.getByText("Gym training - Strength", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      await gymCard.getByText("Gym training - Endurance", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      const gymUiText = await gymCard.innerText();
+      assert.ok(gymUiText.includes("Connected securely"));
+      assert.ok(gymUiText.includes("Recent training activity"));
+      assert.ok(gymUiText.includes("Gym training - Strength"));
+      assert.ok(gymUiText.includes("Gym training - Endurance"));
+      await page.screenshot({ path: "test-results/staging-features/gym-training-history.png", fullPage: true });
+}
+
+  if (featureSuite !== "consent") assert.deepEqual(consoleErrors, [], "Staging feature test should not produce uncaught browser errors.");
+    if (featureSuite === "gym-training") await page.screenshot({ path: "test-results/staging-features/account-settings.png", fullPage: true });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+console.log("PASS selected staging feature suite: " + featureSuite + ".");
+console.log("NOTE: Tests use synthetic staging records only; no real API key or upstream Torn request is used.");
