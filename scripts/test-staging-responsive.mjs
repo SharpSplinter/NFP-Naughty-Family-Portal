@@ -304,9 +304,9 @@ try {
 
   // Central private-data visibility now lives in the setup/privacy workspace.
   // Verify the three visibility choices and the separate networth checkbox there.
-  // Use a separate first-login member/context. The authenticated Company
-  // Dashboard account above is already onboarded and should not be expected to
-  // see the mandatory setup workspace.
+  // Use the dedicated consent-test member in a separate context. The feature
+  // walkthrough has already completed first-login acknowledgement for this
+  // account, so open /setup explicitly to exercise preferences-edit mode.
   const setupContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 1,
@@ -318,7 +318,7 @@ try {
     localStorage.setItem("ncd_session", token);
     sessionStorage.removeItem("ncd_active_view");
   }, consentSessionToken);
-  await setupPage.goto(baseUrl, { waitUntil: "networkidle", timeout: 30000 });
+  await setupPage.goto(baseUrl.replace(/\/$/, "") + "/setup", { waitUntil: "networkidle", timeout: 30000 });
   await setupPage.locator(".portal-setup-page").waitFor({ state: "visible", timeout: 20000 });
   const visibilitySection = setupPage.locator(".portal-setup-section").filter({
     has: setupPage.getByRole("heading", { name: "Private-data visibility", exact: true }),
