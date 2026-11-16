@@ -189,23 +189,67 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           const url = process.env.STAGING_PAGES_URL;
-          const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          const html = await response.text();
-          const assetPaths = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)].map(match => match[1]).filter(assetPath => assetPath.includes(".js"));
-          if (!response.ok || !html.includes('id="root"') || assetPaths.length === 0) {
-            throw new Error("Staging Pages did not serve the portal shell and JavaScript assets.");
+          const expectedApiBase = "naughtyfamily-api-staging.kboone801.workers.dev";
+          let verified = null;
+          let lastObservation = null;
+
+          // Pages deployment aliases can take a short time to serve the newest
+          // HTML after the upload reports success. Re-fetch the HTML without
+          // relying on the edge cache, then verify the referenced content-hash
+          // asset actually contains the isolated staging Worker URL.
+          for (let attempt = 1; attempt <= 12; attempt++) {
+            const checkUrl = new URL(url);
+            checkUrl.searchParams.set("__staging_deploy_check", `${Date.now()}-${attempt}`);
+            const response = await fetch(checkUrl, {
+              cache: "no-store",
+              signal: AbortSignal.timeout(15000),
+            }).catch(() => null);
+            const html = response ? await response.text() : "";
+            const assetPaths = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)]
+              .map(match => match[1])
+              .filter(assetPath => assetPath.includes(".js"));
+
+            if (response?.ok && html.includes('id="root"') && assetPaths.length > 0) {
+              const assets = await Promise.all(assetPaths.map(async assetPath => {
+                const assetUrl = new URL(assetPath, url);
+                assetUrl.searchParams.set("__staging_deploy_check", String(attempt));
+                const assetResponse = await fetch(assetUrl, {
+                  cache: "no-store",
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (!assetResponse.ok) {
+                  throw new Error(`Staging asset failed: ${assetResponse.status} ${assetPath}`);
+                }
+                return await assetResponse.text();
+              }));
+              const correctApiBase = assets.some(asset => asset.includes(expectedApiBase));
+              lastObservation = {
+                status: response.status,
+                rootMount: true,
+                assetPaths,
+                correctApiBase,
+              };
+              if (correctApiBase) {
+                verified = lastObservation;
+                break;
+              }
+            } else {
+              lastObservation = {
+                status: response?.status ?? "unreachable",
+                rootMount: html.includes('id="root"'),
+                assetPaths,
+                correctApiBase: false,
+              };
+            }
+
+            console.log(`Waiting for Pages alias propagation (${attempt}/12): ${JSON.stringify(lastObservation)}`);
+            if (attempt < 12) await new Promise(resolve => setTimeout(resolve, 2500));
           }
-          const assets = await Promise.all(assetPaths.map(async assetPath => {
-            const assetUrl = new URL(assetPath, url).toString();
-            const assetResponse = await fetch(assetUrl, { signal: AbortSignal.timeout(15000) });
-            if (!assetResponse.ok) throw new Error(`Staging asset failed: ${assetResponse.status} ${assetPath}`);
-            return await assetResponse.text();
-          }));
-          const correctApiBase = assets.some(asset => asset.includes("naughtyfamily-api-staging.kboone801.workers.dev"));
-          console.log(`STAGING PAGES -> ${response.status}; rootMount=true; jsAssets=${assetPaths.length}; correctApiBaseInBundle=${correctApiBase}`);
-          if (!correctApiBase) {
-            throw new Error("Staging JavaScript assets do not embed the isolated acceptance API Worker URL.");
+
+          if (!verified) {
+            throw new Error(`Staging Pages did not expose the new bundle with ${expectedApiBase}. Last observation: ${JSON.stringify(lastObservation)}`);
           }
+          console.log(`STAGING PAGES -> ${verified.status}; rootMount=true; jsAssets=${verified.assetPaths.length}; correctApiBaseInBundle=true`);
           NODE
 
       - name: Install Playwright Chromium for staging viewport checks
