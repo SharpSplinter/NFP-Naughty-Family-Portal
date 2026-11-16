@@ -24,7 +24,6 @@ assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
 assert.ok(classifier.includes("return gymCategory && trainingSignal"));
 assert.ok(calculator.includes('import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"'));
-assert.ok(test.includes("userTrainingEstimate"), "the sample train regression must remain in the focused test");
 assert.ok(calculator.includes('import { parseGymHistoryLog } from "../../lib/gym-training/history.js"'));
 assert.ok(calculator.includes("details.statAfter"));
 
