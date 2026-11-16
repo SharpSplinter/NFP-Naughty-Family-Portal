@@ -4602,7 +4602,7 @@ try {
     }
     return {
       env: { DB: db, KEY_ENCRYPTION_SECRET: secret, ALLOWED_ORIGIN: "https://naughty-company-dashboard.pages.dev" },
-      players, sessions, apiKeys, administrators, disabled, halloweenTables, factionCache, sharing, audit, tokenByPlayer,
+      players, sessions, apiKeys, administrators, portalConsents, disabled, halloweenTables, factionCache, sharing, audit, tokenByPlayer,
     }
   }
 
