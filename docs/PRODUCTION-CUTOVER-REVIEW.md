@@ -553,3 +553,22 @@ The production `naughtyfamily-api` Worker remains configured with scheduled trig
 This warning does not change the previously recorded staging feature acceptance results. No queue configuration or production deployment was modified during this check.
 
 The same 2026-11-16 live-calendar attempt recorded an account-wide D1 rows-read baseline and final value of **3,985,750** against the workflow's **4,000,000-row hard stop**, with a recorded delta of zero. That left only **14,250 rows** below the staging hard stop at the time of the run. Do not start additional D1-backed acceptance work until the UTC usage reset has passed and account-wide D1 usage has been freshly checked.
+
+
+## 17. Queues free-tier limit reached (operator alert, 2026-11-16)
+
+The operator supplied a new Cloudflare account notification confirming that the daily Queues free-tier limit is **exhausted**:
+
+- Daily operation limit: **10,000**
+- Operations used: **10,000 (100%)**
+- New message sends: **blocked**
+- Stated reset: **2026-11-17 00:00:00 UTC**
+- Cloudflare's stated recovery paths: Workers Paid plan upgrade after it takes effect, or the daily reset.
+
+This supersedes the earlier 91% warning in Section 16. The earlier read-only Queue backlog snapshot remains a historical snapshot only; zero backlog does not imply that new sends are available. Queue backlog metrics do not replace the account-level daily operation counter.
+
+**Immediate operating rule:** treat Queue producers as unavailable until a new authoritative usage check confirms the allowance has reset or Cloudflare confirms the paid-plan upgrade is effective. Do not probe by sending a message. Avoid retries, collection-job enqueue, manual refreshes, fixture producers, DLQ replays, and other actions that attempt to send Queue messages. Queue-backed application functions may return errors while the quota is exhausted.
+
+Do not purge messages, detach consumers, delete queues, or disable production schedules as a quota workaround. Those are independent service/configuration changes and could interrupt expected processing; they were not performed. No Queue messages were sent, received, acknowledged, purged, or replayed in response to this alert. No Queue consumer, producer, Worker, Pages, secret, or production schedule was changed.
+
+Recheck account-level Queue usage after **2026-11-17 00:00 UTC** before resuming queue-backed staging acceptance or manual collection work. If service must resume before the reset, confirm that the Workers Paid upgrade has actually taken effect first. Keep D1 reads independently paused until the D1 counter has also reset and been rechecked; the Queues reset does not reset D1 usage ahead of its own daily reset.
