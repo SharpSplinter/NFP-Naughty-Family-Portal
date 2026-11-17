@@ -824,7 +824,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   })
   const longTermProjection = useMemo(() => {
     let stat = projectionStartingStat
-    let happy = startingHappy
+    let happy = currentHappyFromApi
     let totalGain = 0
     let totalEnergy = 0
     let totalTrains = 0
@@ -856,7 +856,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       totalGain += result.statGain
     }
     return { stat, totalGain, energy: totalEnergy, trains: totalTrains, days }
-  }, [projectionStartingStat, startingHappy, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
+  }, [projectionStartingStat, currentHappyFromApi, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
     projectionStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
     projectionXanaxPerDay, projectionFhcPerDay, naturalHappyPerDay, dailyHappyBarMaximum])
   const naturalHappyPerDay = happyBar
@@ -1375,33 +1375,52 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
       {activeTab === "projection" && <main className="tc-layout">
         <div className="tc-results-column">
-          <Panel title="Long-term training plan" eyebrow="LIVE REGEN + DAILY REFILL" description="The default daily energy budget uses your API energy regeneration rate plus the daily refill when Torn reports it is available. Override it for a custom routine.">
+          <Panel title="Long-term training plan" eyebrow="INDEPENDENT DAILY SUPPLY PROJECTION" description="Set the sustainable consumable usage you expect each day. This plan has its own gym, stat and energy supply assumptions.">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Projection stat</span><select value={selectedStat} onChange={event => setSelectedStat(event.target.value as StatKey)}>
+              <label className="tc-field"><span>Projection stat</span><select data-testid="training-projection-stat" value={projectionStat} onChange={event => setProjectionStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
-              <NumberField label="Projection days" value={projectionDays} onChange={setProjectionDays} min={1} max={3650} hint="Maximum 3,650 days (10 years)." testId="training-projection-days" />
-              <NumberField label="Daily training energy" value={dailyEnergy} onChange={value => setDailyEnergyOverride(value === 0 ? "" : String(value))} min={0} max={100000}
-                hint={"Auto: " + fmt(naturalEnergyPerDay) + "E natural regeneration" + (pointRefillAvailable ? " + " + fmt(refillBarMaximum) + "E daily refill" : "") + ". Maximum 100,000E/day."} testId="training-daily-energy" />
-              <div className="tc-readout-field"><span>Natural happy regeneration</span><strong>+{fmt(naturalHappyPerDay)} / day</strong><small>Calculated from your live happy bar interval.</small></div>
+              <label className="tc-field"><span>Projection gym</span><select data-testid="training-projection-gym" value={projectionResolvedGymId} onChange={event => setProjectionGymId(event.target.value)}>
+                {gyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
+              </select></label>
+              <NumberField label="Projection days" value={projectionDays} onChange={setProjectionDays} min={1} max={3650}
+                hint="Maximum 3,650 days (10 years)." testId="training-projection-days" />
+              <NumberField label="Projected Xanax per day" value={projectionXanaxPerDay} onChange={setProjectionXanaxPerDay} min={0} max={20} step={0.1}
+                hint="Each dose contributes 250E and +75 happiness." testId="training-projection-xanax-per-day" />
+              <NumberField label="Projected FHCs per day" value={projectionFhcPerDay} onChange={setProjectionFhcPerDay} min={0} max={20} step={0.1}
+                hint={"Each FHC restores " + fmt(projectedRefillEnergy) + "E and adds +500 happiness."} testId="training-projection-fhc-per-day" />
+              <label className="tc-field"><span>Projected energy can</span><select data-testid="training-projection-can-type" value={projectionCanId} onChange={event => setProjectionCanId(event.target.value)}>
+                {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
+              </select></label>
+              <NumberField label="Projected energy cans per day" value={projectionCanPerDay} onChange={setProjectionCanPerDay} min={0} max={64} step={0.1}
+                hint="Includes live Voracity and Fuelling energy bonuses when returned by Torn." testId="training-projection-can-count" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-projection-mcs" checked={projectionMcsEnabled} onChange={event => setProjectionMcsEnabled(event.target.checked)} />
+                <span><strong>MCS stock block benefit</strong><small>One 100E benefit every seven days, not 100E every day.</small></span>
+              </label>
+              <div className="tc-readout-field"><span>Natural Energy regeneration</span><strong>{fmt(projectedNaturalEnergyPerDay)}E/day</strong><small>Uses the live regeneration rate, not current Energy.</small></div>
+              <div className="tc-readout-field"><span>FHC refill amount used</span><strong>{fmt(projectedRefillEnergy)}E each</strong><small>Based on your refill capacity.</small></div>
+              <div className="tc-readout-field"><span>MCS energy</span><strong>{projectionMcsEnabled ? "100E / 7 days" : "Not included"}</strong><small>{projectionMcsEnabled ? "Equivalent to 14.29E/day for average supply comparisons." : "Toggle on to include weekly payouts."}</small></div>
+              <div className="tc-readout-field"><span>Average daily energy supply</span><strong data-testid="training-projection-daily-energy">{fmt(projectionDailySupply.averageDailyEnergy, 2)}E</strong><small>Natural energy + projected daily Xanax/FHC/cans + weekly MCS average.</small></div>
+              <div className="tc-readout-field"><span>Natural happy regeneration</span><strong>+{fmt(naturalHappyPerDay)} / day</strong><small>Daily projected Xanax and FHC happy is also added.</small></div>
             </div>
-            <div className="tc-inline-note">Daily projection compounds the selected gym, battle stat and verified training modifiers. It does not assume a 99K happy jump every day. Set a daily energy amount that is sustainable for your chosen supplies.</div>
+            <div className="tc-inline-note">The forecast adds the MCS 100E payout on projected days 7, 14, 21, 28, etc. The displayed daily average is for comparison only. This planner does not use current Energy or values entered on Gym Trains, Energy Supply or Happy Jump.</div>
           </Panel>
         </div>
         <aside className="tc-results-column">
           <Panel title="Projected training progress" eyebrow="COMPOUNDED DAILY MODEL">
             <div className="tc-metric-grid">
-              <Metric label="Projected stat gain" value={"+" + fmt(projection.totalGain, 2)} detail={projection.days + " training days"} tone="green" />
-              <Metric label="Projected ending stat" value={fmt(projection.stat, 2)} detail={currentStatLabel + " scenario"} />
-              <Metric label="Total energy trained" value={fmt(projection.energy) + "E"} detail={fmt(dailyEnergy) + "E/day"} tone="blue" />
-              <Metric label="Energy regenerated daily" value={fmt(naturalEnergyPerDay) + "E"} detail="Natural energy estimate from API bars" />
+              <Metric label="Projected stat gain" value={"+" + fmt(longTermProjection.totalGain, 2)} detail={longTermProjection.trains + " individual trains over " + longTermProjection.days + " days"} tone="green" />
+              <Metric label="Projected ending stat" value={fmt(longTermProjection.stat, 2)} detail={projectionStatLabel + " · " + projectionGym.name} />
+              <Metric label="Total projected energy" value={fmt(longTermProjection.energy) + "E"} detail={fmt(longTermProjection.energy / Math.max(1, longTermProjection.days), 2) + "E/day average"} tone="blue" />
+              <Metric label="Average daily supply" value={fmt(projectionDailySupply.averageDailyEnergy, 2) + "E"} detail={projectionMcsEnabled ? "Includes 100E MCS every 7 days" : "MCS not included"} />
             </div>
           </Panel>
           <Panel title="Projection assumptions" eyebrow="TRANSPARENT INPUTS">
             <div className="tc-condition-list">
-              <div><span>Current battle stat source</span><strong>{liveStatSource}</strong></div>
-              <div><span>Current gym</span><strong>{selectedGym.name}</strong></div>
-              <div><span>Gym gain modifier</span><strong>{fmt(effectiveModifier, 4)}×</strong></div>
+              <div><span>Starting battle stat</span><strong>{fmt(projectionStartingStat, 2)}</strong></div>
+              <div><span>Selected gym</span><strong>{projectionGym.name}</strong></div>
+              <div><span>Gym-gain modifier</span><strong>{fmt(projectionEffectiveModifier, 6)}×</strong></div>
+              <div><span>Weekly stock energy</span><strong>{projectionMcsEnabled ? "100E every 7 days" : "Off"}</strong></div>
             </div>
           </Panel>
         </aside>
