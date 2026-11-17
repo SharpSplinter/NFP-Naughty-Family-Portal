@@ -11,13 +11,84 @@ on:
         type: choice
         options:
           - naughtyfamily-api
-      backup_reference:
-        description: Reference to the verified encrypted pre-deployment D1 export stored outside this repository
+      release_authorization:
+        description: Explicitly authorize production D1 migrations and Worker deployment
+        required: true
+        type: choice
+        options:
+          - I approve production D1 migrations and Worker deployment
+      candidate_commit:
+        description: Exact portal-rebuild commit used by restore rehearsal and stateful staging acceptance
         required: true
         type: string
+      backup_reference:
+        description: HTTPS reference to the encrypted external production D1 backup
+        required: true
+        type: string
+      backup_sha256:
+        description: Independently verified SHA-256 checksum of the encrypted backup
+        required: true
+        type: string
+      backup_created_at:
+        description: Backup creation time in ISO-8601 UTC; must be less than 24 hours old
+        required: true
+        type: string
+      time_travel_bookmark_reference:
+        description: HTTPS reference to the fresh pre-cutover D1 Time Travel bookmark
+        required: true
+        type: string
+      d1_ledger_reference:
+        description: HTTPS reference to the freshly verified production D1 migration ledger
+        required: true
+        type: string
+      d1_usage_reference:
+        description: HTTPS reference to fresh account-wide D1 rows-read usage evidence
+        required: true
+        type: string
+      d1_usage_checked_at:
+        description: Account-wide D1 usage check time in ISO-8601 UTC; must be less than 15 minutes old
+        required: true
+        type: string
+      d1_rows_read:
+        description: Current account-wide D1 rows read from the fresh usage check
+        required: true
+        type: string
+      d1_hard_stop_rows:
+        description: Account-wide daily D1 rows-read hard stop confirmed by the operator
+        required: true
+        type: string
+      d1_release_reserve_rows:
+        description: D1 read reserve kept available for the deployment window
+        required: true
+        default: "100000"
+        type: string
+      restore_rehearsal_run_url:
+        description: Successful isolated production-data restore and migration-replay workflow run URL
+        required: true
+        type: string
+      staging_acceptance_run_url:
+        description: Successful stateful staging acceptance workflow run URL for this exact candidate
+        required: true
+        type: string
+      service_key_permission_reference:
+        description: HTTPS reference to verified Torn service-key permission evidence
+        required: true
+        type: string
+      queue_configuration_review_reference:
+        description: HTTPS reference to the reviewed production Queue binding/configuration diff
+        required: true
+        type: string
+      queue_configuration_ack:
+        description: Explicitly authorize reconciliation of the Queue bindings declared in wrangler.toml
+        required: true
+        type: choice
+        options:
+          - I approve reconciliation of configured Queue bindings
 
 permissions:
+  actions: read
   contents: read
+  deployments: write
 
 concurrency:
   group: naughty-company-worker-deploy
@@ -25,16 +96,19 @@ concurrency:
 
 jobs:
   deploy-worker:
-    # Production changes only run from main and require a named target plus an operator-supplied backup reference.
-    if: github.ref == 'refs/heads/main' && inputs.confirm_target == 'naughtyfamily-api' && inputs.backup_reference != ''
+    # GitHub Environment protection rules/reviewers must be configured for "production".
+    # The evidence script runs before the first Cloudflare action.
+    if: github.ref == 'refs/heads/main' && inputs.confirm_target == 'naughtyfamily-api'
+    environment:
+      name: production
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -42,23 +116,33 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Require production backup evidence and verify target configuration
+      - name: Verify production cutover evidence before any Cloudflare operation
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
           CONFIRM_TARGET: ${{ inputs.confirm_target }}
+          RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
           BACKUP_REFERENCE: ${{ inputs.backup_reference }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$CONFIRM_TARGET" = "naughtyfamily-api"
-          test -n "$BACKUP_REFERENCE"
-          grep -F 'name = "naughtyfamily-api"' wrangler.toml
-          grep -F 'database_name = "naughty-company-dashboard"' wrangler.toml
-          grep -F 'database_id = "bbbe128a-c5cc-46ec-b8ef-93860183e795"' wrangler.toml
-          grep -F 'binding = "NCD_DAILY_READ_CACHE"' wrangler.toml
-          grep -F 'id = "9587689089c04f37b28eb9c93156cc47"' wrangler.toml
-          ! grep -F 'naughtyfamily-acceptance-staging' wrangler.toml
-          ! grep -F '02cca699-1232-495f-8a0a-de525058b92a' wrangler.toml
-          echo "Production target verified. An external pre-deployment backup reference was supplied; the workflow does not create or validate that backup." >> "$GITHUB_STEP_SUMMARY"
+          BACKUP_SHA256: ${{ inputs.backup_sha256 }}
+          BACKUP_CREATED_AT: ${{ inputs.backup_created_at }}
+          TIME_TRAVEL_BOOKMARK_REFERENCE: ${{ inputs.time_travel_bookmark_reference }}
+          D1_LEDGER_REFERENCE: ${{ inputs.d1_ledger_reference }}
+          D1_USAGE_REFERENCE: ${{ inputs.d1_usage_reference }}
+          D1_USAGE_CHECKED_AT: ${{ inputs.d1_usage_checked_at }}
+          D1_ROWS_READ: ${{ inputs.d1_rows_read }}
+          D1_HARD_STOP_ROWS: ${{ inputs.d1_hard_stop_rows }}
+          D1_RELEASE_RESERVE_ROWS: ${{ inputs.d1_release_reserve_rows }}
+          RESTORE_REHEARSAL_RUN_URL: ${{ inputs.restore_rehearsal_run_url }}
+          RESTORE_REHEARSAL_COMMIT: ${{ inputs.candidate_commit }}
+          STAGING_ACCEPTANCE_RUN_URL: ${{ inputs.staging_acceptance_run_url }}
+          STAGING_ACCEPTANCE_COMMIT: ${{ inputs.candidate_commit }}
+          SERVICE_KEY_PERMISSION_REFERENCE: ${{ inputs.service_key_permission_reference }}
+          QUEUE_CONFIGURATION_REVIEW_REFERENCE: ${{ inputs.queue_configuration_review_reference }}
+          QUEUE_CONFIGURATION_ACK: ${{ inputs.queue_configuration_ack }}
+        run: node scripts/production-cutover-preflight.mjs
 
       - name: Run repository quality gates
         run: |
