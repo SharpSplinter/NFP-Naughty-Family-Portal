@@ -1482,7 +1482,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             Save calibration from selected log
           </button>
           {selectedStatCalibrationSamples.length > 0 && <button type="button" className="tc-secondary-button"
-            data-testid="training-calibration-reset" onClick={resetGymCalibration}>Reset {currentStatLabel} calibration</button>}
+            data-testid="training-calibration-reset" onClick={resetGymCalibration}>Reset {gymTrainStatLabel} calibration</button>}
           {!historyConnected && <p className="tc-muted">Connect Gym Training history in Account Settings to select verified Torn logs here.</p>}
           {calibrationMessage && <p className="tc-inline-note" role="status">{calibrationMessage}</p>}
         </div>
