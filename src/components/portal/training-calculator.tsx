@@ -1059,73 +1059,65 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
       {activeTab === "session" && <main className="tc-layout">
         <div className="tc-results-column">
-          <Panel title="Your training setup" eyebrow="LIVE PROFILE + SCENARIO" description="Battle stats default to Torn's current values. Enter a different value to model a what-if scenario.">
+          <Panel title="Gym training forecast" eyebrow="YOUR TRAINING SCENARIO" description="Choose a battle stat, gym and exact number of individual trains. The forecast works even when your live Torn Energy bar is empty.">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={selectedStat} onChange={event => setSelectedStat(event.target.value as StatKey)}>
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={gymTrainStat} onChange={event => setGymTrainStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
-              <label className="tc-field"><span>Gym</span><select data-testid="training-gym-select" value={gymId} onChange={event => setSelectedGymId(event.target.value)}>
+              <label className="tc-field"><span>Gym</span><select data-testid="training-gym-select" value={gymTrainResolvedGymId} onChange={event => setGymTrainGymId(event.target.value)}>
                 {gyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}{liveData?.gym?.id === String(gym.id) ? " · Active" : ""}</option>)}
-              </select><small className="tc-hint">Defaults to your active Torn gym. Only gyms available to your account are listed.</small></label>
-              <TextNumberField label={currentStatLabel + " battle stat"} value={statOverride} fallbackValue={liveStatValue}
-                onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
-                hint={liveStatSource + ". Maximum " + fmt(MAX_STAT_INPUT) + " (safe calculator integer). Clear the field to restore the live API value."} testId="training-stat-value" />
-              <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(selectedGym.energyCost)} energy per individual train</small></div>
+              </select></label>
+              <NumberField label="Number of individual trains" value={gymTrainCount} onChange={setGymTrainCount} min={0} max={20000}
+                hint="The calculator runs this exact number of trains. It does not require current Energy or an Energy Supply plan." testId="training-train-count" />
+              <div className="tc-readout-field"><span>Live {gymTrainStatLabel} stat</span><strong>{fmt(gymTrainStartingStat, 2)}</strong><small>{liveData?.battleStats?.[gymTrainStat] === null || liveData?.battleStats?.[gymTrainStat] === undefined ? "Battle stat not returned by Torn" : "From live battle stats"}</small></div>
+              <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{gymTrainDots ? fmt(gymTrainDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(gymTrainGym.energyCost)}E per individual train</small></div>
+              <div className="tc-readout-field"><span>Live gym-gain modifier</span><strong data-testid="training-effective-modifier">{fmt(gymTrainEffectiveModifier, 6)}×</strong><small>{gymTrainCalibration.sampleCount ? "Includes " + gymTrainCalibration.sampleCount + " matching player calibration sample(s)" : "Live Torn faction, education and book bonuses"}</small></div>
               <div className="tc-readout-field"><span>Estimated happy lost per energy</span><strong data-testid="training-happy-loss-per-energy">{fmt(happyLossPercent, 2)}%</strong><small>Midpoint estimate after verified company happy-loss reductions</small></div>
-              <div className="tc-readout-field"><span>Live combat modifier</span><strong>{fmt(safeNumber(liveData?.battleStatModifiers?.[selectedStat]?.percent))}%</strong><small>Combat-only modifiers are not multiplied into the raw-stat gym gain formula.</small></div>
-              <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
-                <option value="auto">Use active book from API</option><option value="none">No gym-gain book</option>
-                <option value="get-hard">Get Hard Or Go Home · +20% all stats</option>
-                <option value="gym-grunting">Gym Grunting · +30% Strength</option>
-                <option value="self-defense">Self Defense in the Workplace · +30% Defense</option>
-                <option value="speed-script">Speed 3: The Rejected Script · +30% Speed</option>
-                <option value="limbo-lovers">Limbo Lovers 101 · +30% Dexterity</option>
-              </select><small className="tc-hint">Auto uses the live /user/perks book. Choose a planned book to replace the active book bonus for this scenario.</small></label>
-              <div className="tc-readout-field"><span>Automatic gym-gain modifier</span><strong>{fmt(autoModifier, 4)}×</strong><small>Calculated from current /user/perks bonuses for {currentStatLabel.toLowerCase()}</small></div>
-              <div className="tc-readout-field"><span>Modifier used in this scenario</span><strong data-testid="training-effective-modifier">{fmt(calibratedModifier, 6)}×</strong><small>{activeCalibration.sampleCount
-                ? "Raw " + fmt(effectiveModifier, 4) + "× × player calibration " + fmt(activeCalibration.factor, 6) + "× from " + activeCalibration.sampleCount + " verified log(s)"
-                : gymBookChoice === "auto" ? "Active perk and book values; no matching player calibration yet" : "Planned gym book replaces the active book bonus"}</small></div>
-              <label className="tc-check-field"><input type="checkbox" checked={manualModifierEnabled} onChange={event => setManualModifierEnabled(event.target.checked)} />
-                <span><strong>Override API gym modifier</strong><small>Leave off to use the live modifier calculated from Torn perks.</small></span>
-              </label>
-              {manualModifierEnabled && <NumberField label="Manual gym-gain modifier" value={safeNumber(manualModifier)} onChange={value => setManualModifier(value === 0 ? "" : String(value))}
-                min={0} max={100} step={0.0001} hint={"Maximum 100×. Live API modifier is " + fmt(autoModifier, 4) + "×."} />}
-              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : null}
-                onChange={setManualHappy} max={HAPPY_CAP} hint="Live from your Torn bars. A cleared field returns to your current API value." testId="training-session-happy" />
             </div>
-            {modifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {modifierBonuses.join(" · ")}</div>}
-            {selectedGym.note && <div className="tc-inline-note">{selectedGym.note}</div>}
-            <div className="tc-inline-note"><strong>Training math:</strong> Each row applies the current stat and remaining happiness to the next train. Gym gains are estimates and can differ slightly from Torn's result.</div>
+            {gymTrainModifierProfile?.bonuses?.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {gymTrainModifierProfile.bonuses.join(" · ")}</div>}
           </Panel>
-          <Panel title="Current perk inputs" eyebrow="AUTOMATIC MODIFIERS" description="The API's active books, education and other named perks are read on refresh.">
-            <div className="tc-condition-list">
-              <div><span>Live modifier for {currentStatLabel}</span><strong>{fmt(autoModifier, 4)}×</strong></div>
-              <div><span>Player calibration</span><strong>{activeCalibration.sampleCount
-                ? fmt(activeCalibration.factor, 6) + "× · " + activeCalibration.sampleCount + " log(s)"
-                : "Not calibrated for this gym/perk setup"}</strong></div>
-              <div><span>Current active books</span><strong>{(liveData?.perks?.book || []).length ? liveData!.perks.book.join(", ") : "None returned"}</strong></div>
-              <div><span>Faction gym perks</span><strong>{(liveData?.perks?.faction || []).filter(value => /gym|training|steadfast/i.test(value)).join(", ") || "No gym bonus returned"}</strong></div>
-              <div><span>Education gym perks</span><strong>{(liveData?.perks?.education || []).filter(value => /sports science|strength and conditioning|physiological testing|human movement|bio mechanical/i.test(value)).join(", ") || "No matching course returned"}</strong></div>
+          <Panel title="Projected daily energy supply" eyebrow="SEPARATE SUSTAINABILITY FORECAST" description="These daily averages are independent of the train count above. Current Energy is deliberately excluded, so zero current Energy does not block predictions.">
+            <div className="tc-form-grid">
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-gym-mcs" checked={gymTrainMcsEnabled} onChange={event => setGymTrainMcsEnabled(event.target.checked)} />
+                <span><strong>MCS stock block benefit</strong><small>100E once per week, equivalent to 14.29E/day on average.</small></span>
+              </label>
+              <NumberField label="Projected Xanax per day" value={gymTrainXanaxPerDay} onChange={setGymTrainXanaxPerDay} min={0} max={20} step={0.1}
+                hint="Each Xanax supplies 250E." testId="training-gym-xanax-per-day" />
+              <NumberField label="Projected FHCs per day" value={gymTrainFhcPerDay} onChange={setGymTrainFhcPerDay} min={0} max={20} step={0.1}
+                hint={"Each FHC restores " + fmt(projectedRefillEnergy) + "E when you train down before using it."} testId="training-gym-fhc-per-day" />
+              <label className="tc-field"><span>Projected energy can</span><select data-testid="training-gym-can-type" value={gymTrainCanId} onChange={event => setGymTrainCanId(event.target.value)}>
+                {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
+              </select></label>
+              <NumberField label="Projected energy cans per day" value={gymTrainCanPerDay} onChange={setGymTrainCanPerDay} min={0} max={64} step={0.1}
+                hint="Includes active Voracity and Fuelling bonuses returned by Torn." testId="training-gym-can-per-day" />
             </div>
-            <p className="tc-muted">The modifier is built as the product of applicable percentage bonuses, not added as a flat stat amount. Unknown perks are not guessed.</p>
+            <div className="tc-condition-list">
+              <div><span>Natural Energy regeneration</span><strong>{fmt(gymTrainDailySupply.naturalEnergy)}E/day</strong></div>
+              <div><span>Xanax supply</span><strong>{fmt(gymTrainDailySupply.xanaxEnergy)}E/day</strong></div>
+              <div><span>FHC supply</span><strong>{fmt(gymTrainDailySupply.fhcEnergy)}E/day</strong></div>
+              <div><span>Energy cans</span><strong>{fmt(gymTrainDailySupply.canEnergy, 1)}E/day</strong></div>
+              <div><span>MCS weekly benefit</span><strong>{gymTrainMcsEnabled ? "100E / 7 days" : "Not included"}</strong></div>
+            </div>
+            <div className="tc-result-total"><span>Average daily energy supply</span><strong data-testid="training-gym-daily-energy">{fmt(gymTrainDailySupply.averageDailyEnergy, 2)}E</strong></div>
+            <div className="tc-inline-note">At {fmt(gymTrainGym.energyCost)}E per train, this averages about {fmt(gymTrainDailySupply.averageDailyEnergy / Math.max(1, gymTrainGym.energyCost), 2)} trains per day. This supply estimate does not limit the train count you entered above.</div>
           </Panel>
         </div>
         <aside className="tc-results-column">
-          <Panel title="Session forecast" eyebrow="LIVE STAT + ENERGY PLAN" description="Your train count is based on the usable energy plan, including natural regeneration and sequential full-bar refills.">
+          <Panel title="Gym train result" eyebrow="EXACT USER-SELECTED TRAIN COUNT">
             <div className="tc-metric-grid">
-              <Metric label="Projected stat gain" value={"+" + fmt(session.statGain, 2)} detail={session.trains + " individual trains"} tone="green" />
-              <Metric label="First 1× train" value={"+" + fmt(oneTrain.statGain, 2)} detail={fmt(selectedGym.energyCost) + "E · " + currentStatLabel} tone="blue" />
-              <Metric label="Usable training energy" value={fmt(usableEnergy) + "E"} detail="Total energy spent through the planned sequence" />
-              <Metric label="Energy per train" value={fmt(selectedGym.energyCost) + "E"} detail={fmt(session.energyUsed) + "E actually used"} />
+              <Metric label="Projected stat gain" value={"+" + fmt(gymTrainSession.statGain, 2)} detail={gymTrainSession.trains + " individual trains"} tone="green" />
+              <Metric label="First 1× train" value={"+" + fmt(gymTrainOne.statGain, 2)} detail={fmt(gymTrainGym.energyCost) + "E · " + gymTrainStatLabel} tone="blue" />
+              <Metric label="Energy required" value={fmt(gymTrainSession.energyUsed) + "E"} detail={fmt(gymTrainCount) + " planned trains × " + fmt(gymTrainGym.energyCost) + "E"} />
+              <Metric label="Projected ending stat" value={fmt(gymTrainSession.endingStat, 2)} detail={gymTrainStatLabel} />
             </div>
-            <div className="tc-result-total"><span>Projected ending {currentStatLabel.toLowerCase()}</span><strong>{fmt(session.endingStat, 2)}</strong></div>
+            <div className="tc-result-total"><span>Starting happiness from live Torn bar</span><strong>{fmt(currentHappyFromApi)}</strong></div>
           </Panel>
-          <Panel title="Individual 1× train breakdown" eyebrow="STEP-BY-STEP GAINS" description="Each row recalculates using the stat and happiness left by the prior train.">
-            {session.rows.length ? <div className="tc-train-table-scroll" role="region" aria-label="Individual gym train stat gains" tabIndex={0}>
+          <Panel title="Individual train breakdown" eyebrow="STEP-BY-STEP GAINS" description="Each row applies the remaining happiness and the stat after the previous train.">
+            {gymTrainSession.rows.length ? <div className="tc-train-table-scroll" role="region" aria-label="Individual gym train stat gains" tabIndex={0}>
               <table className="tc-train-table"><thead><tr><th>Train</th><th>Happy</th><th>Gain</th><th>Stat after</th></tr></thead>
-                <tbody>{session.rows.map(row => <tr key={row.train}><td>#{row.train}</td><td>{fmt(row.happyBefore)}</td><td>+{fmt(row.gain, 2)}</td><td>{fmt(row.statAfter, 2)}</td></tr>)}</tbody>
+                <tbody>{gymTrainSession.rows.map(row => <tr key={row.train}><td>#{row.train}</td><td>{fmt(row.happyBefore)}</td><td>+{fmt(row.gain, 2)}</td><td>{fmt(row.statAfter, 2)}</td></tr>)}</tbody>
               </table>
-            </div> : <p className="tc-muted">Add usable energy in the Energy Supply tab to see each individual train.</p>}
+            </div> : <p className="tc-muted">Enter the number of trains you plan to perform to see individual gain estimates.</p>}
           </Panel>
         </aside>
       </main>}
