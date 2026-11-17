@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseGymHistoryLog } from "../src/lib/gym-training/history.js";
 import { estimateEnergyEquivalentGain } from "../src/lib/gym-training/gains.js";
 import { createGymGainCalibrationSample, estimateLoggedGymGain, getGymGainCalibrationSummary } from "../src/lib/gym-training/calibration.js";
+import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../src/lib/gym-training/supply.js";
 
 const read = path => readFileSync(resolve(process.cwd(), path), "utf8");
 const worker = read("src/worker/index.ts");
@@ -66,6 +67,53 @@ const rejectedCalibration = createGymGainCalibrationSample({
   startingHappy: 4863, gymId: "23", dots: 7.3, modifier: userPerkMultiplier, energyPerTrain: 10,
 });
 assert.equal(rejectedCalibration.ok, false, "calibration must reject a log from another gym");
+
+const dailySupply = calculateDailyTrainingSupply({
+  naturalEnergyPerDay: 0,
+  xanaxPerDay: 1,
+  fhcPerDay: 1,
+  refillEnergyPerFhc: 150,
+  cansPerDay: 2,
+  energyPerCan: 20,
+  mcsEnabled: true,
+});
+assert.equal(dailySupply.naturalEnergy, 0, "daily supply must not depend on current Energy");
+assert.equal(dailySupply.xanaxEnergy, 250);
+assert.equal(dailySupply.fhcEnergy, 150);
+assert.equal(dailySupply.canEnergy, 40);
+assert.equal(dailySupply.baseEnergyPerDay, 440);
+assert.equal(dailySupply.weeklyMcsEnergy, 100);
+assert.ok(Math.abs(dailySupply.averageDailyEnergy - (440 + 100 / 7)) < 1e-10,
+  "MCS weekly energy must be displayed as a 100E/7-day average, not 100E/day");
+
+const thirtyDayMcsEnergy = Array.from({ length: 30 }, (_, day) => getWeeklyStockEnergyBonus(day, true)).reduce((sum, value) => sum + value, 0);
+assert.equal(thirtyDayMcsEnergy, 400, "30 days should receive four 100E MCS stock blocks, on days 7/14/21/28");
+assert.equal(getWeeklyStockEnergyBonus(5, true), 0, "MCS must not pay out before day seven");
+assert.equal(getWeeklyStockEnergyBonus(6, true), 100, "MCS pays 100E on day seven");
+assert.equal(getWeeklyStockEnergyBonus(13, true), 100, "the next block pays on day fourteen");
+assert.equal(getWeeklyStockEnergyBonus(6, false), 0, "MCS is excluded when the user does not have the benefit");
+assert.equal(getWeeklyStockEnergyBonus(-1, true), 0, "invalid day indexes cannot create MCS energy");
+
+assert.ok(calculator.includes('import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"'));
+assert.ok(calculator.includes('data-testid="training-train-count"'));
+assert.ok(calculator.includes('data-testid="training-gym-xanax-per-day"'));
+assert.ok(calculator.includes('data-testid="training-gym-fhc-per-day"'));
+assert.ok(calculator.includes('data-testid="training-gym-can-per-day"'));
+assert.ok(calculator.includes('data-testid="training-gym-mcs"'));
+assert.ok(calculator.includes('data-testid="training-projection-xanax-per-day"'));
+assert.ok(calculator.includes('data-testid="training-projection-fhc-per-day"'));
+assert.ok(calculator.includes('data-testid="training-projection-can-count"'));
+assert.ok(calculator.includes('data-testid="training-projection-mcs"'));
+assert.ok(calculator.includes('data-testid="training-happy-xanax-count"'));
+assert.ok(calculator.includes('data-testid="training-happy-fhc-count"'));
+assert.ok(calculator.includes("energy: clamp(gymTrainCount, 0, 20000) * gymTrainGym.energyCost"),
+  "Gym Trains must forecast the exact user-entered count without depending on current Energy or Energy Supply");
+assert.ok(calculator.includes("const happyJump = useMemo"));
+assert.ok(calculator.includes("happyJumpStartingHappy") && calculator.includes("happyJumpXanaxCount"),
+  "Happy Jump must calculate from its own projection state rather than Energy Supply state");
+assert.ok(calculator.includes("const longTermProjection = useMemo"));
+assert.ok(calculator.includes("getWeeklyStockEnergyBonus(day, projectionMcsEnabled)"),
+  "Long-term Plan must add actual weekly MCS payouts to the day-by-day model");
 assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
 assert.ok(classifier.includes("return gymCategory && trainingSignal"));
