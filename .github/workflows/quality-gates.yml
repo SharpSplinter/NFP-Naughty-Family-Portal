@@ -43,5 +43,6 @@ jobs:
           node --check scripts/test-staging-admin-acceptance.mjs
           node --check scripts/staging-d1-read-budget.mjs
           node --check scripts/test-staging-safety-contract.mjs
+          python3 -m py_compile scripts/replay-production-backup-migrations.py scripts/test-production-backup-migration-replay.py
       - name: Run backend regression suite
         run: npm test
