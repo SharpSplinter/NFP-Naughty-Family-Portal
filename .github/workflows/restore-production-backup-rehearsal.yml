@@ -10,7 +10,7 @@ on:
       archive_sha256:
         description: SHA-256 of the encrypted GPG backup archive
         required: true
-        default: "2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5"
+        default: "1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97"
         type: string
       sql_export_sha256:
         description: SHA-256 of the untouched SQL export inside the archive
