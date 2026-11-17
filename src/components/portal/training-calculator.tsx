@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react"
 import "./training-calculator.css"
 import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
 import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"
+import { createGymGainCalibrationSample, getGymGainCalibrationSummary } from "../../lib/gym-training/calibration.js"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
 type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
@@ -86,6 +87,67 @@ type GymHistoryDetails = {
   gain: number | null
   statBefore: number | null
   statAfter: number | null
+  happyUsed: number | null
+  gym: number | null
+  trains: number | null
+}
+type GymGainCalibrationSample = {
+  modelVersion: string
+  logId: string
+  timestamp: number
+  stat: StatKey
+  gymId: string
+  dots: number
+  modifier: number
+  startingHappy: number
+  energyUsed: number
+  trains: number
+  happyUsed: number | null
+  actualGain: number
+  expectedGain: number
+  correctionFactor: number
+}
+type GymGainCalibrationProfile = {
+  version: 1
+  samples: Partial<Record<StatKey, GymGainCalibrationSample[]>>
+}
+
+function gymGainCalibrationStorageKey(playerName: string): string {
+  const normalized = playerName.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+  return normalized ? "ncd:gym-gain-calibration:v1:" + normalized : ""
+}
+function readGymGainCalibrationProfile(storageKey: string): GymGainCalibrationProfile {
+  const empty: GymGainCalibrationProfile = { version: 1, samples: {} }
+  if (!storageKey || typeof window === "undefined") return empty
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return empty
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null || (parsed as { version?: unknown }).version !== 1) return empty
+    const source = (parsed as { samples?: unknown }).samples
+    if (typeof source !== "object" || source === null) return empty
+    const samples: Partial<Record<StatKey, GymGainCalibrationSample[]>> = {}
+    for (const stat of ["strength", "defense", "speed", "dexterity"] as StatKey[]) {
+      const entries = (source as Record<string, unknown>)[stat]
+      if (!Array.isArray(entries)) continue
+      samples[stat] = entries.filter((entry): entry is GymGainCalibrationSample => {
+        if (typeof entry !== "object" || entry === null) return false
+        const item = entry as Partial<GymGainCalibrationSample>
+        return item.modelVersion === "gym-gain-v1"
+          && item.stat === stat
+          && typeof item.logId === "string"
+          && typeof item.gymId === "string"
+          && typeof item.correctionFactor === "number"
+          && Number.isFinite(item.correctionFactor)
+          && item.correctionFactor >= 0.9 && item.correctionFactor <= 1.1
+          && typeof item.dots === "number" && Number.isFinite(item.dots)
+          && typeof item.modifier === "number" && Number.isFinite(item.modifier)
+      }).slice(-8)
+    }
+    return { version: 1, samples }
+  } catch {
+    return empty
+  }
 }
 
 const STAT_OPTIONS: Array<{ value: StatKey; label: string }> = [
@@ -332,6 +394,17 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [projectionDays, setProjectionDays] = useState(30)
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
   const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
+  const calibrationStorageKey = gymGainCalibrationStorageKey(playerName)
+  const [calibrationProfile, setCalibrationProfile] = useState<GymGainCalibrationProfile>(
+    () => readGymGainCalibrationProfile(calibrationStorageKey),
+  )
+  const [calibrationLogId, setCalibrationLogId] = useState("")
+  const [calibrationStartingHappy, setCalibrationStartingHappy] = useState("")
+  const [calibrationMessage, setCalibrationMessage] = useState("")
+  useEffect(() => {
+    if (!calibrationStorageKey) return
+    try { window.localStorage.setItem(calibrationStorageKey, JSON.stringify(calibrationProfile)) } catch { /* Browser storage may be unavailable. */ }
+  }, [calibrationStorageKey, calibrationProfile])
 
   useEffect(() => {
     const refreshInterval = window.setInterval(() => setRefreshKey(value => value + 1), 5 * 60 * 1000)
@@ -431,6 +504,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const effectiveModifier = manualModifierEnabled && manualModifier.trim() !== "" ? clamp(safeNumber(manualModifier), 0, 100) : plannedModifier
   const liveStatSource = statOverride.trim() === "" && liveStatValue !== null ? "Live Torn API" : "Manual scenario"
   const selectedDots = safeNumber(selectedGym.dots[selectedStat])
+  const activeCalibration = gymBookChoice === "auto" && !manualModifierEnabled
+    ? getGymGainCalibrationSummary(calibrationProfile.samples[selectedStat] || [], {
+        gymId: selectedGym.id, dots: selectedDots, modifier: autoModifier,
+      })
+    : { factor: 1, sampleCount: 0 }
+  const calibratedModifier = effectiveModifier * activeCalibration.factor
   const activeEnergyDrinkBonus = Math.max(0, safeNumber(liveData?.factionBonuses?.energyDrinkBonusPercent))
   const activeVoracity = activeEnergyDrinkBonus > 0
   const energyDrinkBonusPercent = factionVoracity && !activeVoracity ? 50 : activeEnergyDrinkBonus
@@ -525,16 +604,16 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
   const session = useMemo(() => estimateGymSession({
     stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, selectedStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+  }), [currentStat, selectedStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
   const oneTrain = useMemo(() => estimateGymSession({
     stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: selectedGym.energyCost, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+  }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
   const happySession = useMemo(() => estimateGymSession({
     stat: currentStat, statKey: selectedStat, happy: happyJump.finalHappy, energy: usableEnergy, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, selectedStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent])
+    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+  }), [currentStat, selectedStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
 
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
@@ -576,20 +655,26 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     ? safeNumber(jobPointProfile?.multiplier, 1)
     : safeNumber(jobPointProfile?.baseMultiplier, 1) * (1 + (jobPointBookBonus[gymBookChoice] || 0) / 100)
   const jobPointDots = jobPointStat ? safeNumber(selectedGym.dots[jobPointStat]) : 0
+  const jobPointCalibration = jobPointStat && gymBookChoice === "auto"
+    ? getGymGainCalibrationSummary(calibrationProfile.samples[jobPointStat] || [], {
+        gymId: selectedGym.id, dots: jobPointDots, modifier: jobPointModifier,
+      })
+    : { factor: 1, sampleCount: 0 }
+  const calibratedJobPointModifier = jobPointModifier * jobPointCalibration.factor
   const jobPointGain = (() => {
     if (!jobPointSpecial || !jobPointStat) return { gain: 0, endingStat: 0, perPoint: 0 }
     let stat = jobPointStartingStat
     let gain = 0
     for (let index = 0; index < Math.min(jobPointQuantity, jobPointMax); index++) {
       const modeledHappy = jobPointSpecial.happinessIndependent ? 0 : startingHappy
-      const next = estimateEnergyEquivalentGain(jobPointStat, stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier)
+      const next = estimateEnergyEquivalentGain(jobPointStat, stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, calibratedJobPointModifier)
       stat += next
       gain += next
     }
     return {
       gain,
       endingStat: stat,
-      perPoint: estimateEnergyEquivalentGain(jobPointStat, jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, jobPointModifier),
+      perPoint: estimateEnergyEquivalentGain(jobPointStat, jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, calibratedJobPointModifier),
     }
   })()
   const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
@@ -622,7 +707,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     for (let day = 0; day < days; day++) {
       const result = estimateGymSession({
         stat, statKey: selectedStat, happy, energy: dailyEnergy, dots: selectedDots,
-        energyPerTrain: selectedGym.energyCost, modifier: effectiveModifier, happyLossRate: happyLossPercent / 100,
+        energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
       })
       stat = result.endingStat
       happy = applyDailyHappyRegeneration(
@@ -634,7 +719,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       totalGain += result.statGain
     }
     return { stat, totalGain, energy: dailyEnergy * days, days }
-  }, [currentStat, selectedStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, effectiveModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
+  }, [currentStat, selectedStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
 
   const permanentStatBookOptions: Array<{ stat: StatKey; title: string }> = [
     { stat: "strength", title: "Brawn Over Brains" },
@@ -660,6 +745,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     const modifier = gymBookChoice === "auto"
       ? safeNumber(modifierProfile?.multiplier, 1)
       : safeNumber(modifierProfile?.baseMultiplier, 1) * (1 + (plannedBookBonus[gymBookChoice] || 0) / 100)
+    const bookCalibration = gymBookChoice === "auto"
+      ? getGymGainCalibrationSummary(calibrationProfile.samples[book.stat] || [], {
+          gymId: selectedGym.id, dots, modifier,
+        })
+      : { factor: 1, sampleCount: 0 }
+    const calibratedBookModifier = modifier * bookCalibration.factor
     let statAtCompletion = startingStat
     let happyAtCompletion = startingHappy
     if (hasStat && dots > 0) {
@@ -671,7 +762,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           energy: dailyEnergy,
           dots,
           energyPerTrain: selectedGym.energyCost,
-          modifier,
+          modifier: calibratedBookModifier,
           happyLossRate: happyLossPercent / 100,
         })
         statAtCompletion = dayTrain.endingStat
@@ -694,6 +785,59 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const currentMarketTimestamp = liveData?.marketUpdatedAt ? new Date(liveData.marketUpdatedAt * 1000).toLocaleString() : ""
   const logRows = history?.logs || []
   const historyConnected = history?.connected === true
+  const calibrationCandidates = historyConnected ? logRows.map(log => ({
+    log,
+    details: parseGymHistoryLog(log),
+  })).filter(item => item.details.stat === selectedStat
+    && item.details.energy !== null && item.details.trains !== null && item.details.trains > 0
+    && item.details.statBefore !== null && item.details.statAfter !== null && item.details.gain !== null
+    && item.details.gym !== null && String(item.details.gym) === String(selectedGym.id)
+    && Math.abs(item.details.energy / item.details.trains - selectedGym.energyCost) < 0.0001) : []
+  const selectedCalibrationCandidate = calibrationCandidates.find(item => item.log.logId === calibrationLogId)
+    || calibrationCandidates[0] || null
+  const selectedStatCalibrationSamples = calibrationProfile.samples[selectedStat] || []
+  const applyGymCalibration = () => {
+    if (!selectedCalibrationCandidate) {
+      setCalibrationMessage("No complete Torn log matches the selected stat and gym.")
+      return
+    }
+    if (!calibrationStartingHappy.trim()) {
+      setCalibrationMessage("Enter the happiness value immediately before the selected training session.")
+      return
+    }
+    const result = createGymGainCalibrationSample({
+      logId: selectedCalibrationCandidate.log.logId,
+      timestamp: selectedCalibrationCandidate.log.timestamp,
+      log: selectedCalibrationCandidate.details,
+      startingHappy: safeNumber(calibrationStartingHappy, Number.NaN),
+      gymId: selectedGym.id,
+      dots: selectedDots,
+      modifier: autoModifier,
+      energyPerTrain: selectedGym.energyCost,
+      happyLossRate: happyLossPercent / 100,
+    })
+    if (!result.ok) {
+      setCalibrationMessage(result.error)
+      return
+    }
+    setCalibrationProfile(current => {
+      const prior = current.samples[selectedStat] || []
+      const next = [...prior.filter(sample => sample.logId !== result.sample.logId), result.sample].slice(-8)
+      return { version: 1, samples: { ...current.samples, [selectedStat]: next } }
+    })
+    setCalibrationMessage(
+      "Saved calibration from Torn log #" + result.sample.logId + ": " + fmt(result.sample.correctionFactor, 6)
+        + "× correction (" + fmt((result.sample.correctionFactor - 1) * 100, 4) + "%)."
+    )
+  }
+  const resetGymCalibration = () => {
+    setCalibrationProfile(current => {
+      const samples = { ...current.samples }
+      delete samples[selectedStat]
+      return { version: 1, samples }
+    })
+    setCalibrationMessage("Removed this browser's " + selectedStat + " calibration.")
+  }
   const canRefresh = !loading && Boolean(apiBase && sessionToken)
   const setPriceOverride = (key: string, value: string) => setPriceOverrides(current => ({ ...current, [key]: value }))
 
@@ -771,7 +915,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 <option value="limbo-lovers">Limbo Lovers 101 · +30% Dexterity</option>
               </select><small className="tc-hint">Auto uses the live /user/perks book. Choose a planned book to replace the active book bonus for this scenario.</small></label>
               <div className="tc-readout-field"><span>Automatic gym-gain modifier</span><strong>{fmt(autoModifier, 4)}×</strong><small>Calculated from current /user/perks bonuses for {currentStatLabel.toLowerCase()}</small></div>
-              <div className="tc-readout-field"><span>Modifier used in this scenario</span><strong data-testid="training-effective-modifier">{fmt(effectiveModifier, 4)}×</strong><small>{gymBookChoice === "auto" ? "Active perk and book values" : "Planned gym book replaces the active book bonus"}</small></div>
+              <div className="tc-readout-field"><span>Modifier used in this scenario</span><strong data-testid="training-effective-modifier">{fmt(calibratedModifier, 6)}×</strong><small>{activeCalibration.sampleCount
+                ? "Raw " + fmt(effectiveModifier, 4) + "× × player calibration " + fmt(activeCalibration.factor, 6) + "× from " + activeCalibration.sampleCount + " verified log(s)"
+                : gymBookChoice === "auto" ? "Active perk and book values; no matching player calibration yet" : "Planned gym book replaces the active book bonus"}</small></div>
               <label className="tc-check-field"><input type="checkbox" checked={manualModifierEnabled} onChange={event => setManualModifierEnabled(event.target.checked)} />
                 <span><strong>Override API gym modifier</strong><small>Leave off to use the live modifier calculated from Torn perks.</small></span>
               </label>
@@ -787,6 +933,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           <Panel title="Current perk inputs" eyebrow="AUTOMATIC MODIFIERS" description="The API's active books, education and other named perks are read on refresh.">
             <div className="tc-condition-list">
               <div><span>Live modifier for {currentStatLabel}</span><strong>{fmt(autoModifier, 4)}×</strong></div>
+              <div><span>Player calibration</span><strong>{activeCalibration.sampleCount
+                ? fmt(activeCalibration.factor, 6) + "× · " + activeCalibration.sampleCount + " log(s)"
+                : "Not calibrated for this gym/perk setup"}</strong></div>
               <div><span>Current active books</span><strong>{(liveData?.perks?.book || []).length ? liveData!.perks.book.join(", ") : "None returned"}</strong></div>
               <div><span>Faction gym perks</span><strong>{(liveData?.perks?.faction || []).filter(value => /gym|training|steadfast/i.test(value)).join(", ") || "No gym bonus returned"}</strong></div>
               <div><span>Education gym perks</span><strong>{(liveData?.perks?.education || []).filter(value => /sports science|strength and conditioning|physiological testing|human movement|bio mechanical/i.test(value)).join(", ") || "No matching course returned"}</strong></div>
@@ -1103,6 +1252,45 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <button className="tc-secondary-button" onClick={() => onNavigate("/settings")}>Open Account Settings →</button>
           </div>
         )}
+        <div className="tc-calibration-panel">
+          <div className="tc-history-heading"><div><span>PLAYER-SPECIFIC MODEL CORRECTION</span><h2>Calibrate against a verified Torn log</h2></div>
+            <span>{activeCalibration.sampleCount ? "Active for this stat and gym" : "No matching calibration"}</span></div>
+          <p className="tc-muted">Choose a stored Torn training log for the selected stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
+          <div className="tc-form-grid">
+            <label className="tc-field"><span>Verified Torn training log</span>
+              <select data-testid="training-calibration-log" value={selectedCalibrationCandidate?.log.logId || ""}
+                onChange={event => setCalibrationLogId(event.target.value)} disabled={!calibrationCandidates.length}>
+                {calibrationCandidates.length
+                  ? calibrationCandidates.map(item => <option key={item.log.logId} value={item.log.logId}>
+                      {prettyDate(item.log.timestamp)} · {fmt(item.details.trains || 0)} train(s) · +{fmt(item.details.gain || 0, 2)} · #{item.log.logId}
+                    </option>)
+                  : <option value="">No matching verified log available</option>}
+              </select>
+              <small className="tc-hint">Only complete Torn history records matching {currentStatLabel.toLowerCase()}, {selectedGym.name}, and {fmt(selectedGym.energyCost)}E per train are eligible.</small>
+            </label>
+            <TextNumberField label="Starting happiness before that log" value={calibrationStartingHappy} fallbackValue={null}
+              onChange={setCalibrationStartingHappy} max={HAPPY_CAP}
+              hint="Required because Torn records happiness used, not the happiness value before the session." testId="training-calibration-happy" />
+            <div className="tc-readout-field"><span>Current calibration</span>
+              <strong>{activeCalibration.sampleCount ? fmt(activeCalibration.factor, 6) + "×" : "Not yet calibrated"}</strong>
+              <small>{activeCalibration.sampleCount + " matching verified log(s) · forecast correction is applied only when the gym dots and live perk multiplier still match."}</small>
+            </div>
+            <div className="tc-readout-field"><span>Selected stat samples saved in this browser</span>
+              <strong>{selectedStatCalibrationSamples.length}</strong>
+              <small>Up to eight log samples are retained per battle stat; the median correction is used to reduce the effect of individual train variation.</small>
+            </div>
+          </div>
+          <button type="button" className="tc-primary-button" data-testid="training-calibration-apply"
+            onClick={applyGymCalibration}
+            disabled={!selectedCalibrationCandidate || !calibrationStartingHappy.trim() || gymBookChoice !== "auto" || manualModifierEnabled}>
+            Save calibration from selected log
+          </button>
+          {selectedStatCalibrationSamples.length > 0 && <button type="button" className="tc-secondary-button"
+            data-testid="training-calibration-reset" onClick={resetGymCalibration}>Reset {currentStatLabel} calibration</button>}
+          {!historyConnected && <p className="tc-muted">Connect Gym Training history in Account Settings to select verified Torn logs here.</p>}
+          {(gymBookChoice !== "auto" || manualModifierEnabled) && <p className="tc-inline-warning">Return to the live automatic perk modifier and turn off the manual modifier override before adding a calibration sample.</p>}
+          {calibrationMessage && <p className="tc-inline-note" role="status">{calibrationMessage}</p>}
+        </div>
       </section>
       {liveData?.errors && Object.keys(liveData.errors).length > 0 && <details className="tc-data-warnings"><summary>Live data fields that could not be refreshed ({Object.keys(liveData.errors).length})</summary>
         {Object.entries(liveData.errors).map(([key, message]) => <p key={key}><strong>{key}:</strong> {message}</p>)}

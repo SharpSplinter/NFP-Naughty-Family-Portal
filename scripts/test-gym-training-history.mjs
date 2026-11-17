@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseGymHistoryLog } from "../src/lib/gym-training/history.js";
 import { estimateEnergyEquivalentGain } from "../src/lib/gym-training/gains.js";
+import { createGymGainCalibrationSample, estimateLoggedGymGain, getGymGainCalibrationSummary } from "../src/lib/gym-training/calibration.js";
 
 const read = path => readFileSync(resolve(process.cwd(), path), "utf8");
 const worker = read("src/worker/index.ts");
@@ -19,7 +20,52 @@ const userTrainingEstimate = estimateEnergyEquivalentGain(
 );
 assert.ok(userTrainingEstimate > 34000, "normalized 7.3 gym dots must be applied directly, not divided by ten twice");
 assert.ok(Math.abs(userTrainingEstimate - 33777.88) / 33777.88 < 0.01,
-  "the corrected estimate should closely track the supplied 10E dexterity train");
+  "the uncalibrated base formula should remain in the expected range");
+
+const verifiedDexterityLog = {
+  stat: "dexterity",
+  energy: 250,
+  gain: 843277.7935072186,
+  statBefore: 1097253102.212,
+  statAfter: 1098096380.0055072,
+  happyUsed: 126,
+  gym: 24,
+  trains: 25,
+};
+const calibrationResult = createGymGainCalibrationSample({
+  logId: "LWc4vybOfdDZc9f238UU",
+  timestamp: 1794881946,
+  log: verifiedDexterityLog,
+  startingHappy: 4863,
+  gymId: "24",
+  dots: 7.3,
+  modifier: userPerkMultiplier,
+  energyPerTrain: 10,
+});
+assert.equal(calibrationResult.ok, true, "complete Torn log should create a player-specific calibration");
+assert.ok(Math.abs(calibrationResult.sample.expectedGain - 850726.9585543062) < 0.01,
+  "calibration should replay the logged session using its observed average happy loss");
+assert.ok(Math.abs(calibrationResult.sample.correctionFactor - 0.9912437651) < 1e-9,
+  "calibration factor should be derived from actual versus replayed Torn gain");
+const projectedAtTypicalHappyLoss = estimateLoggedGymGain({
+  statKey: "dexterity", stat: 1097253102.212, happy: 4863, trains: 25,
+  energyPerTrain: 10, dots: 7.3, modifier: userPerkMultiplier, happyLossPerTrain: 5,
+});
+assert.ok(Math.abs(projectedAtTypicalHappyLoss * calibrationResult.sample.correctionFactor - verifiedDexterityLog.gain) < 6,
+  "player calibration should bring the normal 50% happy-loss forecast within six stat points of the verified 25-train result");
+const calibrationSummary = getGymGainCalibrationSummary([calibrationResult.sample], {
+  gymId: "24", dots: 7.3, modifier: userPerkMultiplier,
+});
+assert.equal(calibrationSummary.sampleCount, 1);
+assert.ok(Math.abs(calibrationSummary.factor - calibrationResult.sample.correctionFactor) < 1e-12);
+assert.equal(getGymGainCalibrationSummary([calibrationResult.sample], {
+  gymId: "24", dots: 7.3, modifier: 1.1965773,
+}).sampleCount, 0, "a calibration must not leak across a changed perk multiplier");
+const rejectedCalibration = createGymGainCalibrationSample({
+  logId: "invalid-gym-log", timestamp: 1794881946, log: verifiedDexterityLog,
+  startingHappy: 4863, gymId: "23", dots: 7.3, modifier: userPerkMultiplier, energyPerTrain: 10,
+});
+assert.equal(rejectedCalibration.ok, false, "calibration must reject a log from another gym");
 assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
 assert.ok(classifier.includes("return gymCategory && trainingSignal"));
