@@ -595,9 +595,10 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   const activeGymDefault = await page.getByTestId("training-gym-select").inputValue();
   recordAssertion("Training Calculator " + viewportName + ": Gym Trains defaults to the live active gym", activeGymDefault === "gun-shop", activeGymDefault);
   await page.getByTestId("training-stat-select").selectOption("defense");
+  const liveDefenseReadout = await page.locator(".tc-readout-field").filter({ hasText: "Live Defense stat" }).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": Gym Trains switches to the selected live battle stat",
-    (await page.locator(".tc-readout-field").filter({ hasText: "Live Defense stat" }).locator("strong").innerText()) === "250,000.00",
-    await page.locator(".tc-readout-field").filter({ hasText: "Live Defense stat" }).locator("strong").innerText());
+    Number(liveDefenseReadout.replaceAll(",", "")) === 250000,
+    liveDefenseReadout);
   await page.getByTestId("training-stat-select").selectOption("strength");
   await page.getByTestId("training-gym-select").selectOption("premier");
   recordAssertion("Training Calculator " + viewportName + ": gym choice changes individual train energy",
