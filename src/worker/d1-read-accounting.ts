@@ -80,6 +80,7 @@ export class D1RequestReadMeter {
   private pendingBackgroundTasks = 0
   private backgroundTasks = 0
   private backgroundTaskFailures = 0
+  private unmeteredFirstFallbacks = 0
   private finished = false
   private emitted = false
   private event: D1ReadEvent | null = null
@@ -166,6 +167,17 @@ export class D1RequestReadMeter {
     else this.rowsWritten += written
   }
 
+  private recordUnmeteredFirstFallback(): void {
+    // Preserve application behavior for non-D1 test doubles or degraded
+    // bindings that cannot supply rows through all(). The native first()
+    // result has no row metrics, so quota certification must remain incomplete.
+    this.statementCount += 1
+    this.methodCounts.first += 1
+    this.missingReadMetrics += 1
+    this.missingWriteMetrics += 1
+    this.unmeteredFirstFallbacks += 1
+  }
+
   private async executeStatement<T>(
     method: "first" | "all" | "run" | "raw",
     operation: () => Promise<T>,
@@ -202,6 +214,10 @@ export class D1RequestReadMeter {
           return statement.all<T>()
         }, (value) => meter.recordResult(value, "first"))
         const row = result.results?.[0] ?? null
+        if (row === null && readMetric(result.meta, "rows_read", "rowsRead") === null) {
+          meter.recordUnmeteredFirstFallback()
+          return raw.first<T>(columnName)
+        }
         if (row === null || columnName === undefined) return row as T | null
         if (typeof row !== "object" || !Object.prototype.hasOwnProperty.call(row, columnName)) {
           throw new Error("D1_ERROR: requested first() column was not present in the result.")
@@ -301,6 +317,7 @@ export class D1RequestReadMeter {
       batchResultMismatches: this.batchResultMismatches,
       backgroundTasks: this.backgroundTasks,
       backgroundTaskFailures: this.backgroundTaskFailures,
+      unmeteredFirstFallbacks: this.unmeteredFirstFallbacks,
       durationMs: Math.max(0, Date.now() - this.startedAt),
     })
   }
