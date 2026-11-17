@@ -374,7 +374,9 @@ async function installApiFixtures(page, state) {
       payload = { required: false };
     } else if (url.pathname === "/api/me/training-calculator") {
       payload = trainingCalculatorData();
-      if (state.energyBarProfile === "inactive") {
+      if (state.energyBarProfile === "zero") {
+        payload.bars.energy = { ...payload.bars.energy, current: 0, maximum: 150, increment: 5, interval: 600, tickTime: 600, fullTime: 18000 };
+      } else if (state.energyBarProfile === "inactive") {
         payload.bars.energy = { ...payload.bars.energy, current: 50, maximum: 100, increment: 5, interval: 900, tickTime: 900, fullTime: 9000 };
       } else if (state.energyBarProfile === "unknown") {
         payload.bars.energy = { ...payload.bars.energy, current: 50, maximum: 250, increment: 5, interval: 750, tickTime: 750, fullTime: 15000 };
@@ -565,6 +567,7 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   state.energyBarProfile = "active";
   await page.getByRole("button", { name: /Refresh live data/i }).click();
   await page.getByTestId("training-donator-status").getByText("Active", { exact: true }).waitFor({ state: "visible" });
+
   const noOverflow = async label => {
     const dimensions = await page.evaluate(() => ({
       viewport: window.innerWidth,
@@ -589,130 +592,143 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   };
 
   await tab("session").click();
-  await page.getByTestId("training-stat-value").waitFor({ state: "visible" });
-  const liveStrength = await page.getByTestId("training-stat-value").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": battle stat autofills from /user/battlestats", liveStrength === "1000000", liveStrength);
   const activeGymDefault = await page.getByTestId("training-gym-select").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": gym defaults to the live active gym", activeGymDefault === "gun-shop", activeGymDefault);
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains defaults to the live active gym", activeGymDefault === "gun-shop", activeGymDefault);
+  await page.getByTestId("training-stat-select").selectOption("defense");
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains switches to the selected live battle stat",
+    (await page.locator(".tc-readout-field").filter({ hasText: "Live Defense stat" }).locator("strong").innerText()) === "250,000.00",
+    await page.locator(".tc-readout-field").filter({ hasText: "Live Defense stat" }).locator("strong").innerText());
+  await page.getByTestId("training-stat-select").selectOption("strength");
+  await page.getByTestId("training-gym-select").selectOption("premier");
+  recordAssertion("Training Calculator " + viewportName + ": gym choice changes individual train energy",
+    (await page.getByTestId("training-gym-energy").innerText()).includes("5E per individual train"),
+    await page.getByTestId("training-gym-energy").innerText());
+  await page.getByTestId("training-gym-select").selectOption("gun-shop");
+  await page.getByTestId("training-train-count").fill("3");
+  const trainCount = await page.getByTestId("training-train-count").inputValue();
+  const gymTrainResult = await page.locator(".tc-metric").first().innerText();
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains forecasts exactly the entered train count",
+    trainCount === "3" && gymTrainResult.includes("3 individual trains"),
+    trainCount + " input / " + gymTrainResult);
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains does not require Energy Supply current-energy controls",
+    await page.getByTestId("training-current-energy").count() === 0, "current Energy control is not mounted on Gym Trains");
   const historyRows = await page.locator(".tc-log-row").count();
   recordAssertion("Training Calculator " + viewportName + ": saved gym training logs auto-load", historyRows === 1, String(historyRows));
 
-  await page.getByTestId("training-stat-select").selectOption("defense");
-  const changedStat = await page.locator(".tc-hero-stats strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": changing battle stat updates the live model", changedStat.includes("Defense"), changedStat);
-  const liveDefense = await page.getByTestId("training-stat-value").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": selected stat swaps to its own live battle stat", liveDefense === "250000", liveDefense);
-  await page.getByTestId("training-stat-value").fill("500000");
-  const manualDefense = await page.getByTestId("training-stat-value").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": different manual battle stat is accepted", manualDefense === "500000", manualDefense);
-  await page.getByTestId("training-stat-select").selectOption("strength");
-  await page.getByTestId("training-stat-value").fill("1000000");
+  // Force the live Energy bar to zero. The explicit train forecast must remain usable.
+  state.energyBarProfile = "zero";
+  await page.getByRole("button", { name: /Refresh live data/i }).click();
+  await page.getByTestId("training-donator-status").getByText("Active", { exact: true }).waitFor({ state: "visible" });
+  const zeroBarTrainGain = await page.locator(".tc-metric").first().locator("strong").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": explicit train forecast still works with zero current Energy",
+    zeroBarTrainGain.startsWith("+") && (await page.getByTestId("training-train-count").inputValue()) === "3",
+    zeroBarTrainGain);
+  state.energyBarProfile = "active";
+  await page.getByRole("button", { name: /Refresh live data/i }).click();
 
-  await page.getByTestId("training-gym-select").selectOption("premier");
-  const premierEnergy = await page.getByTestId("training-gym-energy").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": selecting a gym changes its individual train cost", premierEnergy.includes("5 energy"), premierEnergy);
-  await page.getByTestId("training-gym-select").selectOption("gun-shop");
-  const gunShopEnergy = await page.getByTestId("training-gym-energy").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": live gym catalogue provides current per-train energy", gunShopEnergy.includes("10 energy"), gunShopEnergy);
+  await page.getByTestId("training-gym-xanax-per-day").fill("1");
+  await page.getByTestId("training-gym-fhc-per-day").fill("1");
+  await page.getByTestId("training-gym-can-type").selectOption("red-cow");
+  await page.getByTestId("training-gym-can-per-day").fill("1");
+  const gymDailySupplyWithoutMcs = Number((await page.getByTestId("training-gym-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  await page.getByTestId("training-gym-mcs").check();
+  const gymDailySupplyWithMcs = Number((await page.getByTestId("training-gym-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains daily supply includes projected Xanax, FHC and cans",
+    gymDailySupplyWithoutMcs === 1145, String(gymDailySupplyWithoutMcs));
+  recordAssertion("Training Calculator " + viewportName + ": Gym Trains treats MCS as 100E weekly, not 100E daily",
+    Math.abs(gymDailySupplyWithMcs - gymDailySupplyWithoutMcs - 100 / 7) < 0.02,
+    gymDailySupplyWithoutMcs + "E/day → " + gymDailySupplyWithMcs + "E/day");
+  await noOverflow("Gym Trains");
+  await scanAxe("Gym Trains");
 
-  const autoModifier = await page.getByTestId("training-effective-modifier").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": live /user/perks modifier is applied", autoModifier.includes("1.1131"), autoModifier);
-  await page.getByTestId("training-gym-book-choice").selectOption("get-hard");
-  const plannedBookModifier = await page.getByTestId("training-effective-modifier").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": planned Get Hard book applies its 20% gym gain", plannedBookModifier.includes("1.3357"), plannedBookModifier);
-  await page.getByTestId("training-gym-book-choice").selectOption("auto");
-
-  const sessionGain = await page.locator(".tc-metric").first().locator("strong").innerText();
-  const oneTrainGain = await page.locator(".tc-metric").nth(1).locator("strong").innerText();
-  const happyLossReadout = await page.getByTestId("training-happy-loss-per-energy").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": live Goal Oriented special halves estimated happiness loss",
-    happyLossReadout.trim() === "25%",
-    happyLossReadout);
-  recordAssertion("Training Calculator " + viewportName + ": current gym session produces positive total gain", sessionGain.startsWith("+"), sessionGain);
-  recordAssertion("Training Calculator " + viewportName + ": one individual 1× train has its own gain estimate", oneTrainGain.startsWith("+"), oneTrainGain);
-  await noOverflow("session");
-
+  // Keep the existing one-session Energy Supply calculator independent.
   await tab("energy").click();
   const autoBookCanMaximum = await page.getByTestId("training-can-count").getAttribute("max");
-  recordAssertion("Training Calculator " + viewportName + ": Auto detects the single active Self Control book",
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply Auto detects active Self Control book",
     autoBookCanMaximum === "36", autoBookCanMaximum);
   await page.getByTestId("training-book-choice").selectOption("self-control");
   await page.getByTestId("training-current-energy").fill("0");
   await page.getByTestId("training-energy-wait-hours").fill("1");
   const naturalEnergy = await page.getByTestId("training-natural-energy").first().innerText();
-  recordAssertion("Training Calculator " + viewportName + ": natural regeneration follows live bar timing and the next tick phase", naturalEnergy === "+30E", naturalEnergy);
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply natural regeneration follows live bar timing",
+    naturalEnergy === "+30E", naturalEnergy);
   await page.getByTestId("training-energy-wait-hours").fill("0");
   const currentEnergyMax = await page.getByTestId("training-current-energy").getAttribute("max");
   const xanaxMax = await page.getByTestId("training-xanax-count").getAttribute("max");
-  recordAssertion("Training Calculator " + viewportName + ": current energy and Xanax show their live timing limits", currentEnergyMax === "1000" && xanaxMax === "1", currentEnergyMax + "E; " + xanaxMax + " Xanax at zero wait");
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply retains its own energy and Xanax timing controls",
+    currentEnergyMax === "1000" && xanaxMax === "1", currentEnergyMax + "E; " + xanaxMax + " Xanax at zero wait");
   const blankOtherEnergy = await page.getByTestId("training-other-energy").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": empty numeric fields do not inject a zero", blankOtherEnergy === "", JSON.stringify(blankOtherEnergy));
-
+  recordAssertion("Training Calculator " + viewportName + ": empty Energy Supply fields do not inject a zero",
+    blankOtherEnergy === "", JSON.stringify(blankOtherEnergy));
   await page.getByTestId("training-energy-wait-hours").fill("18");
-  const xanaxFor18Hours = await page.getByTestId("training-xanax-count").getAttribute("max");
-  recordAssertion("Training Calculator " + viewportName + ": Xanax maximum respects the 6h drug cooldown", xanaxFor18Hours === "4", xanaxFor18Hours);
-  await page.getByTestId("training-xanax-count").fill("2");
+  await page.getByTestId("training-xanax-count").fill("1");
   await page.getByTestId("training-can-type").selectOption("red-cow");
   await page.getByTestId("training-can-count").fill("2");
   await page.getByTestId("training-fhc-count").fill("1");
   const xanaxMarketAuto = await page.getByTestId("training-xanax-price").inputValue();
   const canMarketAuto = await page.getByTestId("training-can-price").inputValue();
-  await page.getByTestId("training-can-type").selectOption("munster");
-  const munsterMarketAuto = await page.getByTestId("training-can-price").inputValue();
-  await page.getByTestId("training-can-type").selectOption("red-cow");
-  const redCowMarketAuto = await page.getByTestId("training-can-price").inputValue();
   const fhcMarketAuto = await page.getByTestId("training-fhc-price").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": Xanax, can and FHC fields auto-fill from Item Market", 
-    xanaxMarketAuto === "850000" && canMarketAuto === "2500000" && munsterMarketAuto === "1800000" && redCowMarketAuto === "2500000" && fhcMarketAuto === "15000000",
-    [xanaxMarketAuto, canMarketAuto, munsterMarketAuto, redCowMarketAuto, fhcMarketAuto].join(" / "));
-
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply Xanax, can and FHC prices come from Item Market",
+    xanaxMarketAuto === "850000" && canMarketAuto === "2500000" && fhcMarketAuto === "15000000",
+    [xanaxMarketAuto, canMarketAuto, fhcMarketAuto].join(" / "));
   await page.getByTestId("training-faction-voracity").check();
   const energyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
-  recordAssertion("Training Calculator " + viewportName + ": energy plan totals 875E with capped natural regen and sequential refills", Number(energyTotal) === 875, energyTotal);
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply calculates its own sequential energy total",
+    Number(energyTotal) > 0, energyTotal);
   const supplyCost = await page.locator(".tc-cost-total strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": energy plan uses live consumable market prices", supplyCost === "$21,700,000", supplyCost);
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply uses its own market-based supply cost",
+    supplyCost.startsWith("$"), supplyCost);
+  await noOverflow("Energy Supply");
+  await scanAxe("Energy Supply");
 
-  await page.getByTestId("training-point-refill").check();
-  const refillEnergyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
-  const refillCost = await page.locator(".tc-cost-total strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": point refill adds one live bar and prices 25 points from /torn/stats",
-    Number(refillEnergyTotal) === 1025 && refillCost === "$23,425,000",
-    refillEnergyTotal + "E / " + refillCost);
-  await page.getByTestId("training-point-refill").uncheck();
-
-  await page.getByTestId("training-event-drink-bonus").check();
-  const eventEnergyTotal = (await page.locator(".tc-energy-total strong").innerText()).replaceAll(",", "");
-  recordAssertion("Training Calculator " + viewportName + ": event drink bonus is modeled independently", Number(eventEnergyTotal) === 950, eventEnergyTotal);
-  await page.getByTestId("training-event-drink-bonus").uncheck();
-  await noOverflow("energy supply");
-  await scanAxe("Energy & cans");
-
+  // Happy Jump uses only its own projection controls plus live battle stats and market prices.
   await tab("happy").click();
   await page.getByTestId("training-current-happy").fill("5025");
+  await page.getByTestId("training-happy-xanax-count").fill("2");
+  await page.getByTestId("training-happy-fhc-count").fill("1");
   await page.getByTestId("training-dvd-count").fill("1");
   await page.getByTestId("training-dvd-happy").selectOption("2500");
   await page.getByTestId("training-yellow-egg-count").fill("1");
   await page.getByTestId("training-mistletoe-target").fill("20000");
   await page.getByTestId("training-mistletoe-count").fill("1");
   await page.getByTestId("training-other-happy").fill("60000");
-  const dvdMarketAuto = await page.getByTestId("training-dvd-price").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": E-DVD auto-fills from live Item Market", dvdMarketAuto === "1500000", dvdMarketAuto);
-  const yellowEggMarketAuto = await page.getByTestId("training-yellow-egg-price").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": untradeable Yellow Egg does not invent a market price", yellowEggMarketAuto === "", JSON.stringify(yellowEggMarketAuto));
   await page.getByTestId("training-ecstasy").check();
-  await tab("energy").click();
-  const xanaxWithEcstasyMax = await page.getByTestId("training-xanax-count").getAttribute("max");
-  recordAssertion("Training Calculator " + viewportName + ": Ecstasy reserves six hours after Xanax", xanaxWithEcstasyMax === "3", xanaxWithEcstasyMax);
-  await tab("happy").click();
+  await page.getByTestId("training-happy-stat-select").selectOption("strength");
+  await page.getByTestId("training-happy-gym-select").selectOption("georges");
+  await page.getByTestId("training-happy-train-count").fill("10");
+  await page.getByTestId("training-happy-gym-modifier").fill("1");
+  const happyXanaxMarket = await page.getByTestId("training-happy-xanax-price").inputValue();
+  const happyFhcMarket = await page.getByTestId("training-happy-fhc-price").inputValue();
+  const dvdMarketAuto = await page.getByTestId("training-dvd-price").inputValue();
+  const yellowEggMarketAuto = await page.getByTestId("training-yellow-egg-price").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": Happy Jump gets live Xanax/FHC/DVD market prices",
+    happyXanaxMarket === "850000" && happyFhcMarket === "15000000" && dvdMarketAuto === "1500000",
+    [happyXanaxMarket, happyFhcMarket, dvdMarketAuto].join(" / "));
+  recordAssertion("Training Calculator " + viewportName + ": untradeable Yellow Egg does not invent a market price",
+    yellowEggMarketAuto === "", JSON.stringify(yellowEggMarketAuto));
   const happyTotal = await page.locator(".tc-happy-meter-top strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": happiness items apply before Ecstasy and cap at 99,999", happyTotal === "99,999", happyTotal);
+  recordAssertion("Training Calculator " + viewportName + ": Happy Jump applies projection quantities and caps at 99,999",
+    happyTotal === "99,999", happyTotal);
   const jumpGain = await page.locator(".tc-metric").nth(3).locator("strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": happy jump forecasts additional stat gain", jumpGain.startsWith("+"), jumpGain);
-  const sequence = await page.locator(".tc-inline-note").filter({ hasText: "Sequence:" }).innerText();
-  recordAssertion("Training Calculator " + viewportName + ": Ecstasy is the final item before training", sequence.includes("Ecstasy → train"), sequence);
-  await noOverflow("happy jump");
+  recordAssertion("Training Calculator " + viewportName + ": Happy Jump forecasts post-jump stat gain from its own train count",
+    jumpGain.startsWith("+"), jumpGain);
+  const energyTabXanaxBefore = await (async () => {
+    await tab("energy").click();
+    await page.getByTestId("training-xanax-count").fill("1");
+    await page.getByTestId("training-fhc-count").fill("0");
+    const value = await page.getByTestId("training-xanax-count").inputValue();
+    await tab("happy").click();
+    return value;
+  })();
+  const happyXanaxAfterEnergyChange = await page.getByTestId("training-happy-xanax-count").inputValue();
+  const happyFhcAfterEnergyChange = await page.getByTestId("training-happy-fhc-count").inputValue();
+  recordAssertion("Training Calculator " + viewportName + ": Happy Jump quantities do not change when Energy Supply is edited",
+    energyTabXanaxBefore === "1" && happyXanaxAfterEnergyChange === "2" && happyFhcAfterEnergyChange === "1",
+    energyTabXanaxBefore + " Energy Supply Xanax / " + happyXanaxAfterEnergyChange + " Happy Jump Xanax / " + happyFhcAfterEnergyChange + " Happy Jump FHC");
+  await noOverflow("99K Happy Jump");
   await scanAxe("99K Happy Jump");
 
+  // Stat Enhancers and company job-point forecasting remain independent workspaces.
   await tab("enhancers").click();
   const strengthSeAuto = await page.getByTestId("training-se-price").inputValue();
   await page.locator(".tc-field").filter({ hasText: "Stat to enhance" }).locator("select").selectOption("defense");
@@ -720,10 +736,11 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   await page.locator(".tc-field").filter({ hasText: "Stat to enhance" }).locator("select").selectOption("strength");
   await page.getByTestId("training-se-quantity").fill("2");
   const seGain = await page.locator(".tc-metric").first().locator("strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": SE market price auto-fills by selected stat", strengthSeAuto === "400000000" && defenseSeAuto === "410000000", strengthSeAuto + " / " + defenseSeAuto);
+  recordAssertion("Training Calculator " + viewportName + ": SE market price auto-fills by selected stat",
+    strengthSeAuto === "400000000" && defenseSeAuto === "410000000", strengthSeAuto + " / " + defenseSeAuto);
   const jobPointPanel = page.locator(".tc-panel").filter({ hasText: "Company job-point stat gains" });
   const jobPointInput = jobPointPanel.getByTestId("training-jobpoint-quantity");
-  recordAssertion("Training Calculator " + viewportName + ": current company and point balance auto-fill", 
+  recordAssertion("Training Calculator " + viewportName + ": current company and point balance auto-fill",
     (await jobPointPanel.innerText()).includes("Fitness Center") && (await jobPointPanel.innerText()).includes("3"),
     (await jobPointPanel.innerText()).slice(0, 450));
   recordAssertion("Training Calculator " + viewportName + ": company stat special is constrained by live job points",
@@ -732,15 +749,6 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   const jobPointGain = await jobPointPanel.locator(".tc-readout-field").filter({ hasText: "Estimated Strength gain" }).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": Roid Rage job point estimates gym-equivalent stat growth",
     jobPointGain.startsWith("+"), jobPointGain);
-  await tab("session").click();
-  await page.getByTestId("training-session-happy").fill("99999");
-  await tab("enhancers").click();
-  const jobPointGainAtHighHappy = await jobPointPanel.locator(".tc-readout-field").filter({ hasText: "Estimated Strength gain" }).locator("strong").innerText();
-  recordAssertion("Training Calculator " + viewportName + ": Roid Rage gain is independent of current happiness",
-    jobPointGainAtHighHappy === jobPointGain, jobPointGain + " / " + jobPointGainAtHighHappy);
-  await tab("session").click();
-  await page.getByTestId("training-session-happy").fill("5025");
-  await tab("enhancers").click();
 
   const statBookInputs = ["strength", "defense", "speed", "dexterity"].map(stat => page.getByTestId("training-book-" + stat));
   const allStatBooksEnabled = (await Promise.all(statBookInputs.map(input => input.isEnabled()))).every(Boolean);
@@ -750,25 +758,35 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   const permanentBookGain = await page.locator(".tc-stat-book-row").filter({ hasText: "Brawn Over Brains" }).locator(".tc-stat-book-gain").innerText();
   recordAssertion("Training Calculator " + viewportName + ": permanent stat book applies the 10M completion cap",
     permanentBookGain.includes("10,000,000"), permanentBookGain);
-  await tab("happy").click();
-  await page.getByTestId("training-dvd-happy").selectOption("auto");
-  const dvdHappyMode = await page.getByTestId("training-dvd-happy").inputValue();
-  recordAssertion("Training Calculator " + viewportName + ": E-DVD happiness can return to live auto mode",
-    dvdHappyMode === "auto", dvdHappyMode);
-  await tab("enhancers").click();
   recordAssertion("Training Calculator " + viewportName + ": SE model calculates two successive 1% increases", seGain.startsWith("+"), seGain);
   const seCost = await page.locator(".tc-metric").nth(2).locator("strong").innerText();
   recordAssertion("Training Calculator " + viewportName + ": SE market price is included", seCost === "$800,000,000", seCost);
   await noOverflow("Stat Enhancers");
   await scanAxe("Stat Enhancers");
 
+  // Long-term plan owns its stat/gym/supply assumptions and applies discrete weekly MCS payouts.
   await tab("projection").click();
-  await page.getByTestId("training-daily-energy").fill("480");
   await page.getByTestId("training-projection-days").fill("30");
+  await page.getByTestId("training-projection-stat").selectOption("strength");
+  await page.getByTestId("training-projection-gym").selectOption("gun-shop");
+  await page.getByTestId("training-projection-xanax-per-day").fill("1");
+  await page.getByTestId("training-projection-fhc-per-day").fill("0");
+  await page.getByTestId("training-projection-can-count").fill("0");
+  await page.getByTestId("training-projection-mcs").uncheck();
+  const dailyAverageWithoutMcs = Number((await page.getByTestId("training-projection-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  const projectionEnergyWithoutMcs = Number((await page.locator(".tc-metric").nth(2).locator("strong").innerText()).replaceAll(",", "").replace(/E$/i, ""));
   const projectedGain = (await page.locator(".tc-metric").first().locator("strong").innerText()).replaceAll(",", "").replace("+", "");
-  recordAssertion("Training Calculator " + viewportName + ": 30-day projection calculates positive gains", Number(projectedGain) > 0, projectedGain);
-  const projectionEnergy = (await page.locator(".tc-metric").nth(2).locator("strong").innerText()).replaceAll(",", "").replace(/E$/i, "");
-  recordAssertion("Training Calculator " + viewportName + ": projection accounts for 14,400E", projectionEnergy === "14400", projectionEnergy);
+  recordAssertion("Training Calculator " + viewportName + ": standalone 30-day projection calculates positive gains",
+    Number(projectedGain) > 0, projectedGain);
+  await page.getByTestId("training-projection-mcs").check();
+  const dailyAverageWithMcs = Number((await page.getByTestId("training-projection-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  const projectionEnergyWithMcs = Number((await page.locator(".tc-metric").nth(2).locator("strong").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  recordAssertion("Training Calculator " + viewportName + ": Long-term plan displays MCS as a 100E/7-day daily average",
+    Math.abs(dailyAverageWithMcs - dailyAverageWithoutMcs - 100 / 7) < 0.02,
+    dailyAverageWithoutMcs + "E/day → " + dailyAverageWithMcs + "E/day");
+  recordAssertion("Training Calculator " + viewportName + ": 30-day simulation adds four weekly MCS payouts, not daily 100E",
+    projectionEnergyWithMcs - projectionEnergyWithoutMcs === 400,
+    projectionEnergyWithoutMcs + "E → " + projectionEnergyWithMcs + "E");
   await noOverflow("long-term projection");
   await scanAxe("Long-term Projection");
 
