@@ -716,7 +716,7 @@ A new manual export was created because the prior 2026-11-14 encrypted archive c
 
 - Target verified immediately before export: production D1 database `naughty-company-dashboard`, ID `bbbe128a-c5cc-46ec-b8ef-93860183e795`; Cloudflare reported 40 total tables.
 - Export task started at `2026-11-17T04:12:57.797Z` and completed at `2026-11-17T04:13:02.476Z`. It completed in two uploaded parts.
-- The export's stable Time Travel bookmark was `000004d7-00000aa9-00005126-131d7ed09c8a32272620a726a489` (the D1 API returned `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`; use the latter full token).
+- The export's stable Time Travel bookmark returned by the D1 API was `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`.
 - Untouched D1-compatible SQL export: 14,770,736 bytes; SHA-256 `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`.
 - The D1 export endpoint temporarily reserves the database while it runs. This export completed after the immediate follow-up poll; no other D1 query or Queue operation was run during it.
 
