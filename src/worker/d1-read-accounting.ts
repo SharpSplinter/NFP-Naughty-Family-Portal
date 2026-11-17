@@ -89,7 +89,7 @@ export class D1RequestReadMeter {
   private readonly rawStatements = new WeakMap<object, D1PreparedStatement>()
 
   constructor(private readonly logger: (entry: Record<string, unknown>) => void = (entry) => {
-    console.info(JSON.stringify(entry))
+    console.log(entry)
   }) {}
 
   wrapDatabase<T extends object>(database: T): T {
