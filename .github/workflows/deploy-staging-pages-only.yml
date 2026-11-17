@@ -64,6 +64,7 @@ jobs:
           echo "Verified: isolated staging API URL is compiled into the frontend; this job deploys Pages only."
 
       - name: Deploy only to the naughtyfamily-staging Pages project
+        id: deploy_pages
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: "4.156.2"
@@ -73,10 +74,16 @@ jobs:
 
       - name: Verify the published staging Pages bundle without calling the API
         env:
-          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
+          PAGES_DEPLOYMENT_URL: ${{ steps.deploy_pages.outputs.deployment-url }}
+          PAGES_ALIAS_URL: ${{ steps.deploy_pages.outputs.pages-deployment-alias-url }}
         run: |
           node --input-type=module <<'NODE'
-          const base = process.env.STAGING_PAGES_URL;
+          const base = process.env.PAGES_DEPLOYMENT_URL;
+          if (!base || !base.startsWith("https://") || !base.includes("naughtyfamily-staging.pages.dev")) {
+            throw new Error("Cloudflare did not provide the immutable URL for the naughtyfamily-staging deployment.");
+          }
+          console.log("Verifying immutable Pages deployment: " + base);
+          console.log("Cloudflare Pages deployment alias: " + (process.env.PAGES_ALIAS_URL || "not reported"));
           const expectedApiBase = "naughtyfamily-api-staging.kboone801.workers.dev";
           const forbiddenProductionApi = "naughtyfamily-api.kboone801.workers.dev";
           let verified = null;
@@ -133,12 +140,17 @@ jobs:
 
       - name: Record strict no-data-operations deployment scope
         if: always()
+        env:
+          PAGES_DEPLOYMENT_URL: ${{ steps.deploy_pages.outputs.deployment-url }}
+          PAGES_ALIAS_URL: ${{ steps.deploy_pages.outputs.pages-deployment-alias-url }}
         run: |
           {
             echo "## Staging Pages-only deployment"
             echo ""
             echo "- Target: `naughtyfamily-staging`"
             echo "- Source: ${GITHUB_SHA} on `portal-rebuild`"
+            echo "- Published deployment: ${PAGES_DEPLOYMENT_URL:-not reported}"
+            echo "- Branch alias: ${PAGES_ALIAS_URL:-not reported}"
             echo "- No Worker deployment."
             echo "- No D1 SQL, reads, migrations, backups, or budget API calls."
             echo "- No Queue provisioning, configuration changes, sends, receives, acknowledgements, retries, purges, or replays."
