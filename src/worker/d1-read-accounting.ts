@@ -184,6 +184,22 @@ export class D1RequestReadMeter {
     this.unmeteredFirstFallbacks += 1
   }
 
+  private async executeUnmeteredFirstFallback<T>(
+    nativeFirst: () => Promise<T | null>,
+  ): Promise<T | null> {
+    this.inFlight += 1
+    this.recordUnmeteredFirstFallback()
+    try {
+      return await nativeFirst()
+    } catch (error) {
+      this.failedStatements += 1
+      throw error
+    } finally {
+      this.inFlight = Math.max(0, this.inFlight - 1)
+      this.maybeEmit()
+    }
+  }
+
   private async executeStatement<T>(
     method: "first" | "all" | "run" | "raw",
     operation: () => Promise<T>,
@@ -214,15 +230,15 @@ export class D1RequestReadMeter {
         return meter.wrapStatement(database, raw.bind(...values), sql, values)
       },
       async first<T = Record<string, unknown>>(columnName?: string): Promise<T | null> {
-        const result = await meter.executeStatement("first", async () => {
-          let statement = database.prepare(buildFirstRowSql(sql))
-          if (bindings.length) statement = statement.bind(...bindings)
-          return statement.all<T>()
-        }, (value) => meter.recordResult(value, "first"))
+        let statement = database.prepare(buildFirstRowSql(sql))
+        if (bindings.length) statement = statement.bind(...bindings)
+        if (typeof (statement as { all?: unknown }).all !== "function") {
+          return meter.executeUnmeteredFirstFallback(() => raw.first<T>(columnName))
+        }
+        const result = await meter.executeStatement("first", () => statement.all<T>(), (value) => meter.recordResult(value, "first"))
         const row = result.results?.[0] ?? null
         if (row === null && readMetric(result.meta, "rows_read", "rowsRead") === null) {
-          meter.recordUnmeteredFirstFallback()
-          return raw.first<T>(columnName)
+          return meter.executeUnmeteredFirstFallback(() => raw.first<T>(columnName))
         }
         if (row === null || columnName === undefined) return row as T | null
         if (typeof row !== "object" || !Object.prototype.hasOwnProperty.call(row, columnName)) {

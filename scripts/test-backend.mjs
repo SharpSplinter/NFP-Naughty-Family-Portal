@@ -331,6 +331,30 @@ try {
     assert.equal(entries[0].unmeteredFirstFallbacks, 1)
   })
 
+  await test("Worker D1 accounting falls back when a prepared adapter omits all()", async () => {
+    const entries = []
+    let nativeFirstCalls = 0
+    const database = {
+      prepare() {
+        return {
+          bind() { return this },
+          async first() { nativeFirstCalls += 1; return { member: "legacy-adapter" } },
+        }
+      },
+    }
+    const meter = new D1RequestReadMeter((entry) => entries.push(entry))
+    const row = await meter.wrapDatabase(database).prepare("SELECT member FROM members WHERE id = ?")
+      .bind(7).first()
+    assert.deepEqual(row, { member: "legacy-adapter" })
+    assert.equal(nativeFirstCalls, 1)
+    meter.finish({ eventType: "test" })
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].accountingStatus, "incomplete")
+    assert.equal(entries[0].rowsRead, 0)
+    assert.equal(entries[0].missingReadMetrics, 1)
+    assert.equal(entries[0].unmeteredFirstFallbacks, 1)
+  })
+
   await test("Worker D1 accounting waits for tracked waitUntil reads before emitting totals", async () => {
     const entries = []
     let release
