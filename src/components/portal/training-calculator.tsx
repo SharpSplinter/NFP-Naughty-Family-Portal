@@ -3,6 +3,7 @@ import "./training-calculator.css"
 import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
 import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"
 import { createGymGainCalibrationSample, getGymGainCalibrationSummary } from "../../lib/gym-training/calibration.js"
+import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
 type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
@@ -354,6 +355,37 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [activeTab, setActiveTab] = useState<TabKey>("session")
   const [selectedStat, setSelectedStat] = useState<StatKey>("strength")
   const [selectedGymId, setSelectedGymId] = useState("")
+  // Each planning surface owns its own inputs. No tab reads another tab's scenario values.
+  const [gymTrainStat, setGymTrainStat] = useState<StatKey>("strength")
+  const [gymTrainGymId, setGymTrainGymId] = useState("")
+  const [gymTrainCount, setGymTrainCount] = useState(10)
+  const [gymTrainMcsEnabled, setGymTrainMcsEnabled] = useState(false)
+  const [gymTrainXanaxPerDay, setGymTrainXanaxPerDay] = useState(0)
+  const [gymTrainFhcPerDay, setGymTrainFhcPerDay] = useState(0)
+  const [gymTrainCanPerDay, setGymTrainCanPerDay] = useState(0)
+  const [gymTrainCanId, setGymTrainCanId] = useState("munster")
+  const [happyJumpStat, setHappyJumpStat] = useState<StatKey>("strength")
+  const [happyJumpGymId, setHappyJumpGymId] = useState("georges")
+  const [happyJumpTrainCount, setHappyJumpTrainCount] = useState(10)
+  const [happyJumpGymModifier, setHappyJumpGymModifier] = useState(1)
+  const [happyJumpStartingHappy, setHappyJumpStartingHappy] = useState(0)
+  const [happyJumpXanaxCount, setHappyJumpXanaxCount] = useState(0)
+  const [happyJumpFhcCount, setHappyJumpFhcCount] = useState(0)
+  const [happyJumpDvdCount, setHappyJumpDvdCount] = useState(0)
+  const [happyJumpDvdHappy, setHappyJumpDvdHappy] = useState(2500)
+  const [happyJumpYellowEggCount, setHappyJumpYellowEggCount] = useState(0)
+  const [happyJumpMistletoeCount, setHappyJumpMistletoeCount] = useState(0)
+  const [happyJumpTargetHappy, setHappyJumpTargetHappy] = useState(0)
+  const [happyJumpOtherHappy, setHappyJumpOtherHappy] = useState(0)
+  const [happyJumpEcstasy, setHappyJumpEcstasy] = useState(false)
+  const [happyJumpPriceOverrides, setHappyJumpPriceOverrides] = useState<Record<string, string>>({})
+  const [projectionStat, setProjectionStat] = useState<StatKey>("strength")
+  const [projectionGymId, setProjectionGymId] = useState("")
+  const [projectionXanaxPerDay, setProjectionXanaxPerDay] = useState(0)
+  const [projectionFhcPerDay, setProjectionFhcPerDay] = useState(0)
+  const [projectionCanPerDay, setProjectionCanPerDay] = useState(0)
+  const [projectionCanId, setProjectionCanId] = useState("munster")
+  const [projectionMcsEnabled, setProjectionMcsEnabled] = useState(false)
   const [liveData, setLiveData] = useState<LiveData | null>(null)
   const [history, setHistory] = useState<HistoryData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -437,6 +469,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           const profileGym = payload.gyms?.find(gym => String(gym.id) === String(payload.gym?.id))
             || FALLBACK_GYMS.find(gym => normalizeGymName(gym.name) === normalizeGymName(payload.gym?.name || ""))
           setSelectedGymId(current => current || profileGym?.id || payload.gym!.id)
+          setGymTrainGymId(current => current || profileGym?.id || payload.gym!.id)
+          setProjectionGymId(current => current || profileGym?.id || payload.gym!.id)
         }
         if (payload.bars?.happy?.current !== undefined) setManualHappy(current => current || "")
         if (payload.errors?.battleStats && !Object.values(payload.battleStats || {}).some(value => typeof value === "number")) {
