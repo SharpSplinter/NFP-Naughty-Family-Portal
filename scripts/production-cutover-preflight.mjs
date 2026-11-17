@@ -131,14 +131,14 @@ async function githubJson(url, token, fetchImpl) {
   return response.json();
 }
 
-function validateRun(run, expectedSha, label) {
+function validateRun(run, expectedSha, label, expectedWorkflowPath) {
   if (run.status !== "completed" || run.conclusion !== "success") {
     throw new Error(`${label} must be a completed successful GitHub Actions run.`);
   }
   if (run.repository?.full_name !== REPOSITORY) {
     throw new Error(`${label} must originate from the canonical repository.`);
   }
-  if (run.event !== "workflow_dispatch") {
+  if (run.path !== expectedWorkflowPath) {\n    throw new Error(`${label} must use ${expectedWorkflowPath}.`);\n  }\n  if (run.event !== "workflow_dispatch") {
     throw new Error(`${label} must be an explicitly dispatched workflow run.`);
   }
   if (run.head_sha?.toLowerCase() !== expectedSha.toLowerCase()) {
@@ -163,8 +163,8 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
     githubJson(`${apiRoot}/commits/${env.GITHUB_SHA}`, env.GITHUB_TOKEN, fetchImpl),
   ]);
 
-  validateRun(restoreRun, parsed.candidateCommit, "Production-data restore rehearsal");
-  validateRun(stagingRun, parsed.candidateCommit, "Stateful staging acceptance");
+  validateRun(restoreRun, parsed.candidateCommit, "Production-data restore rehearsal", ".github/workflows/restore-production-backup-rehearsal.yml");
+  validateRun(stagingRun, parsed.candidateCommit, "Stateful staging acceptance", ".github/workflows/deploy-staging-acceptance.yml");
 
   const candidateTree = candidateCommit.commit?.tree?.sha;
   const releaseTree = releaseCommit.commit?.tree?.sha;
