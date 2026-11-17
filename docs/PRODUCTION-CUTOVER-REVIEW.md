@@ -692,3 +692,17 @@ A dedicated manual workflow now exists at `.github/workflows/restore-production-
 The production deploy preflight now accepts only a successful manual run from this exact restore workflow path and a successful manual stateful acceptance run from the exact staging-acceptance workflow path, both for the exact candidate SHA. The tested candidate tree must match the `main` release tree.
 
 The workflow was added but **not dispatched** because the protected backup URL/password are not available in this execution context. Therefore no migration replay result has been produced yet. The D1/Queue quota state remains unknown and no Cloudflare data-plane operation has been performed. Production cutover remains **NO-GO**.
+
+
+## 22. 2026-11-17 latest offline validation after cutover-gate hardening
+
+Latest branch head at this validation: `f3e2f3f503758ce5257c7fe964035a2f02635548`.
+
+- Push quality gate [#44014951799](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014951799) passed, including typecheck, production frontend build, workflow syntax checks, full backend regression suite, production preflight contract tests, and the local offline production-backup replay harness tests.
+- Pull-request quality gate [#44014954841](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014954841) passed on the same commit.
+- Discord Bot Quality Gates [#44014954797](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014954797) passed.
+- Seasonal UI / UX Playwright audit [#44014951841](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014951841) passed 277/277 assertions, with zero failed assertions, zero axe violations (zero serious/critical), and zero browser page errors. Its two console errors were the intentional mocked HTTP 503 archive-unavailable fixtures for Halloween and Christmas Town. The audit used the local production preview and intercepted API fixtures; it did not call staging or production APIs.
+- The offline replay harness fixture test passed 25-migration ordering, migration-ledger count, SQLite integrity, foreign-key, row-preservation, and checksum-mismatch guards. This validates the replay program's controls on a synthetic fixture only; it is **not** evidence that the encrypted production archive was decrypted or that real restored data completed the replay.
+- Git comparison reports `portal-rebuild` remains **0 commits behind** `main`. PR #152 remains OPEN/DRAFT and unmerged.
+
+No production or staging Worker/API, D1, Queue, Pages deployment, secret value, or production data operation was performed. No D1/Queue usage counters were queried. The manual restore workflow remains undispatched pending protected archive URL/password availability, and the separate stateful staging acceptance remains outstanding. Production cutover is still **NO-GO**.
