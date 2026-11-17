@@ -54,11 +54,23 @@ for (const step of [
   assert.notEqual(start, -1, step + " must exist.");
   const next = workflow.indexOf("\n      - name: ", start + 1);
   const block = workflow.slice(start, next === -1 ? workflow.length : next);
-  assert.match(block, /^        if: inputs\.feature_suite != 'gym-training'$/m,
-    step + " must be skipped for the harness-only Gym Training retest.");
+  assert.match(block, /^        if: inputs\.feature_suite != 'gym-training' && inputs\.feature_suite != 'cleanup-only'$/m,
+    step + " must be skipped for both harness-only retest and cleanup-only recovery.");
 }
 assert.match(workflow, /name: Verify the staging Pages origin/);
 assert.match(workflow, /name: Run exactly one selected feature suite/);
+const seedStart = workflow.indexOf("      - name: Seed isolated authenticated private-history fixtures\\n");
+const seedEnd = workflow.indexOf("\\n      - name: ", seedStart + 1);
+assert.match(workflow.slice(seedStart, seedEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
+const playwrightStart = workflow.indexOf("      - name: Install Playwright Chromium for staging viewport checks\\n");
+const playwrightEnd = workflow.indexOf("\\n      - name: ", playwrightStart + 1);
+assert.match(workflow.slice(playwrightStart, playwrightEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
+const featureStart = workflow.indexOf("      - name: Run exactly one selected feature suite\\n");
+const featureEnd = workflow.indexOf("\\n      - name: ", featureStart + 1);
+assert.match(workflow.slice(featureStart, featureEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
+assert.match(workflow, /inputs\\.feature_suite == 'cleanup-only'/);
+assert.match(workflow, /STAGING_FIXTURE_CREATED_AT="\\$\\{STAGING_CLEANUP_ONLY_CREATED_AT\\}" node scripts\\/cleanup-staging-private-history\\.mjs/);
+
 
 // Direct Wrangler counters are the authoritative per-command read meter.
 // Both fixture scripts must receive the same persistent state file as the
@@ -75,4 +87,4 @@ for (const step of [
   assert.match(block, /D1_RUN_BUDGET_ROWS:\s+"100000"/);
 }
 
-console.log("PASS staging safety contract: manual-only acceptance, bounded per-command Wrangler reads, shared run budget state, indexed-only fixture cleanup, reserved identity preflight, and no infrastructure mutation for the Gym-only retest.");
+console.log("PASS staging safety contract: manual-only acceptance, bounded direct Wrangler reads, shared run-budget state, indexed-only fixture cleanup, reserved identity preflight, and no infrastructure mutations for Gym-only or cleanup-only runs.");

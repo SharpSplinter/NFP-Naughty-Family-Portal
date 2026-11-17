@@ -22,6 +22,12 @@ on:
           - consent
           - company-dashboard
           - admin
+          - cleanup-only
+      fixture_created_at:
+        description: Exact STAGING_FIXTURE_CREATED_AT from the prior run. Required only for cleanup-only.
+        required: false
+        type: string
+        default: ""
 permissions:
   contents: read
 
@@ -96,14 +102,14 @@ jobs:
         run: node scripts/staging-d1-read-budget.mjs start
 
       - name: Provision isolated staging Queues
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
         run: node scripts/ensure-naughtyfamily-staging-queues.mjs
 
       - name: Apply pending migrations to staging D1 only
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: "4.156.2"
@@ -112,7 +118,7 @@ jobs:
           command: d1 migrations apply naughtyfamily-acceptance-staging --remote --config wrangler.acceptance.toml
 
       - name: Verify staging migration ledger
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: "4.156.2"
@@ -121,7 +127,7 @@ jobs:
           command: d1 migrations list naughtyfamily-acceptance-staging --remote --config wrangler.acceptance.toml
 
       - name: Deploy isolated staging API Worker
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: "4.156.2"
@@ -130,7 +136,7 @@ jobs:
           command: deploy --config wrangler.acceptance.toml
 
       - name: Verify staging API health, encryption readiness, and browser CORS
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         env:
           STAGING_API_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
           STAGING_PAGES_ORIGIN: https://naughtyfamily-staging.pages.dev
@@ -166,13 +172,13 @@ jobs:
           NODE
 
       - name: Build Pages bundle for staging API
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         env:
           VITE_API_BASE_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
         run: npm run build
 
       - name: Deploy to the isolated naughtyfamily-staging Pages project
-        if: inputs.feature_suite != 'gym-training'
+        if: inputs.feature_suite != 'gym-training' && inputs.feature_suite != 'cleanup-only'
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: "4.156.2"
@@ -260,11 +266,13 @@ jobs:
         run: node scripts/staging-d1-read-budget.mjs check
 
       - name: Install Playwright Chromium for staging viewport checks
+        if: inputs.feature_suite != 'cleanup-only'
         run: |
           npm install --no-save --package-lock=false playwright @axe-core/playwright
           npx playwright install --with-deps chromium
 
       - name: Seed isolated authenticated private-history fixtures
+        if: inputs.feature_suite != 'cleanup-only'
         id: staging_fixtures
         env:
           D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
@@ -284,6 +292,7 @@ jobs:
         run: node scripts/staging-d1-read-budget.mjs check
 
       - name: Run exactly one selected feature suite
+        if: inputs.feature_suite != 'cleanup-only'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
@@ -312,13 +321,24 @@ jobs:
         run: node scripts/staging-d1-read-budget.mjs check
 
       - name: Remove synthetic private-history fixtures from staging D1
-        if: always() && steps.d1_budget_start.outcome == 'success' && steps.staging_fixtures.outcome != 'skipped'
+        if: always() && steps.d1_budget_start.outcome == 'success' && (steps.staging_fixtures.outcome != 'skipped' || inputs.feature_suite == 'cleanup-only')
         env:
           D1_BUDGET_STATE_FILE: ${{ runner.temp }}/ncd-d1-read-budget.json
           D1_RUN_BUDGET_ROWS: "100000"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
-        run: node scripts/cleanup-staging-private-history.mjs
+          STAGING_FEATURE_SUITE: ${{ inputs.feature_suite }}
+          STAGING_CLEANUP_ONLY_CREATED_AT: ${{ inputs.fixture_created_at }}
+        run: |
+          if [ "${STAGING_FEATURE_SUITE}" = "cleanup-only" ]; then
+            if [ -z "${STAGING_CLEANUP_ONLY_CREATED_AT}" ]; then
+              echo "cleanup-only requires the exact fixture_created_at value from the original seed run." >&2
+              exit 2
+            fi
+            STAGING_FIXTURE_CREATED_AT="${STAGING_CLEANUP_ONLY_CREATED_AT}" node scripts/cleanup-staging-private-history.mjs
+          else
+            node scripts/cleanup-staging-private-history.mjs
+          fi
 
       - name: Final D1 rows-read budget check after cleanup
         if: always() && steps.d1_budget_start.outcome == 'success'

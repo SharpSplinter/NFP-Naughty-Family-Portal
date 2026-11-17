@@ -29,7 +29,7 @@ const identityOutput = execFileSync(process.platform === "win32" ? "npx.cmd" : "
   "--command", identitySql, "--json",
 ], { encoding: "utf8", env: process.env, maxBuffer: 4 * 1024 * 1024 });
 assertFixtureIdentityOutput(identityOutput);
-recordWranglerD1Metrics(parseWranglerD1Metrics(identityOutput), "cleanup identity preflight", 10);
+recordWranglerD1Metrics(parseWranglerD1Metrics(identityOutput), "cleanup identity preflight", 100);
 
 const sql = buildFixtureCleanupStatements({
   createdAt: process.env.STAGING_FIXTURE_CREATED_AT || null,
