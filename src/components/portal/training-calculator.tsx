@@ -510,6 +510,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const hasLiveUglyEnergy = activeBookChoice(liveData) === "ugly-energy"
   const energyBar = getBar(liveData, "energy")
   const happyBar = getBar(liveData, "happy")
+  const liveBarMaximum = energyBar ? Math.max(0, safeNumber(energyBar.maximum)) : 0
   const donatorStatus = evaluateDonatorStatus(energyBar, hasLiveUglyEnergy)
   const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
   const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 0
@@ -529,6 +530,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const gymTrainStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[gymTrainStat]))
   const gymTrainDots = safeNumber(gymTrainGym.dots[gymTrainStat])
   const gymTrainModifierProfile = liveData?.gymModifiers?.[gymTrainStat]
+  const gymTrainModifierBonuses = gymTrainModifierProfile?.bonuses ?? []
   const gymTrainAutoModifier = safeNumber(gymTrainModifierProfile?.multiplier, 1)
   const gymTrainCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[gymTrainStat] || [], {
     gymId: gymTrainGym.id, dots: gymTrainDots, modifier: gymTrainAutoModifier,
@@ -585,6 +587,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   // estimate, then apply any verified company reduction multiplicatively.
   // The same value is shown in the setup readout and applied sequentially.
   const happyLossPercent = 50 * (1 - autoHappyLossReduction / 100)
+  const naturalHappyPerDay = happyBar
+    ? Math.max(0, safeNumber(happyBar.increment) * 86400 / Math.max(1, safeNumber(happyBar.interval)))
+    : 0
+  const dailyHappyBarMaximum = happyBar ? Math.max(0, safeNumber(happyBar.maximum, HAPPY_CAP)) : HAPPY_CAP
   const liveEnergyBook = activeBookChoice(liveData)
   const projectedNaturalEnergyPerDay = energyBar
     ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval))
@@ -629,7 +635,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
-  const liveBarMaximum = energyBar ? Math.max(0, safeNumber(energyBar.maximum)) : 0
   const refillBarMaximum = plannedEnergyBooks.has("ugly-energy") || hasLiveUglyEnergy
     ? Math.max(250, liveBarMaximum)
     : liveBarMaximum
@@ -859,10 +864,6 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   }, [projectionStartingStat, currentHappyFromApi, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
     projectionStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
     projectionXanaxPerDay, projectionFhcPerDay, naturalHappyPerDay, dailyHappyBarMaximum])
-  const naturalHappyPerDay = happyBar
-    ? Math.max(0, safeNumber(happyBar.increment) * 86400 / Math.max(1, safeNumber(happyBar.interval)))
-    : 0
-  const dailyHappyBarMaximum = happyBar ? Math.max(0, safeNumber(happyBar.maximum, HAPPY_CAP)) : HAPPY_CAP
   const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillAvailable ? refillBarMaximum : 0))
   const dailyEnergy = dailyEnergyOverride.trim() === "" ? dailyEnergyDefault : clamp(safeNumber(dailyEnergyOverride), 0, 100000)
   const projection = useMemo(() => {
@@ -1074,7 +1075,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div className="tc-readout-field"><span>Live gym-gain modifier</span><strong data-testid="training-effective-modifier">{fmt(gymTrainEffectiveModifier, 6)}×</strong><small>{gymTrainCalibration.sampleCount ? "Includes " + gymTrainCalibration.sampleCount + " matching player calibration sample(s)" : "Live Torn faction, education and book bonuses"}</small></div>
               <div className="tc-readout-field"><span>Estimated happy lost per energy</span><strong data-testid="training-happy-loss-per-energy">{fmt(happyLossPercent, 2)}%</strong><small>Midpoint estimate after verified company happy-loss reductions</small></div>
             </div>
-            {gymTrainModifierProfile?.bonuses?.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {gymTrainModifierProfile.bonuses.join(" · ")}</div>}
+            {gymTrainModifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {gymTrainModifierBonuses.join(" · ")}</div>}
           </Panel>
           <Panel title="Projected daily energy supply" eyebrow="SEPARATE SUSTAINABILITY FORECAST" description="These daily averages are independent of the train count above. Current Energy is deliberately excluded, so zero current Energy does not block predictions.">
             <div className="tc-form-grid">
