@@ -442,7 +442,7 @@ async function auditLayout(page, pageName, viewportName, pagePath, selectorId, h
   await selector.waitFor({ state: "visible", timeout: 30000 });
   if (pageName === "Christmas Town") await page.getByRole("heading", { name: "Minigames" }).waitFor({ state: "visible", timeout: 30000 });
   else if (pageName === "Halloween") await page.locator(".halloween-personal-window").waitFor({ state: "visible", timeout: 30000 });
-  else await page.getByRole("heading", { name: "Session forecast" }).waitFor({ state: "visible", timeout: 30000 });
+  else await page.getByRole("heading", { name: "Gym train result" }).waitFor({ state: "visible", timeout: 30000 });
 
   const layout = await page.evaluate(({ selectorId, pageName }) => {
     const isHalloween = pageName === "Halloween";

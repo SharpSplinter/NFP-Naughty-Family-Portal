@@ -95,17 +95,17 @@ assert.equal(getWeeklyStockEnergyBonus(6, false), 0, "MCS is excluded when the u
 assert.equal(getWeeklyStockEnergyBonus(-1, true), 0, "invalid day indexes cannot create MCS energy");
 
 assert.ok(calculator.includes('import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"'));
-assert.ok(calculator.includes('data-testid="training-train-count"'));
-assert.ok(calculator.includes('data-testid="training-gym-xanax-per-day"'));
-assert.ok(calculator.includes('data-testid="training-gym-fhc-per-day"'));
-assert.ok(calculator.includes('data-testid="training-gym-can-per-day"'));
+assert.ok(calculator.includes('testId="training-train-count"'));
+assert.ok(calculator.includes('testId="training-gym-xanax-per-day"'));
+assert.ok(calculator.includes('testId="training-gym-fhc-per-day"'));
+assert.ok(calculator.includes('testId="training-gym-can-per-day"'));
 assert.ok(calculator.includes('data-testid="training-gym-mcs"'));
-assert.ok(calculator.includes('data-testid="training-projection-xanax-per-day"'));
-assert.ok(calculator.includes('data-testid="training-projection-fhc-per-day"'));
-assert.ok(calculator.includes('data-testid="training-projection-can-count"'));
+assert.ok(calculator.includes('testId="training-projection-xanax-per-day"'));
+assert.ok(calculator.includes('testId="training-projection-fhc-per-day"'));
+assert.ok(calculator.includes('testId="training-projection-can-count"'));
 assert.ok(calculator.includes('data-testid="training-projection-mcs"'));
-assert.ok(calculator.includes('data-testid="training-happy-xanax-count"'));
-assert.ok(calculator.includes('data-testid="training-happy-fhc-count"'));
+assert.ok(calculator.includes('testId="training-happy-xanax-count"'));
+assert.ok(calculator.includes('testId="training-happy-fhc-count"'));
 assert.ok(calculator.includes("energy: clamp(gymTrainCount, 0, 20000) * gymTrainGym.energyCost"),
   "Gym Trains must forecast the exact user-entered count without depending on current Energy or Energy Supply");
 assert.ok(calculator.includes("const happyJump = useMemo"));
