@@ -8,14 +8,14 @@ on:
         required: true
         type: string
       archive_sha256:
-        description: SHA-256 of the encrypted backup archive
+        description: SHA-256 of the encrypted GPG backup archive
         required: true
-        default: "052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b"
+        default: "2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5"
         type: string
-      normalized_sql_sha256:
-        description: SHA-256 of the normalized SQL export inside the archive
+      sql_export_sha256:
+        description: SHA-256 of the untouched SQL export inside the archive
         required: true
-        default: "1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2"
+        default: "8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f"
         type: string
 
 permissions:
@@ -45,7 +45,7 @@ jobs:
           BACKUP_URL: ${{ secrets.PRODUCTION_D1_BACKUP_URL }}
           BACKUP_PASSWORD: ${{ secrets.PRODUCTION_D1_BACKUP_PASSWORD }}
           ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
-          NORMALIZED_SQL_SHA256: ${{ inputs.normalized_sql_sha256 }}
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -53,15 +53,11 @@ jobs:
           test "$CANDIDATE_COMMIT" = "$GITHUB_SHA"
           [[ "$CANDIDATE_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]]
           [[ "$ARCHIVE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
-          [[ "$NORMALIZED_SQL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+          [[ "$SQL_EXPORT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
           [[ "$BACKUP_URL" == https://* ]]
           test -n "$BACKUP_PASSWORD"
+          command -v gpg
           echo "Candidate SHA, protected archive URL/password presence, and expected checksums are valid." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install 7-Zip archive tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes p7zip-full
 
       - name: Download and verify the encrypted archive
         env:
@@ -71,47 +67,46 @@ jobs:
         run: |
           set -euo pipefail
           set +x
-          archive="$RUNNER_TEMP/production-d1-backup.archive"
+          archive="$RUNNER_TEMP/production-d1-backup.tar.gz.gpg"
           curl --fail --location --silent --show-error --retry 2 --retry-delay 3 "$BACKUP_URL" --output "$archive"
           actual="$(sha256sum "$archive" | awk '{print $1}')"
           test "$actual" = "$ARCHIVE_SHA256" || { echo "::error::Encrypted archive checksum mismatch."; exit 1; }
-          echo "Encrypted archive downloaded and SHA-256 verified. Archive bytes are not uploaded as a workflow artifact."
+          echo "Encrypted archive downloaded and SHA-256 verified."
 
-      - name: Decrypt into ephemeral runner storage and locate normalized SQL by checksum
-        id: extract
+      - name: Decrypt into ephemeral runner storage
         env:
           BACKUP_PASSWORD: ${{ secrets.PRODUCTION_D1_BACKUP_PASSWORD }}
-          NORMALIZED_SQL_SHA256: ${{ inputs.normalized_sql_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
           set +x
-          restore_dir="$RUNNER_TEMP/production-d1-restore"
-          mkdir -p "$restore_dir"
-          7z x -y -p"$BACKUP_PASSWORD" -o"$restore_dir" "$RUNNER_TEMP/production-d1-backup.archive" -bso0 -bsp0
-          selected=""
-          while IFS= read -r -d '' file; do
-            actual="$(sha256sum "$file" | awk '{print $1}')"
-            if [[ "$actual" == "$NORMALIZED_SQL_SHA256" ]]; then
-              if [[ -n "$selected" ]]; then
-                echo "::error::More than one SQL file matched the expected normalized SQL checksum."
-                exit 1
-              fi
-              selected="$file"
-            fi
-          done < <(find "$restore_dir" -type f -iname '*.sql' -print0)
-          test -n "$selected" || { echo "::error::No extracted SQL file matched the expected normalized SQL checksum."; exit 1; }
-          echo "sql_file=$selected" >> "$GITHUB_OUTPUT"
+          archive="$RUNNER_TEMP/production-d1-backup.tar.gz.gpg"
+          decrypted="$RUNNER_TEMP/production-d1-backup.tar.gz"
+          printf '%s\n' "$BACKUP_PASSWORD" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --decrypt --output "$decrypted" "$archive"
+          mkdir -p "$RUNNER_TEMP/production-d1-restore"
+          tar -xzf "$decrypted" -C "$RUNNER_TEMP/production-d1-restore"
+          test -s "$RUNNER_TEMP/production-d1-restore/production-export.sql"
+          echo "Encrypted archive decrypted successfully in ephemeral runner storage."
+
+      - name: Verify untouched SQL export checksum
+        env:
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(sha256sum "$RUNNER_TEMP/production-d1-restore/production-export.sql" | awk '{print $1}')"
+          test "$actual" = "$SQL_EXPORT_SHA256" || { echo "::error::SQL export checksum mismatch."; exit 1; }
+          echo "Untouched SQL export SHA-256 verified."
 
       - name: Replay migrations 0013-0037 and verify restored data locally
         env:
-          SQL_FILE: ${{ steps.extract.outputs.sql_file }}
-          NORMALIZED_SQL_SHA256: ${{ inputs.normalized_sql_sha256 }}
+          SQL_FILE: ${{ runner.temp }}/production-d1-restore/production-export.sql
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
         run: |
           python3 scripts/replay-production-backup-migrations.py \
             --sql-file "$SQL_FILE" \
             --migrations-dir migrations/auth \
-            --expected-sql-sha256 "$NORMALIZED_SQL_SHA256" \
+            --expected-sql-sha256 "$SQL_EXPORT_SHA256" \
             --report "$RUNNER_TEMP/production-restore-rehearsal-report.json"
 
       - name: Publish sanitized rehearsal report only
@@ -125,8 +120,8 @@ jobs:
       - name: Add sanitized verification summary
         run: |
           echo "## Local production-data migration rehearsal" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Encrypted archive SHA-256 verified before extraction." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Normalized SQL SHA-256 verified before SQLite replay." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Encrypted GPG archive SHA-256 verified before extraction." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Untouched D1 SQL export SHA-256 verified before SQLite replay." >> "$GITHUB_STEP_SUMMARY"
           echo "- Migrations 0013 through 0037 replayed in filename order." >> "$GITHUB_STEP_SUMMARY"
           echo "- SQLite integrity check, foreign-key check, final migration ledger, and non-decreasing pre-existing table counts verified." >> "$GITHUB_STEP_SUMMARY"
           echo "- Only the sanitized report is retained as a workflow artifact; backup, SQL, and database remain in ephemeral runner storage." >> "$GITHUB_STEP_SUMMARY"
