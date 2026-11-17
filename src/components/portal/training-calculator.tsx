@@ -682,29 +682,47 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
   const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
 
-  const happinessBeforeOther = Math.min(HAPPY_CAP,
-    startingHappy + xanaxCount * 75 + fhcCount * 500 + dvdCount * dvdHappy + yellowEggCount * 10000
-    + (targetHappy > 0 ? targetHappy * (1 - Math.pow(0.75, mistletoeCount)) : 0))
-  const maximumOtherHappy = Math.max(0, HAPPY_CAP - happinessBeforeOther)
+  const happyJumpTarget = clamp(happyJumpTargetHappy, 0, HAPPY_CAP)
+  const happyJumpMaximumMistletoeCount = happyJumpTarget > 1
+    ? Math.max(0, Math.ceil(Math.log(1 / happyJumpTarget) / Math.log(0.75)))
+    : 0
+  const happyJumpHappinessBeforeOther = Math.min(HAPPY_CAP,
+    happyJumpStartingHappy + happyJumpXanaxCount * 75 + happyJumpFhcCount * 500
+    + happyJumpDvdCount * happyJumpDvdHappy + happyJumpYellowEggCount * 10000
+    + (happyJumpTarget > 0 ? happyJumpTarget * (1 - Math.pow(0.75, happyJumpMistletoeCount)) : 0))
+  const happyJumpMaximumOtherHappy = Math.max(0, HAPPY_CAP - happyJumpHappinessBeforeOther)
   const happyJump = useMemo(() => {
-    let value = clamp(startingHappy, 0, HAPPY_CAP)
-    value = Math.min(HAPPY_CAP, value + xanaxCount * 75)
-    value = Math.min(HAPPY_CAP, value + fhcCount * 500)
-    value = Math.min(HAPPY_CAP, value + dvdCount * dvdHappy)
-    value = Math.min(HAPPY_CAP, value + yellowEggCount * 10000)
-    let target = clamp(targetHappy, 0, HAPPY_CAP)
+    let value = clamp(happyJumpStartingHappy, 0, HAPPY_CAP)
+    value = Math.min(HAPPY_CAP, value + happyJumpXanaxCount * 75)
+    value = Math.min(HAPPY_CAP, value + happyJumpFhcCount * 500)
+    value = Math.min(HAPPY_CAP, value + happyJumpDvdCount * happyJumpDvdHappy)
+    value = Math.min(HAPPY_CAP, value + happyJumpYellowEggCount * 10000)
+    let target = happyJumpTarget
     let mistletoeGain = 0
-    for (let index = 0; index < mistletoeCount; index++) {
+    for (let index = 0; index < happyJumpMistletoeCount; index++) {
       const transfer = target * 0.25
       target -= transfer
       mistletoeGain += transfer
       value = Math.min(HAPPY_CAP, value + transfer)
     }
-    value = Math.min(HAPPY_CAP, value + otherHappy)
+    value = Math.min(HAPPY_CAP, value + happyJumpOtherHappy)
     const beforeEcstasy = value
-    const finalHappy = ecstasy ? Math.min(HAPPY_CAP, beforeEcstasy * 2) : beforeEcstasy
+    const finalHappy = happyJumpEcstasy ? Math.min(HAPPY_CAP, beforeEcstasy * 2) : beforeEcstasy
     return { beforeEcstasy, finalHappy, mistletoeGain, targetRemaining: target }
-  }, [startingHappy, xanaxCount, fhcCount, dvdCount, dvdHappy, yellowEggCount, mistletoeCount, targetHappy, otherHappy, ecstasy])
+  }, [happyJumpStartingHappy, happyJumpXanaxCount, happyJumpFhcCount, happyJumpDvdCount, happyJumpDvdHappy,
+    happyJumpYellowEggCount, happyJumpMistletoeCount, happyJumpTarget, happyJumpOtherHappy, happyJumpEcstasy])
+
+  const happyJumpSession = useMemo(() => estimateGymSession({
+    stat: happyJumpStartingStat,
+    statKey: happyJumpStat,
+    happy: happyJump.finalHappy,
+    energy: clamp(happyJumpTrainCount, 0, 20000) * happyJumpGym.energyCost,
+    dots: happyJumpDots,
+    energyPerTrain: happyJumpGym.energyCost,
+    modifier: clamp(happyJumpGymModifier, 0.0001, 100),
+    happyLossRate: 0.5,
+  }), [happyJumpStartingStat, happyJumpStat, happyJump.finalHappy, happyJumpTrainCount, happyJumpGym.energyCost,
+    happyJumpDots, happyJumpGymModifier])
 
   const session = useMemo(() => estimateGymSession({
     stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
@@ -714,10 +732,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: selectedGym.energyCost, dots: selectedDots,
     energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
   }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
-  const happySession = useMemo(() => estimateGymSession({
-    stat: currentStat, statKey: selectedStat, happy: happyJump.finalHappy, energy: usableEnergy, dots: selectedDots,
-    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
-  }), [currentStat, selectedStat, happyJump.finalHappy, usableEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
+  const happySession = happyJumpSession
 
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
