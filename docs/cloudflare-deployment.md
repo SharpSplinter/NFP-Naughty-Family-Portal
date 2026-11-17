@@ -55,4 +55,14 @@ The portal code does not require `ADMIN_USERNAME` or `ADMIN_PASSWORD_HASH`. Do n
 - `npm run typecheck`
 - `npm test`
 
-Production Pages publishing is manual during this migration. Do not publish to the legacy `naughty-company-dashboard` project. After the production Worker migration/deployment and health verification are approved, build with the production API URL and explicitly publish `dist/` to the `naughtyfamily` project. Keep both projects' automatic deployments disabled until the cutover is accepted. The production Worker workflow is manual-only on the PR branch and requires an operator-supplied reference to a verified external D1 backup; see the cutover review for the exact sequence.
+Production Pages publishing is manual during this migration. Do not publish the portal to the legacy `naughty-company-dashboard` project. After the production Worker migration/deployment and health verification are approved, build with the production API URL and explicitly publish `dist/` to the `naughtyfamily` project. Keep both projects' automatic deployments disabled until the cutover is accepted.
+
+The production Worker workflow is `workflow_dispatch`-only on `main` and targets only `naughtyfamily-api`. It uses the GitHub Environment `production`; configure required reviewers and restrict its deployment branches to `main` before release. The workflow's evidence preflight runs before the first Cloudflare action and requires:
+- an HTTPS external-backup reference, independently verified SHA-256, and backup timestamp less than 24 hours old;
+- a fresh Time Travel bookmark and D1 migration-ledger reference;
+- account-wide D1 rows-read evidence less than 15 minutes old, with an explicit hard stop and deployment reserve that do not exceed the hard stop;
+- successful, manually dispatched isolated restore-rehearsal and stateful-staging runs for the exact candidate commit, with the candidate Git tree matching the `main` release tree;
+- service-key permission evidence and a reviewed Queue configuration reference;
+- explicit release authorization and explicit authorization to reconcile the Queue bindings declared in `wrangler.toml`.
+
+The preflight validates reference formats, age, numeric headroom, GitHub run results, and tested commit/tree identity. It does **not** download/decrypt the external backup, recompute the archive checksum, query Cloudflare, or prove the semantic contents of operator-supplied evidence links. Those must be independently inspected before dispatch. The production Environment reviewer approval is separate. No preflight workflow has been dispatched as part of this preparation; see [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the remaining NO-GO release gates.
