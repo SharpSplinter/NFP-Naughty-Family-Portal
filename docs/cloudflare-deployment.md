@@ -12,7 +12,7 @@
 - **Git repository:** `SharpSplinter/Naughty-Company-Dashboard`
 - **Production branch:** `main`
 
-The legacy Pages project remains preserved as a static prior deployment, but its current bundle targets the retired `naughty-company-api` hostname. It is not yet a verified end-to-end fallback. To use it as a fallback, either restore a compatibility Worker at the previous hostname or rebuild/redeploy that Pages project against `naughtyfamily-api` and verify it. The new `naughtyfamily` project is configured for `main` with automatic production/preview deployments disabled and has not yet received a production deployment. Do not point a staging Worker or acceptance database at production resources.
+The legacy Pages project `naughty-company-dashboard` was rebuilt from `main` and published on 2026-11-17 as deployment `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`. Its compiled frontend and saved production Pages build variable now use `https://naughtyfamily-api.kboone801.workers.dev`, replacing the retired `naughty-company-api` hostname. This repairs the static frontend-to-API URL wiring. No login or authenticated API smoke was run, so treat this as a repaired Company Dashboard fallback candidate, not a fully end-to-end-verified portal rollback. The separate `naughtyfamily` project is configured for `main` with automatic production/preview deployments disabled and still has no production deployment. Do not point a staging Worker or acceptance database at production resources.
 
 Pages build settings for the new target:
 
@@ -33,76 +33,18 @@ The Worker maps Torn API errors into stable HTTP statuses and accepts browser re
 
 Members authenticate with their own limited-access Torn API key. The Worker validates Naughty Souls faction membership, encrypts saved Torn credentials at rest, and issues random bearer session tokens while storing only SHA-256 hashes in D1. The browser stores the session token locally; raw Torn keys are not stored in browser storage. Dashboard sessions expire after 30 days.
 
-All Torn sign-ins start with standard-user permissions. The primary owner Torn player ID (`351311`) is an explicit allowlist for *requesting* administrator elevation, but the player ID alone never grants administrator access. A successful administrator step-up applies only to the current session for 30 minutes. Every `/api/admin/*` request checks that server-side elevation and its expiry; the frontend is not trusted to authorize administrator work. Elevation can be revoked explicitly and is removed when the session is signed out. Five failed attempts in a 15-minute window trigger a 15-minute lockout for that owner/client-IP attempt key. Raw passwords, usernames, and password hashes are never written to D1 or application logs.
+### Portal administrator authorization
 
-### Configure administrator step-up credentials
+The portal branch uses Torn-identity-backed administrator roles rather than a separate administrator password:
 
-**Do not merge/deploy the feature until both `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are configured on the production Worker.** If either is missing or invalid, administrator elevation fails closed and administrator APIs remain unavailable. Ordinary Torn sign-in continues to use standard-user permissions.
+1. A member signs in with their own Torn API key. The Worker validates the key, confirms the player's identity and Naughty Souls faction membership, and creates a session tied to that verified Torn player ID.
+2. Administrator privilege is a separate active role in the D1 `administrators` registry. Every `/api/admin/*` request checks the authenticated session's player ID against that registry.
+3. The owner bootstrap is restricted to the configured `ADMIN_PLAYER_ID` and uses insert-if-absent semantics. It does not silently re-enable an administrator whose registry row was revoked.
+4. A Torn player ID alone is not an authentication credential. The member's Torn API key proves account control; the verified player ID is the identity to which the administrator role is attached.
 
-**Important deployment behavior:** Cloudflare's `wrangler secret put` command immediately deploys a new version of the currently targeted Worker. It does not deploy the feature branch unless that branch's code has already been deployed. Treat setting these secrets as a production operation and do it during an approved deployment window. See the [Cloudflare Worker secrets documentation](https://developers.cloudflare.com/workers/configuration/secrets/).
+The portal code does not require `ADMIN_USERNAME` or `ADMIN_PASSWORD_HASH`. Do not follow legacy instructions to create or rotate those secrets as a portal cutover step. Changing Worker secrets can immediately publish a new version of the currently targeted Worker.
 
-Run the following from the repository root in a private interactive terminal:
-
-1. Verify that Wrangler is authenticated to the intended Cloudflare account with `npx wrangler whoami`. The repository's `wrangler.toml` names the Worker `naughtyfamily-api`; the commands below target that Worker explicitly.
-2. Choose a unique administrator passphrase of at least 8 characters, containing at least one letter, one digit, and one punctuation/symbol character. Do not use three or more ascending or descending letters/digits in a row (for example `abc`, `cba`, `123`, or `321`). Do not send it in chat or commit it to the repository.
-3. Generate the hash by running:
-
-   ```sh
-   node scripts/generate-admin-password-hash.mjs
-   ```
-
-   At `Administrator password (input hidden):`, type the passphrase and press Enter. The helper does not echo the passphrase and rejects passwords that fail the composition or sequence rules. It prints one hash line beginning with `pbkdf2-sha256$210000$` and containing a random salt and derived hash. Keep that line available for the next step; do not commit or publish it.
-
-4. Set the separate administrator username:
-
-   ```sh
-   npx wrangler secret put ADMIN_USERNAME --name naughtyfamily-api
-   ```
-
-   At Wrangler's `Enter a secret value:` prompt, type the chosen administrator username and press Enter.
-
-5. Set the generated hash:
-
-   ```sh
-   npx wrangler secret put ADMIN_PASSWORD_HASH --name naughtyfamily-api
-   ```
-
-   At Wrangler's `Enter a secret value:` prompt, paste the **entire one-line output** from the hash helper and press Enter. Paste it into Wrangler's prompt, not into the shell command. The hash contains `$` characters, which shells can interpret when the value is entered as a command argument.
-
-6. Confirm that both names are configured:
-
-   ```sh
-   npx wrangler secret list --name naughtyfamily-api
-   ```
-
-   This lists secret names/types, not their values. Check that `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are listed; do not print, screenshot, or share secret values.
-
-### Android-only path (no desktop computer)
-
-You can generate the hash locally on an Android phone. Install Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux GitHub releases](https://github.com/termux/termux-app/releases). Avoid unofficial APK download sites, and do not mix Termux installations from different sources.
-
-Open Termux and run these commands one at a time:
-
-```sh
-pkg update
-pkg install git nodejs
-git clone https://github.com/SharpSplinter/Naughty-Company-Dashboard.git
-cd Naughty-Company-Dashboard
-git checkout main
-node scripts/generate-admin-password-hash.mjs
-```
-
-At the hidden prompt, type your new passphrase and press Enter. Copy only the generated `pbkdf2-sha256$...` hash line. Never paste the password or hash into ChatGPT, a message, or a screenshot. The hash is still sensitive because it can be targeted for offline password guessing, so store it only as a Worker Secret. Keep the hash temporarily on your phone and clear it from the clipboard after you have entered it into Cloudflare.
-
-To configure the secrets without a desktop, open the [Cloudflare dashboard](https://dash.cloudflare.com/) in your Android browser. If needed, use the browser menu's **Desktop site** option. Go to **Workers & Pages** > **naughtyfamily-api** > **Settings** > **Variables and Secrets**. Choose **Add**, select type **Secret**, and add `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`. Add both before clicking **Deploy** once.
-
-**Do not click Deploy until the production configuration change is approved.** Cloudflare deploys a new version of the currently deployed Worker when you save and deploy secret changes; this does not deploy the PR's feature-branch code. See [Cloudflare's official secret setup guide](https://developers.cloudflare.com/workers/configuration/secrets/).
-
-Do not place either value in `wrangler.toml`, a public `vars` entry, a frontend environment variable, a GitHub Actions output, or source control. Do not send the password or hash in chat. If you are not ready for Wrangler to publish a new version of the currently deployed Worker, do not run `secret put` yet.
-
-After the feature is deployed, verify that a normal Torn session is non-admin by default, only the allowlisted owner identity can attempt elevation, correct credentials elevate that session, incorrect credentials are rejected and rate-limited, a standard session receives HTTP 403 from admin APIs, and explicit revocation, sign-out, or expiry removes elevated access.
-
-CORS restrictions are useful browser hygiene but are not a replacement for authentication. The regular sign-out action revokes the current server-side session. An authenticated all-devices action revokes every active session for that player. Removing saved credentials preserves company history.
+**Production boundary:** until the portal Worker, its approved D1 migrations and the new `naughtyfamily` Pages frontend are released together, the live Company Dashboard remains on its legacy administrator flow. Staging acceptance of the registry flow does not switch production authorization. Do not attempt an interim production administrator-data or secret change without a separate approved release plan.
 
 ## Local development
 
