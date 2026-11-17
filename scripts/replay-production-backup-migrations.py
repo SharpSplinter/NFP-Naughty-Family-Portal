@@ -89,8 +89,12 @@ def replay_backup(
 
     connection = sqlite3.connect(":memory:")
     try:
-        connection.execute("PRAGMA foreign_keys = ON")
+        # D1 exports can insert child rows before a referenced parent table is
+        # declared later in the dump. Disable FK enforcement only during the
+        # pristine snapshot import, then turn it back on before migration replay.
+        connection.execute("PRAGMA foreign_keys = OFF")
         connection.executescript(sql_path.read_text(encoding="utf-8"))
+        connection.execute("PRAGMA foreign_keys = ON")
 
         applied, ledger_columns = read_migration_ledger(connection)
         if len(applied) != 16:
