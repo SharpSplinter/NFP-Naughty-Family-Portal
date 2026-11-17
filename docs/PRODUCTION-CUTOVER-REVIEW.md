@@ -659,3 +659,18 @@ The browser audit used a local production preview with mocked authenticated sess
 6. The legacy `naughty-company-dashboard` Pages repair still has no authenticated login/API smoke. The new `naughtyfamily` production Pages project still has no production deployment.
 
 No production Worker, Pages project, secret, D1 database, Queue, or production data was changed in this branch-reconciliation and validation step.
+
+
+## 20. 2026-11-17 production deployment evidence gate hardening
+
+The production Worker workflow has been hardened on `portal-rebuild`:
+
+- It remains `workflow_dispatch` only and can run only from `main` for the exact `naughtyfamily-api` target.
+- The job now selects the GitHub Environment named `production`. **Required reviewers and a main-only deployment branch rule must be configured in repository Environment settings before the workflow is eligible for release use.** That Environment configuration could not be inspected or verified through the available GitHub connection during this preparation.
+- Before the first Cloudflare action, `scripts/production-cutover-preflight.mjs` requires an explicit release acknowledgement and Queue-configuration acknowledgement; HTTPS references for the encrypted backup, Time Travel bookmark, current D1 ledger/usage, service-key permission evidence and Queue review; a 64-character backup SHA-256; backup age under 24 hours; D1 usage evidence under 15 minutes old; and a declared D1 read reserve that stays within the operator-confirmed hard stop.
+- The preflight checks that the restore-rehearsal and stateful-staging GitHub Actions runs are completed successful manual dispatches from this repository, both tested the exact declared candidate SHA, and the candidate Git tree matches the current `main` release tree.
+- Unit/contract coverage was added to `scripts/test-production-cutover-preflight.mjs` and included in `npm test`.
+
+**Preflight limitation:** it verifies URL formats, timestamps, checksum syntax, numeric D1 headroom, GitHub run status/commit identity, and tree identity. It does not download or decrypt the external backup, independently recompute its checksum, query Cloudflare, independently prove the content of supplied D1/Time Travel/service-key/Queue evidence references, or call any D1/Queue API. An authorized operator must inspect those external artifacts before dispatch. The production Environment approval is a separate gate, not a substitute for the evidence.
+
+No production workflow was dispatched as part of this hardening. No Worker, Pages project, D1 database, Queue, secret, or production data was changed. Cutover remains **NO-GO** until the encrypted production archive is available, migrations `0013–0037` replay successfully against an isolated restored production copy, stateful staging acceptance and service-key permissions are proven, fresh preflight evidence is collected, Environment reviewers are confirmed, and final owner approval is recorded.
