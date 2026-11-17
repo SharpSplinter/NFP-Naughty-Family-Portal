@@ -24,7 +24,7 @@ assert.match(feature, /full-suite runs are deliberately disabled/);
 assert.match(budget, /HARD_RUN_BUDGET_ROWS = 100000/);
 assert.match(budget, /HARD_DAILY_STOP_ROWS = 4000000/);
 assert.match(budget, /Refusing staging without a measurable D1 budget/);
-assert.match(budget, /deltaRows > state\.runBudgetRows/);
+assert.match(budget, /Math\.max\(deltaRows, Number\(state\.directRowsRead \|\| 0\)\) > state\.runBudgetRows/);
 assert.match(budget, /mode === "watch"/);
 assert.ok(budget.includes('setTimeout(() => resolve({ type: "poll" }), pollIntervalMs)'), "The watchdog must poll D1 analytics while the selected feature is running.");
 assert.match(budget, /D1 budget watchdog stopped the selected feature test/);
