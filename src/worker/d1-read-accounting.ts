@@ -155,7 +155,7 @@ export class D1RequestReadMeter {
     this.maybeEmit()
   }
 
-  private recordResult(result: D1ReadResult, method: keyof Pick<MethodCounts, "first" | "all" | "run" | "batch">): void {
+  private recordResult(result: { meta?: D1ReadMeta }, method: keyof Pick<MethodCounts, "first" | "all" | "run" | "batch">): void {
     this.statementCount += 1
     this.methodCounts[method] += 1
     const read = readMetric(result?.meta, "rows_read", "rowsRead")
