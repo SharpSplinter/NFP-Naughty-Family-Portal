@@ -619,3 +619,43 @@ No D1 API or Queue API was called during this refresh. Therefore, the production
 - Keep PR #152 and production cutover **NO-GO** until the restored-data migration replay, current-candidate stateful feature acceptance, service-key permission verification, fresh backup/bookmark/ledger preflight, final code review and explicit production release approval are complete.
 
 The production Pages recovery and the portal staging Pages publication do not authorize PR merge, production D1 migrations, production Worker deployment, production portal Pages publication, Queue operations, or production secret changes. No such operations were performed in this update.
+
+
+## 19. 2026-11-17 portal branch reconciliation and release-prep validation
+
+### Branch and PR state
+
+- Reconciled `portal-rebuild` with current `main` using merge commit [`8e34071abe0f570a171cfe919ddbc16a92b689ab`](https://github.com/SharpSplinter/Naughty-Company-Dashboard/commit/8e34071abe0f570a171cfe919ddbc16a92b689ab). Its parents are the prior portal head `9cd4271e8d90d2223abdb9a8bcc2ef74a37a26ba` and `main` head `84d96e3cc6849afc1b96864fd2309b4b53ef7657`.
+- The merge commit uses the exact prior portal tree `4d7d0d29c60105720599ff2f4090936e8d84cb1a`; no source file changed during reconciliation. The portal branch already contained the mainline `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` change. Its intentional production Pages target remains `naughtyfamily`; the legacy recovery project remains `naughty-company-dashboard`.
+- GitHub compare now reports `portal-rebuild` **0 commits behind** `main` (merge base `84d96e3`). The branch is 1,077 commits ahead in history.
+- PR #152 remains OPEN and DRAFT, unmerged, and currently mergeable. Its current review scope is 133 changed files, 31,548 additions and 3,082 deletions. Mergeability is not approval; this substantial diff still requires complete human review and explicit owner release approval.
+
+### Latest portal staging Pages publication
+
+- The latest Pages-only staging publication is GitHub Actions [run #44012054870](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012054870), sourced from commit `9cd4271e8d90d2223abdb9a8bcc2ef74a37a26ba`.
+- Cloudflare deployment `55411c48-dc2a-4df1-bcd9-b42b29822ad4` published successfully to `naughtyfamily-staging`: [immutable deployment](https://55411c48.naughtyfamily-staging.pages.dev). The current reconciled branch tree is identical to that published tree, so the merge commit introduced no new frontend artifact requiring another Pages publish.
+- The published bundle's static verification confirmed the staging API hostname. This remains a Pages-only frontend publication, not stateful staging acceptance.
+
+### Offline validation on the reconciled branch head
+
+All of the following were run against merge commit `8e34071abe0f570a171cfe919ddbc16a92b689ab` and passed:
+
+- Push quality gates: [#44012565125](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012565125).
+- Pull-request quality gates: [#44012573023](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012573023).
+- Discord Bot Quality Gates: [#44012573065](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012573065).
+- Seasonal UI / UX Playwright audit: [#44012565109](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012565109). It passed 277/277 assertions across desktop, tablet, mobile and small-mobile views; 32 accessibility scans reported zero axe violations, including zero serious/critical violations; zero page errors. Its two console errors were the intentional HTTP 503 archive-unavailable fixtures for Christmas Town and Halloween, validating the corresponding error states.
+
+The browser audit used a local production preview with mocked authenticated sessions and intercepted API fixtures. The quality gates used local regression/contract tests. The Discord bot gate ran syntax and contract tests only. These workflows did not call the staging or production API, deploy a Worker, execute D1 SQL/reads/migrations, inspect D1 budgets, provision/configure Queues, or send/read/acknowledge Queue messages. The D1-backed acceptance workflow remains manual-only and was not dispatched.
+
+### Cutover status after reconciliation
+
+**Production cutover remains NO-GO.** Branch ancestry is now reconciled and offline validation is green, but the remaining blockers are unchanged:
+
+1. The production-data restore rehearsal still stops at `0012_company_ranking_snapshots.sql`. All 25 source migration files `0013` through `0037` are present in the branch, but they have not been replayed against a restored production-data copy. The encrypted archive/decryption input remains unavailable to the recent review environment. Do not apply these migrations to production as a substitute for the isolated restore rehearsal.
+2. The production `TORN_API_KEY_SERVICE` binding exists, but its live Torn key validity and required permissions have not been verified.
+3. A fresh encrypted production backup/checksum, current Time Travel bookmark, and production D1 migration-ledger preflight remain outstanding. No D1 ledger, bookmark, or usage-counter read was performed during this preparation.
+4. Stateful staging acceptance remains outstanding. No D1-backed feature suite, Queue producer/consumer test, Worker deploy, or API smoke was run. The current D1/Queue quota state is unknown; the prior 2026-11-16 quota alerts are historical and must not be treated as current counters.
+5. PR #152 remains draft and requires full code review, approval, and explicit owner release authorization.
+6. The legacy `naughty-company-dashboard` Pages repair still has no authenticated login/API smoke. The new `naughtyfamily` production Pages project still has no production deployment.
+
+No production Worker, Pages project, secret, D1 database, Queue, or production data was changed in this branch-reconciliation and validation step.
