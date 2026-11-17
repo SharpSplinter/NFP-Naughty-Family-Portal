@@ -674,3 +674,21 @@ The production Worker workflow has been hardened on `portal-rebuild`:
 **Preflight limitation:** it verifies URL formats, timestamps, checksum syntax, numeric D1 headroom, GitHub run status/commit identity, and tree identity. It does not download or decrypt the external backup, independently recompute its checksum, query Cloudflare, independently prove the content of supplied D1/Time Travel/service-key/Queue evidence references, or call any D1/Queue API. An authorized operator must inspect those external artifacts before dispatch. The production Environment approval is a separate gate, not a substitute for the evidence.
 
 No production workflow was dispatched as part of this hardening. No Worker, Pages project, D1 database, Queue, secret, or production data was changed. Cutover remains **NO-GO** until the encrypted production archive is available, migrations `0013–0037` replay successfully against an isolated restored production copy, stateful staging acceptance and service-key permissions are proven, fresh preflight evidence is collected, Environment reviewers are confirmed, and final owner approval is recorded.
+
+
+## 21. 2026-11-17 offline restored-backup migration rehearsal workflow
+
+A dedicated manual workflow now exists at `.github/workflows/restore-production-backup-rehearsal.yml`.
+
+- It runs only from `portal-rebuild` and requires the supplied candidate commit to equal the workflow's exact `github.sha`.
+- It uses the protected GitHub Environment `production-backup` and expects the environment secrets `PRODUCTION_D1_BACKUP_URL` (HTTPS download reference) and `PRODUCTION_D1_BACKUP_PASSWORD` (archive password). Neither secret was read or configured from this preparation session; the environment's reviewer/branch rules were not verified.
+- The default archive and normalized-SQL checksums are the documented 2026-11-14 values: `052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b` and `1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2`. Inputs can be changed only when a different independently verified archive is used.
+- It downloads the encrypted archive to the ephemeral runner, checks its SHA-256, decrypts it with 7-Zip using the protected secret, locates the normalized SQL by its exact SHA-256, and runs `scripts/replay-production-backup-migrations.py`.
+- The replay applies all 25 ordered migrations `0013` through `0037` to an in-memory local SQLite restore. It verifies the starting 16-entry migration ledger, final 41-entry ledger, SQLite `integrity_check`, `foreign_key_check`, preservation of every pre-existing application table, and no decrease in any pre-existing application table's row count.
+- Only an aggregate sanitized JSON report is retained as a 14-day Actions artifact. The encrypted archive, decrypted SQL, and in-memory restored database are not uploaded or retained.
+
+**Limit:** this workflow intentionally performs no Cloudflare API, D1, Queue, Worker, Torn, or Pages operations. It is an offline production-data SQL replay, not an isolated Cloudflare D1 import. A separate manual stateful staging acceptance run from `.github/workflows/deploy-staging-acceptance.yml` remains necessary to validate D1/runtime behavior with its hard D1 budget and bounded feature suite.
+
+The production deploy preflight now accepts only a successful manual run from this exact restore workflow path and a successful manual stateful acceptance run from the exact staging-acceptance workflow path, both for the exact candidate SHA. The tested candidate tree must match the `main` release tree.
+
+The workflow was added but **not dispatched** because the protected backup URL/password are not available in this execution context. Therefore no migration replay result has been produced yet. The D1/Queue quota state remains unknown and no Cloudflare data-plane operation has been performed. Production cutover remains **NO-GO**.
