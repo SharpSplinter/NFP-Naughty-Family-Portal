@@ -66,3 +66,16 @@ The production Worker workflow is `workflow_dispatch`-only on `main` and targets
 - explicit release authorization and explicit authorization to reconcile the Queue bindings declared in `wrangler.toml`.
 
 The preflight validates reference formats, age, numeric headroom, exact GitHub workflow paths/run outcomes, and tested commit/tree identity. The separate manual [offline restore rehearsal workflow](https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/portal-rebuild/.github/workflows/restore-production-backup-rehearsal.yml) now downloads and checks the encrypted archive, decrypts it only on an ephemeral runner, and replays migrations 0013–0037 against a local SQLite restore. It does not call Cloudflare or D1. This local replay does not replace the separate stateful D1 staging acceptance. The production Environment reviewer approval is separate. The `production-backup` Environment must have the `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` secrets configured before the restore workflow can run. The preflight does **not** independently verify external D1/Time Travel/service-key/Queue reference contents or inspect Cloudflare quotas. Those must be independently inspected before dispatch; see [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the remaining NO-GO release gates.
+
+
+### Current production D1 backup (2026-11-17)
+
+The latest manual production D1 export is now available as an encrypted GPG AES-256 archive. The backup is tied to Time Travel bookmark `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`; encrypted archive SHA-256 is `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5`, and the untouched SQL export SHA-256 is `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`.
+
+The export was replayed locally against SQLite with migrations `0013–0037`: 25 migrations passed, the ledger moved from 16 to 41 entries, all 39 pre-existing application tables and their row counts were preserved, `integrity_check` returned `ok`, and `foreign_key_check` returned zero violations. This was a local SQLite rehearsal, not a D1 import or stateful staging acceptance.
+
+To run the repository's GitHub restore workflow against the archive, set these secrets in the protected GitHub Environment named `production-backup`:
+- `PRODUCTION_D1_BACKUP_URL`: the encrypted archive download URL delivered to the owner.
+- `PRODUCTION_D1_BACKUP_PASSWORD`: the separate GPG passphrase delivered to the owner.
+
+Do not put the passphrase in workflow inputs, logs, repository files, or artifacts. The workflow verifies the encrypted archive checksum, decrypts only on the ephemeral runner, verifies the raw SQL export checksum, replays migrations locally, and retains only the sanitized report. The encrypted download link delivered in chat is a file-transfer link, not the long-term backup location; retain a copy in restricted storage under the owner's control.
