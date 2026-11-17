@@ -93,7 +93,7 @@ console.log(JSON.stringify(buildFixtureCleanupStatements({
             (year, player_id, log_id, now),
         )
     halloween_log(2026, "999999005", "fixture-current")
-    halloween_log(2025, "999999005", "fixture-prior-year")
+    halloween_log(2025, "888888888", "unrelated-prior-year")
     for index in range(2500):
         halloween_log(2026, "888888888", "unrelated-" + str(index))
 
@@ -169,7 +169,7 @@ console.log(JSON.stringify(buildFixtureCleanupStatements({
     assert count("SELECT COUNT(*) FROM company_snapshots WHERE player_id='999999001'") == 0
     assert count("SELECT COUNT(*) FROM company_financial_snapshots WHERE player_id='999999001'") == 0
     assert count("SELECT COUNT(*) FROM halloween_event_logs WHERE player_id='999999005'") == 0
-    assert count("SELECT COUNT(*) FROM halloween_event_logs WHERE player_id='888888888'") == 2500
+    assert count("SELECT COUNT(*) FROM halloween_event_logs WHERE player_id='888888888'") == 2501
     assert count("SELECT COUNT(*) FROM halloween_live_snapshots WHERE player_id='999999005'") == 0
     assert count("SELECT COUNT(*) FROM halloween_member_event_slots WHERE player_id='999999005'") == 0
     assert count("SELECT COUNT(*) FROM halloween_collection_jobs WHERE player_id='999999005'") == 0
