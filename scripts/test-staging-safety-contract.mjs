@@ -41,9 +41,7 @@ assert.match(fixtures, /maximumRows <= 10000/);
 assert.match(cleanup, /cleanup identity preflight/);
 assert.match(seed, /fixture identity preflight/);
 
-// The targeted Gym-only retest must reuse the already deployed staging
-// services. It may not provision Queues, apply migrations, deploy Worker,
-// or deploy Pages while validating only fixture-harness changes.
+// Gym-only and cleanup-only runs must reuse the existing staging services.
 for (const step of [
   "Provision isolated staging Queues",
   "Apply pending migrations to staging D1 only",
@@ -55,22 +53,17 @@ for (const step of [
   const next = workflow.indexOf("\n      - name: ", start + 1);
   const block = workflow.slice(start, next === -1 ? workflow.length : next);
   assert.match(block, /^        if: inputs\.feature_suite != 'gym-training' && inputs\.feature_suite != 'cleanup-only'$/m,
-    step + " must be skipped for both harness-only retest and cleanup-only recovery.");
+    step + " must be skipped for Gym-only and cleanup-only modes.");
 }
-assert.match(workflow, /name: Verify the staging Pages origin/);
-assert.match(workflow, /name: Run exactly one selected feature suite/);
-const seedStart = workflow.indexOf("      - name: Seed isolated authenticated private-history fixtures\\n");
-const seedEnd = workflow.indexOf("\\n      - name: ", seedStart + 1);
-assert.match(workflow.slice(seedStart, seedEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
-const playwrightStart = workflow.indexOf("      - name: Install Playwright Chromium for staging viewport checks\\n");
-const playwrightEnd = workflow.indexOf("\\n      - name: ", playwrightStart + 1);
-assert.match(workflow.slice(playwrightStart, playwrightEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
-const featureStart = workflow.indexOf("      - name: Run exactly one selected feature suite\\n");
-const featureEnd = workflow.indexOf("\\n      - name: ", featureStart + 1);
-assert.match(workflow.slice(featureStart, featureEnd), /^        if: inputs\\.feature_suite != 'cleanup-only'$/m);
-assert.match(workflow, /inputs\\.feature_suite == 'cleanup-only'/);
-assert.match(workflow, /STAGING_FIXTURE_CREATED_AT="\\$\\{STAGING_CLEANUP_ONLY_CREATED_AT\\}" node scripts\\/cleanup-staging-private-history\\.mjs/);
-
+assert.match(workflow, /- cleanup-only/);
+assert.match(workflow, /fixture_created_at/);
+assert.match(workflow, /- name: Verify the staging Pages origin/);
+assert.match(workflow, /- name: Seed isolated authenticated private-history fixtures\n\s+if: inputs\.feature_suite != 'cleanup-only'/);
+assert.match(workflow, /- name: Install Playwright Chromium for staging viewport checks\n\s+if: inputs\.feature_suite != 'cleanup-only'/);
+assert.match(workflow, /- name: Run exactly one selected feature suite\n\s+if: inputs\.feature_suite != 'cleanup-only'/);
+assert.match(workflow, /inputs\.feature_suite == 'cleanup-only'/);
+assert.ok(workflow.includes("STAGING_FIXTURE_CREATED_AT=" + '"' + "$" + "{STAGING_CLEANUP_ONLY_CREATED_AT}" + '" node scripts/cleanup-staging-private-history.mjs'),
+  "Cleanup-only must pass the exact supplied seed timestamp.");
 
 // Direct Wrangler counters are the authoritative per-command read meter.
 // Both fixture scripts must receive the same persistent state file as the
