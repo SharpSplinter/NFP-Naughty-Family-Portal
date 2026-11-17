@@ -1,7 +1,7 @@
 # Production backup, migration, rollback and cutover review
 
 **Original review date:** 2026-11-03  
-**State refresh:** 2026-11-16 02:37 UTC (selected staging acceptance, Torn calendar probe, migration inventory, rollback Pages configuration and outstanding restore/service-key gates refreshed)
+**State refresh:** 2026-11-17 UTC (production legacy Pages API wiring repair, portal Pages-only staging publication, current PR/base relationship and release blockers refreshed)
 **Scope:** PR #152, branch `portal-rebuild`  
 **Decision:** **NO-GO for production cutover at this review.** The production Time Travel current bookmark and live D1/Worker/Pages baseline have been rechecked, and the release workflow/configuration safeguards are present. PR #152 remains OPEN/DRAFT with no submitted GitHub review approvals. The latest Halloween/Revitalize changes have not had a functional staging acceptance run on the current release candidate, production service-key fallback acceptance remains to be confirmed, and explicit approval to merge/deploy has not been given. This review performs no production mutation.
 
@@ -82,7 +82,7 @@ The previous `.github/workflows/worker-deploy.yml` ran on pushes to `main`, appl
 
 The PR branch now makes this workflow `workflow_dispatch` only. It requires:
 - The workflow to be run from `main`.
-- The explicit target `naughty-company-api`.
+- The explicit target `naughtyfamily-api`.
 - An operator-supplied reference to a verified production backup stored outside this repository.
 
 The workflow lists pending migrations, applies them, lists the ledger again, deploys the Worker, and checks production health plus encryption readiness. The backup-reference input is a manual gate only: the workflow does not create, download, inspect, or validate the backup. The operator must complete those checks independently before dispatching it. This safeguard takes effect when the PR's workflow change is merged to `main`.
@@ -238,7 +238,7 @@ The active production Worker version observed during the 2026-11-13 refresh was 
 Cloudflare supports:
 
 ```sh
-npx wrangler rollback <PREVIOUS_VERSION_ID> --name naughty-company-api
+npx wrangler rollback <PREVIOUS_VERSION_ID> --name naughtyfamily-api
 ```
 
 A Worker rollback changes code deployment, not D1 schema or data. Cloudflare also warns that bindings are not rolled back and older code may fail against changed data structures. Prefer a forward-fix migration when the schema has changed, and only roll code back after confirming compatibility with the migrated schema.
@@ -382,7 +382,7 @@ Together with the previously reviewed migrations 0012–0025, this brings the po
 
 **NO-GO for production cutover pending feature-specific acceptance, the service-key decision, and explicit release approval.** The manual isolated staging acceptance on the synchronized branch passed. The branch synchronization and this staging deployment do not authorize a production change. The public global-ranking path still prefers `TORN_API_KEY_FULL_ACCESS` and falls back to `TORN_API_KEY_CUSTOM`; the production Worker does not currently have the dedicated Full Access binding. Functionally accept the configured fallback in isolated staging or supply and test a dedicated compatible Full Access service key.
 
-The next controlled sequence is: complete the feature-specific checks listed above; resolve the service-key question; obtain explicit release approval; re-read production's current bookmark and exact migration ledger immediately before the change; then, only after approval, merge PR #152 and manually dispatch the protected production Worker workflow from `main` with the explicit `naughty-company-api` target and independently verified external backup reference. Publish the separate `naughtyfamily` Pages target only after production API health is confirmed. Keep the legacy Pages deployment available as the UI fallback.
+The next controlled sequence is: complete the feature-specific checks listed above; resolve the service-key question; obtain explicit release approval; re-read production's current bookmark and exact migration ledger immediately before the change; then, only after approval, merge PR #152 and manually dispatch the protected production Worker workflow from `main` with the explicit `naughtyfamily-api` target and independently verified external backup reference. Publish the separate `naughtyfamily` Pages target only after production API health is confirmed. Keep the legacy Pages deployment available as the UI fallback.
 
 No production SQL writes, migrations, Worker/Pages deployments, restores, secret changes or PR merge were performed during this refresh.
 
@@ -572,3 +572,50 @@ This supersedes the earlier 91% warning in Section 16. The earlier read-only Que
 Do not purge messages, detach consumers, delete queues, or disable production schedules as a quota workaround. Those are independent service/configuration changes and could interrupt expected processing; they were not performed. No Queue messages were sent, received, acknowledged, purged, or replayed in response to this alert. No Queue consumer, producer, Worker, Pages, secret, or production schedule was changed.
 
 Recheck account-level Queue usage after **2026-11-17 00:00 UTC** before resuming queue-backed staging acceptance or manual collection work. If service must resume before the reset, confirm that the Workers Paid upgrade has actually taken effect first. Keep D1 reads independently paused until the D1 counter has also reset and been rechecked; the Queues reset does not reset D1 usage ahead of its own daily reset.
+
+
+## 18. 2026-11-17 production Pages recovery and portal staging publication
+
+This section supersedes the earlier statements in Sections 3, 4, 7, 8, 13, 14 and 15 about the current legacy Pages bundle still targeting the removed `naughty-company-api` Worker. The historical descriptions above are retained as an audit trail.
+
+### Production Company Dashboard Pages-only recovery
+
+- The live production `naughty-company-dashboard` Pages project was rebuilt from `main` and successfully deployed on 2026-11-17. GitHub Actions run [#44010742896](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44010742896) completed successfully on commit `84d96e3cc6849afc1b96864fd2309b4b53ef7657`.
+- Cloudflare Pages deployment: `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`, immutable URL `https://02c82647.naughty-company-dashboard.pages.dev`, production stage `success`.
+- The deployed frontend was built with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`. The Pages project's saved production environment variable was also updated to that same API URL, preventing a later build from reintroducing the retired hostname.
+- This was Pages-only. The production Worker, D1, Queues, secrets, and production data were not changed. The existing Company Dashboard UI remains on the legacy Pages project; the separate portal target remains `naughtyfamily`.
+- The static Pages publish and saved API URL are verified. No member login or authenticated API smoke was run as part of this repair. Treat the legacy site as a repaired rollback candidate, not as a fully end-to-end-tested portal rollback.
+
+### Portal branch Pages-only staging publication
+
+- Current branch head at deployment: `portal-rebuild` commit `576b188ee5eb5f72ad01554f8579ae9b9c2df59a`.
+- GitHub Actions [Pages-only staging run #44011739256](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44011739256) completed successfully.
+- Cloudflare deployment: `f2ec0ae1-a263-4f6c-b2e4-480effc246eb`, immutable URL `https://f2ec0ae1.naughtyfamily-staging.pages.dev`, published to the `naughtyfamily-staging` project. The workflow's static verification confirmed the published JavaScript bundle contains `naughtyfamily-api-staging.kboone801.workers.dev`.
+- Typecheck, the offline Gym Training/calculator regression, frontend build, staging-target assertions and static published-bundle verification all passed.
+- The workflow did not call the staging API or deploy a Worker. It performed no D1 SQL, reads, migrations, backup operations or budget API calls, and no Queue provisioning/configuration or message operations. This confirms the staging frontend publication only; it is not a new stateful API/D1/Queue acceptance result.
+
+### Current release metadata checked read-only
+
+| Resource | Observed state |
+|---|---|
+| Production API Worker | `naughtyfamily-api` |
+| Latest recorded production Worker deployment | `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093` |
+| Active Worker version in that deployment | `54f02948-73b3-4535-bd71-8d9683ad62c9`, 100% traffic, deployed 2026-11-15 |
+| Production Worker secret bindings | `TORN_API_KEY_SERVICE`, `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY`, `KEY_ENCRYPTION_SECRET` are present by name/type; values and live Torn permissions were not inspected |
+| Legacy Company Dashboard Pages | `naughty-company-dashboard`, latest deployment `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`; saved production API URL now points to `naughtyfamily-api` |
+| New portal production Pages | `naughtyfamily`, configured with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`, still has no production deployment |
+| Portal staging Pages | Latest deployment `f2ec0ae1-a263-4f6c-b2e4-480effc246eb`, sourced from `576b188` |
+
+No D1 API or Queue API was called during this refresh. Therefore, the production D1 migration ledger, current Time Travel bookmark, and current account-wide D1/Queue usage counters have **not** been re-read. The 2026-11-14 migration ledger and backup/rehearsal evidence remain historical only.
+
+### PR/base relationship and remaining cutover gates
+
+- PR #152 remains OPEN and DRAFT. GitHub currently reports it mergeable, but `portal-rebuild` is one commit behind `main`.
+- Current `main` head is `84d96e3cc6849afc1b96864fd2309b4b53ef7657`; that commit updates only `.github/workflows/manual-pages-deploy.yml` to preserve the legacy Company Dashboard Pages target and build it against the active `naughtyfamily-api`. Reconcile this mainline change into the portal release branch and rerun its quality gates before final release approval.
+- The last production-data restore rehearsal replayed the backup only through `0012_company_ranking_snapshots.sql`. It did **not** replay `0013` through `0037` against restored production data. The encrypted archive/decryption input was not available in the recent review environment. This is a hard release blocker until the archive is made available to the authorized operator, the full pending migration chain is replayed against a new isolated restored copy, and row/data preservation plus foreign-key checks are recorded.
+- The production `TORN_API_KEY_SERVICE` binding exists, but the secret value and its actual Torn permissions remain unverified. Binding presence alone is not acceptance evidence.
+- The production D1 migration ledger and bookmark must be freshly read immediately before any approved migration. The 2026-11-14 export/bookmark cannot be treated as a fresh pre-cutover backup. Create and independently verify a current encrypted external export/checksum and capture a fresh Time Travel bookmark in the approved release window.
+- A stateful staging acceptance run was not part of the Pages-only publication. Do not infer that the staging Worker, staging schema or Queue-backed collectors match this frontend bundle. Any additional stateful staging tests require explicit quota review and a narrowly selected suite; do not run broad history scans or the full acceptance workflow under the current no-D1/no-Queue operating guard.
+- Keep PR #152 and production cutover **NO-GO** until the restored-data migration replay, current-candidate stateful feature acceptance, service-key permission verification, fresh backup/bookmark/ledger preflight, final code review and explicit production release approval are complete.
+
+The production Pages recovery and the portal staging Pages publication do not authorize PR merge, production D1 migrations, production Worker deployment, production portal Pages publication, Queue operations, or production secret changes. No such operations were performed in this update.
