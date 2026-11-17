@@ -157,7 +157,7 @@ console.log(JSON.stringify(buildFixtureCleanupStatements({
         if "SCAN " in details.upper():
             raise AssertionError("Cleanup plan contains a scan: " + statement + " => " + details)
 
-    db.executescript("\\n".join(cleanup))
+    db.executescript("\n".join(cleanup))
     def count(query):
         return db.execute(query).fetchone()[0]
 
