@@ -1,0 +1,128 @@
+name: Restore production backup migration rehearsal (local SQLite)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_commit:
+        description: Exact portal-rebuild commit whose migrations are to be replayed
+        required: true
+        type: string
+      archive_sha256:
+        description: SHA-256 of the encrypted GPG backup archive
+        required: true
+        default: "1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97"
+        type: string
+      sql_export_sha256:
+        description: SHA-256 of the untouched SQL export inside the archive
+        required: true
+        default: "8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backup-restore-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  restore-rehearsal:
+    if: github.ref == 'refs/heads/portal-rebuild' && inputs.candidate_commit == github.sha
+    environment:
+      name: production-backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact candidate commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_commit }}
+
+      - name: Verify inputs and protected backup secrets
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          GITHUB_SHA: ${{ github.sha }}
+          BACKUP_URL: ${{ secrets.PRODUCTION_D1_BACKUP_URL }}
+          BACKUP_PASSWORD: ${{ secrets.PRODUCTION_D1_BACKUP_PASSWORD }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          test "$CANDIDATE_COMMIT" = "$GITHUB_SHA"
+          [[ "$CANDIDATE_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]]
+          [[ "$ARCHIVE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+          [[ "$SQL_EXPORT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+          [[ "$BACKUP_URL" == https://* ]]
+          test -n "$BACKUP_PASSWORD"
+          command -v gpg
+          echo "Candidate SHA, protected archive URL/password presence, and expected checksums are valid." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download and verify the encrypted archive
+        env:
+          BACKUP_URL: ${{ secrets.PRODUCTION_D1_BACKUP_URL }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          archive="$RUNNER_TEMP/production-d1-backup.tar.gz.gpg"
+          curl --fail --location --silent --show-error --retry 2 --retry-delay 3 "$BACKUP_URL" --output "$archive"
+          actual="$(sha256sum "$archive" | awk '{print $1}')"
+          test "$actual" = "$ARCHIVE_SHA256" || { echo "::error::Encrypted archive checksum mismatch."; exit 1; }
+          echo "Encrypted archive downloaded and SHA-256 verified."
+
+      - name: Decrypt into ephemeral runner storage
+        env:
+          BACKUP_PASSWORD: ${{ secrets.PRODUCTION_D1_BACKUP_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          archive="$RUNNER_TEMP/production-d1-backup.tar.gz.gpg"
+          decrypted="$RUNNER_TEMP/production-d1-backup.tar.gz"
+          printf '%s\n' "$BACKUP_PASSWORD" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --decrypt --output "$decrypted" "$archive"
+          mkdir -p "$RUNNER_TEMP/production-d1-restore"
+          tar -xzf "$decrypted" -C "$RUNNER_TEMP/production-d1-restore"
+          test -s "$RUNNER_TEMP/production-d1-restore/production-export.sql"
+          echo "Encrypted archive decrypted successfully in ephemeral runner storage."
+
+      - name: Verify untouched SQL export checksum
+        env:
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(sha256sum "$RUNNER_TEMP/production-d1-restore/production-export.sql" | awk '{print $1}')"
+          test "$actual" = "$SQL_EXPORT_SHA256" || { echo "::error::SQL export checksum mismatch."; exit 1; }
+          echo "Untouched SQL export SHA-256 verified."
+
+      - name: Replay migrations 0013-0037 and verify restored data locally
+        env:
+          SQL_FILE: ${{ runner.temp }}/production-d1-restore/production-export.sql
+          SQL_EXPORT_SHA256: ${{ inputs.sql_export_sha256 }}
+        run: |
+          python3 scripts/replay-production-backup-migrations.py \
+            --sql-file "$SQL_FILE" \
+            --migrations-dir migrations/auth \
+            --expected-sql-sha256 "$SQL_EXPORT_SHA256" \
+            --report "$RUNNER_TEMP/production-restore-rehearsal-report.json"
+
+      - name: Publish sanitized rehearsal report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-restore-migration-rehearsal
+          path: ${{ runner.temp }}/production-restore-rehearsal-report.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Add sanitized verification summary
+        run: |
+          echo "## Local production-data migration rehearsal" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Encrypted GPG archive SHA-256 verified before extraction." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Untouched D1 SQL export SHA-256 verified before SQLite replay." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Migrations 0013 through 0037 replayed in filename order." >> "$GITHUB_STEP_SUMMARY"
+          echo "- SQLite integrity check, foreign-key check, final migration ledger, and non-decreasing pre-existing table counts verified." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Only the sanitized report is retained as a workflow artifact; backup, SQL, and database remain in ephemeral runner storage." >> "$GITHUB_STEP_SUMMARY"
+          echo "- This workflow uses local SQLite only. It makes no Cloudflare, D1, Worker, Torn, or Queue API calls." >> "$GITHUB_STEP_SUMMARY"
