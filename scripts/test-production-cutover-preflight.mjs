@@ -11,7 +11,11 @@ assert.match(restoreWorkflow, /workflow_dispatch:/);
 assert.match(restoreWorkflow, /environment:\s+name: production-backup/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_URL/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_PASSWORD/);
+assert.match(restoreWorkflow, /GPG AES-256|gpg/i);
+assert.match(restoreWorkflow, /tar -xzf/);
+assert.match(restoreWorkflow, /SQL_EXPORT_SHA256/);
 assert.match(restoreWorkflow, /replay-production-backup-migrations.py/);
+assert.doesNotMatch(restoreWorkflow, /7z x|p7zip/, "The restore workflow must use the new GPG encrypted backup format.");
 assert.ok(!restoreWorkflow.includes("cloudflare/wrangler-action@v4") && !restoreWorkflow.includes("api.cloudflare.com"),
   "The offline restore rehearsal must not call Cloudflare or D1.");
 assert.match(workflow, /workflow_dispatch:/);
