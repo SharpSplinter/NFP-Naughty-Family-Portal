@@ -520,7 +520,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const autoHappyLossReduction = clamp(safeNumber(liveData?.factionBonuses?.gymHappyLossReductionPercent), 0, 100)
   // Use the midpoint of Torn's 40–60% per-train happy-loss range for an
   // estimate, then apply any verified company reduction multiplicatively.
-  // The loss remains an internal sequential input and is not exposed in UI.
+  // The same value is shown in the setup readout and applied sequentially.
   const happyLossPercent = 50 * (1 - autoHappyLossReduction / 100)
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
@@ -905,6 +905,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 onChange={value => setManualStats(current => ({ ...current, [selectedStat]: value }))}
                 hint={liveStatSource + ". Maximum " + fmt(MAX_STAT_INPUT) + " (safe calculator integer). Clear the field to restore the live API value."} testId="training-stat-value" />
               <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{selectedDots ? fmt(selectedDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(selectedGym.energyCost)} energy per individual train</small></div>
+              <div className="tc-readout-field"><span>Estimated happy lost per energy</span><strong data-testid="training-happy-loss-per-energy">{fmt(happyLossPercent, 2)}%</strong><small>Midpoint estimate after verified company happy-loss reductions</small></div>
               <div className="tc-readout-field"><span>Live combat modifier</span><strong>{fmt(safeNumber(liveData?.battleStatModifiers?.[selectedStat]?.percent))}%</strong><small>Combat-only modifiers are not multiplied into the raw-stat gym gain formula.</small></div>
               <label className="tc-field"><span>Gym-gain book</span><select data-testid="training-gym-book-choice" value={gymBookChoice} onChange={event => setGymBookChoice(event.target.value)}>
                 <option value="auto">Use active book from API</option><option value="none">No gym-gain book</option>

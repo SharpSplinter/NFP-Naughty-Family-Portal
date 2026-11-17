@@ -624,10 +624,10 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
 
   const sessionGain = await page.locator(".tc-metric").first().locator("strong").innerText();
   const oneTrainGain = await page.locator(".tc-metric").nth(1).locator("strong").innerText();
-  const happyLossInput = page.locator(".tc-field").filter({ hasText: "Happy lost per energy" }).locator("input");
-  recordAssertion("Training Calculator " + viewportName + ": live Goal Oriented special halves estimated happiness loss", 
-    await happyLossInput.inputValue() === "25" && await happyLossInput.getAttribute("min") === "20" && await happyLossInput.getAttribute("max") === "30",
-    "value=" + await happyLossInput.inputValue() + "; min=" + await happyLossInput.getAttribute("min") + "; max=" + await happyLossInput.getAttribute("max"));
+  const happyLossReadout = await page.getByTestId("training-happy-loss-per-energy").innerText();
+  recordAssertion("Training Calculator " + viewportName + ": live Goal Oriented special halves estimated happiness loss",
+    happyLossReadout.trim() === "25%",
+    happyLossReadout);
   recordAssertion("Training Calculator " + viewportName + ": current gym session produces positive total gain", sessionGain.startsWith("+"), sessionGain);
   recordAssertion("Training Calculator " + viewportName + ": one individual 1× train has its own gain estimate", oneTrainGain.startsWith("+"), oneTrainGain);
   await noOverflow("session");
