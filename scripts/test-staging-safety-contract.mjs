@@ -8,6 +8,10 @@ const budget = readFileSync("scripts/staging-d1-read-budget.mjs", "utf8");
 const fixtures = readFileSync("scripts/staging-private-history-fixtures.mjs", "utf8");
 const seed = readFileSync("scripts/seed-staging-private-history.mjs", "utf8");
 const cleanup = readFileSync("scripts/cleanup-staging-private-history.mjs", "utf8");
+const worker = readFileSync("src/worker/index.ts", "utf8");
+const accounting = readFileSync("src/worker/d1-read-accounting.ts", "utf8");
+const productionWorkerConfig = readFileSync("wrangler.toml", "utf8");
+const stagingWorkerConfig = readFileSync("wrangler.acceptance.toml", "utf8");
 
 assert.match(workflow, /workflow_dispatch:/);
 assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "D1-backed acceptance must never run on pushes or pull requests.");
@@ -80,4 +84,16 @@ for (const step of [
   assert.match(block, /D1_RUN_BUDGET_ROWS:\s+"100000"/);
 }
 
-console.log("PASS staging safety contract: manual-only acceptance, bounded direct Wrangler reads, shared run-budget state, indexed-only fixture cleanup, reserved identity preflight, and no infrastructure mutations for Gym-only or cleanup-only runs.");
+
+assert.match(worker, /new D1RequestReadMeter\(\)/);
+assert.match(worker, /eventType: "fetch"/);
+assert.match(worker, /eventType: "queue"/);
+assert.match(worker, /eventType: "scheduled"/);
+assert.match(accounting, /meta\?\.\[snake\]/);
+assert.match(accounting, /buildFirstRowSql\(sql\)/);
+assert.match(accounting, /context\.waitUntil = \(promise\)/);
+assert.match(accounting, /accountingStatus:/);
+assert.match(accounting, /unsupportedOperations/);
+assert.match(productionWorkerConfig, /\[observability\]\s+enabled = true\s+head_sampling_rate = 1\.0/);
+assert.match(stagingWorkerConfig, /\[observability\]\s+enabled = true\s+head_sampling_rate = 1\.0/);
+console.log("PASS staging safety contract: manual-only acceptance, bounded direct Wrangler reads, shared run-budget state, indexed-only fixture cleanup, reserved identity preflight, no infrastructure mutations for Gym-only or cleanup-only runs, and complete-sampled Worker D1 accounting hooks for all event types.");

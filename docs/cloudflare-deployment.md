@@ -46,6 +46,24 @@ The portal code does not require `ADMIN_USERNAME` or `ADMIN_PASSWORD_HASH`. Do n
 
 **Production boundary:** until the portal Worker, its approved D1 migrations and the new `naughtyfamily` Pages frontend are released together, the live Company Dashboard remains on its legacy administrator flow. Staging acceptance of the registry flow does not switch production authorization. Do not attempt an interim production administrator-data or secret change without a separate approved release plan.
 
+## Worker-side D1 rows-read accounting
+
+Each Worker event now emits one structured `d1_read_accounting` record after its D1 work completes:
+
+- HTTP requests: one summary per request, using a normalized route and the Cloudflare request ID when available.
+- Queue consumers: one summary per queue batch, including the message count.
+- Scheduled events: one summary per cron invocation. The meter waits for tracked `ctx.waitUntil()` work, including admin refresh jobs, before it emits the total.
+
+The count comes from D1 statement metadata, not account analytics deltas. The wrapper records `meta.rows_read` and `meta.rows_written` for `all()`, `run()`, and every statement result returned by `batch()`. D1's `first()` method returns a row without metadata, so the wrapper executes the equivalent query inside an outer `SELECT * FROM (...) LIMIT 1` through `all()`, preserving first-row behavior while retaining the metadata result. The existing Worker `.first()` call sites are SELECT/CTE queries.
+
+The log record includes aggregate rows read/written, statement/method counts, missing metrics, failed statements, unsupported operations, background-task counts, and an `accountingStatus`. It deliberately excludes SQL text, bound values, player IDs and API keys. A record is `incomplete` if a D1 result omits row metrics, a statement fails, a batch returns a mismatched result count, or a code path uses `raw()`/database `exec()` where this wrapper cannot obtain per-statement metadata. Treat any `incomplete` record as a stop condition for quota certification; never count it as zero.
+
+Both `wrangler.toml` and `wrangler.acceptance.toml` enable Workers Observability with `head_sampling_rate = 1.0` so these events are not intentionally sampled. The records are emitted to Cloudflare Workers Logs, not written back to D1, avoiding recursive reads/writes in the application database. To calculate a run total, sum `rowsRead` only across complete `d1_read_accounting` records for the corresponding time window and include fetch, queue and scheduled events. Account-level D1 analytics remains useful as a cross-check, but must not replace these statement-level totals when it under-reports.
+
+**Retention boundary:** Workers Logs are short-term operational telemetry, not a permanent ledger. On Cloudflare's Free Workers Logs allowance, stored logs have a three-day retention period; other plans have different retention allowances. Export the structured records to an approved durable destination (for example, Workers Logpush or an OpenTelemetry destination) before relying on historical totals beyond the available retention window. No external log destination is configured by this code change.
+
+The meter is runtime code only. It has not been deployed to either Worker by this change, and no D1, Queue, or production resource was accessed to validate it.
+
 ## Local development
 
 - Node.js 20+

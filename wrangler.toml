@@ -8,6 +8,7 @@ NCD_DAILY_CACHE_NAMESPACE = "naughty-company-dashboard-production"
 
 [observability]
 enabled = true
+head_sampling_rate = 1.0
 
 [[d1_databases]]
 binding = "DB"

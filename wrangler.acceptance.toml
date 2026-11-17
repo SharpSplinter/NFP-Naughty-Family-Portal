@@ -11,6 +11,7 @@ NCD_DAILY_CACHE_NAMESPACE = "naughtyfamily-acceptance-staging"
 
 [observability]
 enabled = true
+head_sampling_rate = 1.0
 
 [[d1_databases]]
 binding = "DB"
