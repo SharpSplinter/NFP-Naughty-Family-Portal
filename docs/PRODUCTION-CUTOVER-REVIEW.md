@@ -682,8 +682,8 @@ A dedicated manual workflow now exists at `.github/workflows/restore-production-
 
 - It runs only from `portal-rebuild` and requires the supplied candidate commit to equal the workflow's exact `github.sha`.
 - It uses the protected GitHub Environment `production-backup` and expects the environment secrets `PRODUCTION_D1_BACKUP_URL` (HTTPS download reference) and `PRODUCTION_D1_BACKUP_PASSWORD` (archive password). Neither secret was read or configured from this preparation session; the environment's reviewer/branch rules were not verified.
-- The default archive and normalized-SQL checksums are the documented 2026-11-14 values: `052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b` and `1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2`. Inputs can be changed only when a different independently verified archive is used.
-- It downloads the encrypted archive to the ephemeral runner, checks its SHA-256, decrypts it with 7-Zip using the protected secret, locates the normalized SQL by its exact SHA-256, and runs `scripts/replay-production-backup-migrations.py`.
+- The default archive and untouched SQL-export checksums are the fresh 2026-11-17 values: encrypted GPG archive `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5` and SQL export `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`. Inputs can be changed only when a different independently verified archive is used.
+- It downloads the GPG AES-256 encrypted archive to the ephemeral runner, checks its SHA-256, decrypts it using the protected environment secret, verifies the untouched SQL export's exact SHA-256, and runs `scripts/replay-production-backup-migrations.py`.
 - The replay applies all 25 ordered migrations `0013` through `0037` to an in-memory local SQLite restore. It verifies the starting 16-entry migration ledger, final 41-entry ledger, SQLite `integrity_check`, `foreign_key_check`, preservation of every pre-existing application table, and no decrease in any pre-existing application table's row count.
 - Only an aggregate sanitized JSON report is retained as a 14-day Actions artifact. The encrypted archive, decrypted SQL, and in-memory restored database are not uploaded or retained.
 
@@ -691,7 +691,7 @@ A dedicated manual workflow now exists at `.github/workflows/restore-production-
 
 The production deploy preflight now accepts only a successful manual run from this exact restore workflow path and a successful manual stateful acceptance run from the exact staging-acceptance workflow path, both for the exact candidate SHA. The tested candidate tree must match the `main` release tree.
 
-The workflow was added but **not dispatched** because the protected backup URL/password are not available in this execution context. Therefore no migration replay result has been produced yet. The D1/Queue quota state remains unknown and no Cloudflare data-plane operation has been performed. Production cutover remains **NO-GO**.
+The GitHub Actions workflow itself remains **undispatched** because its protected `production-backup` Environment URL/password secrets were not configured from this execution context. A separate manual production export and local SQLite replay have since completed successfully; see Section 23. The preflight still requires the successful exact-commit GitHub workflow run before it will accept the restore evidence for production release. The D1/Queue usage-counter state remains unknown. Production cutover remains **NO-GO**.
 
 
 ## 22. 2026-11-17 latest offline validation after cutover-gate hardening
@@ -706,3 +706,50 @@ Latest branch head at this validation: `f3e2f3f503758ce5257c7fe964035a2f02635548
 - Git comparison reports `portal-rebuild` remains **0 commits behind** `main`. PR #152 remains OPEN/DRAFT and unmerged.
 
 No production or staging Worker/API, D1, Queue, Pages deployment, secret value, or production data operation was performed. No D1/Queue usage counters were queried. The manual restore workflow remains undispatched pending protected archive URL/password availability, and the separate stateful staging acceptance remains outstanding. Production cutover is still **NO-GO**.
+
+
+## 23. 2026-11-17 fresh production export and successful local migration replay
+
+A new manual export was created because the prior 2026-11-14 encrypted archive could not be recovered.
+
+### Fresh production export
+
+- Target verified immediately before export: production D1 database `naughty-company-dashboard`, ID `bbbe128a-c5cc-46ec-b8ef-93860183e795`; Cloudflare reported 40 total tables.
+- Export task started at `2026-11-17T04:12:57.797Z` and completed at `2026-11-17T04:13:02.476Z`. It completed in two uploaded parts.
+- The export's stable Time Travel bookmark was `000004d7-00000aa9-00005126-131d7ed09c8a32272620a726a489` (the D1 API returned `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`; use the latter full token).
+- Untouched D1-compatible SQL export: 14,770,736 bytes; SHA-256 `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`.
+- The D1 export endpoint temporarily reserves the database while it runs. This export completed after the immediate follow-up poll; no other D1 query or Queue operation was run during it.
+
+### Successful migration replay against the fresh snapshot
+
+The exact untouched export was downloaded into an isolated processing sandbox and replayed against local in-memory SQLite 3.46.1 using the repository's `scripts/replay-production-backup-migrations.py` and the `portal-rebuild` migration files. The replay tool's foreign-key handling was corrected to disable enforcement only during import of the raw export (which can insert child rows before the referenced parent table is declared), then re-enable enforcement before applying migrations and performing the final FK check.
+
+<badge color="success">Local replay passed</badge>
+
+- Source code commit used for the replay tooling: `22136fe1d35e589989f689184112c2df03f4eb6c`; tree `356df1ea7242c9d9f28bd34cf7697560aed8dd0b`. The 25 migration files were unchanged between the checked source tree and the later branch head.
+- Starting migration ledger: 16 entries. Migrations `0013` through `0037` all applied in filename order. Final migration ledger: 41 entries.
+- Existing application tables preserved: 39 of 39. Starting application row count: 16,307. Final application row count: 16,313. Existing row counts decreased: zero.
+- SQLite `integrity_check`: `ok`. `foreign_key_check`: zero violations.
+- Final application tables: 75. The 39 pre-existing application tables remained present; new schema objects were added by the migrations.
+- This is a local SQLite replay of the production export, not a Cloudflare D1 import. No pending migration was applied to production.
+
+### Encrypted backup package
+
+- Archive: `ncd-prod-d1-backup-2026-11-17.tar.gz.gpg`.
+- The archive contains the untouched SQL export, a manifest with the D1 ID/bookmark/checksums and replay commit, and the sanitized migration replay report.
+- Encryption: GnuPG symmetric AES-256, S2K mode 3, SHA-512.
+- Encrypted archive size: 1,281,414 bytes. SHA-256: `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5`.
+- Decrypt-and-byte-compare verification passed. The uploaded encrypted file was downloaded again and independently matched the same size and SHA-256.
+- The encrypted file download link and its separate passphrase were delivered directly to the owner in the conversation. Neither the SQL export nor its passphrase is committed to the repository.
+
+### Remaining release requirements
+
+The old missing-archive blocker is resolved: a current export exists and migrations `0013–0037` passed a local SQLite replay against it. However:
+
+1. The protected GitHub Environment `production-backup` still needs the encrypted archive URL and passphrase set as `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` if the exact replay is to be recorded as a GitHub Actions workflow run. The manual workflow was not dispatched in this execution.
+2. Stateful staging acceptance against the current candidate remains separate and outstanding. The local SQLite replay does not prove Cloudflare D1 runtime behavior or Queue consumers.
+3. Current account-wide D1 rows-read usage and the deployment reserve were not queried; no present quota value is asserted. Recheck with the hard stop immediately before any stateful staging test or production change.
+4. Production `TORN_API_KEY_SERVICE` permission evidence, reviewed Queue configuration, protected Environment reviewer/main-branch rules, full PR review, and explicit owner release approval remain outstanding.
+5. PR #152 remains OPEN/DRAFT. Production cutover remains **NO-GO**.
+
+The export did not update production data. No D1 migrations, Worker deployment, Queue provisioning/configuration/message operations, Pages deployment, or secret changes were performed. The only production D1 data operation in this step was the requested export.
