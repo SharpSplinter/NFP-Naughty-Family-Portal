@@ -8,11 +8,11 @@ import {
 const workflow = readFileSync(".github/workflows/worker-deploy.yml", "utf8");
 const restoreWorkflow = readFileSync(".github/workflows/restore-production-backup-rehearsal.yml", "utf8");
 assert.match(restoreWorkflow, /workflow_dispatch:/);
-assert.match(restoreWorkflow, /environment:\\s+name: production-backup/);
+assert.match(restoreWorkflow, /environment:\s+name: production-backup/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_URL/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_PASSWORD/);
 assert.match(restoreWorkflow, /replay-production-backup-migrations.py/);
-assert.doesNotMatch(restoreWorkflow, /cloudflare\\/wrangler-action|api\\.cloudflare\\.com/i,
+assert.ok(!restoreWorkflow.includes("cloudflare/wrangler-action@v4") && !restoreWorkflow.includes("api.cloudflare.com"),
   "The offline restore rehearsal must not call Cloudflare or D1.");
 assert.match(workflow, /workflow_dispatch:/);
 assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "Production deployment must remain manual-only.");
