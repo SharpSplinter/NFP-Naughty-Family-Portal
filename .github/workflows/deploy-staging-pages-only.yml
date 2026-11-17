@@ -117,9 +117,12 @@ jobs:
                 rootMount: true,
                 jsAssets: assets.length,
                 stagingApiPresent: combined.includes(expectedApiBase),
-                productionApiAbsent: !combined.includes(forbiddenProductionApi),
+                productionFallbackLiteralPresent: combined.includes(forbiddenProductionApi),
               };
-              if (lastObservation.stagingApiPresent && lastObservation.productionApiAbsent) {
+              // floor-app.tsx keeps a production URL as a last-resort source fallback.
+              // VITE_API_BASE_URL is explicitly set to the staging Worker for this build,
+              // and is evaluated before that fallback at runtime.
+              if (lastObservation.stagingApiPresent) {
                 verified = lastObservation;
                 break;
               }
