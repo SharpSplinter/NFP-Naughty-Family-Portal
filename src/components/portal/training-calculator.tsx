@@ -1211,41 +1211,59 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
       {activeTab === "happy" && <main className="tc-layout">
         <div className="tc-results-column">
-          <Panel title="99K Happy Jump sequence" eyebrow="ITEM ORDER MATTERS" description="All happiness items are applied before Ecstasy. Ecstasy is the final consumable immediately before gym training.">
+          <Panel title="99K Happy Jump sequence" eyebrow="PROJECTION INPUTS ONLY" description="Every quantity, starting happiness and training choice is a scenario input. Live data is limited to your battle stats and Item Market prices.">
             <div className="tc-happy-meter">
               <div className="tc-happy-meter-top"><span>Projected happiness before training</span><strong>{fmt(happyJump.finalHappy)}</strong></div>
               <div className="tc-meter-track"><i style={{ width: (happyJump.finalHappy / HAPPY_CAP * 100) + "%" }} /></div>
               <div className="tc-happy-meter-foot"><span>0 happy</span><span>99,999 maximum</span></div>
             </div>
             <div className="tc-form-grid">
-              <TextNumberField label="Starting happiness" value={manualHappy} fallbackValue={happyBar ? happyBar.current : null}
-                onChange={setManualHappy} max={HAPPY_CAP} hint="Automatically uses your live Torn happy bar." testId="training-current-happy" />
-              <div className="tc-readout-field"><span>Xanax planned</span><strong>{fmt(xanaxCount)} × +75 happy</strong><small>Quantity comes from Energy Supply.</small></div>
-              <div className="tc-readout-field"><span>FHC planned</span><strong>{fmt(fhcCount)} × +500 happy</strong><small>Quantity comes from Energy Supply.</small></div>
-              <NumberField label="Erotic DVDs" value={dvdCount} onChange={setDvdCount} min={0} max={maximumDvdCount}
-                hint={"Maximum " + maximumDvdCount + " at the current booster-cooldown budget. Each gives " + fmt(dvdHappy) + " happy."} testId="training-dvd-count" />
-              <label className="tc-field"><span>Happy per Erotic DVD</span><select data-testid="training-dvd-happy" value={manualDvdHappy === null ? "auto" : String(manualDvdHappy)}
-                onChange={event => setManualDvdHappy(event.target.value === "auto" ? null : Number(event.target.value))}>
-                <option value="auto">Auto · {fmt(dvdHappy)} happy</option><option value="2500">2,500 · standard</option><option value="5000">5,000 · 10★ Adult Novelties</option>
-              </select><small className="tc-hint">{manualDvdHappy === null && currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10
-                ? "Auto-detected from your current 10★ Adult Novelties job." : manualDvdHappy === null ? "Auto uses standard 2,500 happy unless your live job is 10★ Adult Novelties." : "Manual scenario override."}</small></label>
-              <NumberField label="Yellow Easter Eggs" value={yellowEggCount} onChange={setYellowEggCount} min={0} max={maximumYellowEggCount}
-                hint={"Each adds +10,000 happy and 6h booster cooldown. Maximum " + maximumYellowEggCount + " by remaining cooldown."} testId="training-yellow-egg-count" />
-              <NumberField label="Poison Mistletoe uses" value={mistletoeCount} onChange={setMistletoeCount} min={0} max={maximumMistletoeCount}
-                hint={"Maximum " + maximumMistletoeCount + " from the target's current happy. Each use transfers 25% of their remaining happy."} testId="training-mistletoe-count" />
-              <NumberField label="Target's current happiness" value={targetHappy} onChange={setMistletoeTargetHappy} min={0} max={HAPPY_CAP}
-                hint="Required to estimate Poison Mistletoe. Each use reduces the target's remaining happy by 25%." testId="training-mistletoe-target" />
-              <NumberField label="Other flat happiness" value={otherHappy} onChange={setOtherHappy} min={0} max={maximumOtherHappy}
-                hint={"Optional confirmed happiness. Maximum " + fmt(maximumOtherHappy) + " remaining before the 99,999 cap."} testId="training-other-happy" />
-              <label className="tc-check-field"><input type="checkbox" data-testid="training-ecstasy" checked={ecstasy} onChange={event => setEcstasy(event.target.checked)} />
-                <span><strong>Use Ecstasy last</strong><small>Doubles the accumulated happiness, capped at 99,999. Wait for the Xanax drug cooldown to clear before taking Ecstasy.</small></span>
+              <NumberField label="Projected starting happiness" value={happyJumpStartingHappy} onChange={setHappyJumpStartingHappy} min={0} max={HAPPY_CAP}
+                hint="Enter the happiness you expect before consuming any items. This does not read your live Happy bar." testId="training-current-happy" />
+              <NumberField label="Projected Xanax doses" value={happyJumpXanaxCount} onChange={setHappyJumpXanaxCount} min={0} max={20}
+                hint="Each projected Xanax adds +75 happiness." testId="training-happy-xanax-count" />
+              <NumberField label="Projected Feathery Hotel Coupons" value={happyJumpFhcCount} onChange={setHappyJumpFhcCount} min={0} max={20}
+                hint="Each projected FHC adds +500 happiness." testId="training-happy-fhc-count" />
+              <NumberField label="Projected Erotic DVDs" value={happyJumpDvdCount} onChange={setHappyJumpDvdCount} min={0} max={20}
+                hint={"Each projected DVD adds " + fmt(happyJumpDvdHappy) + " happiness."} testId="training-dvd-count" />
+              <label className="tc-field"><span>Projected happy per Erotic DVD</span><select data-testid="training-dvd-happy" value={String(happyJumpDvdHappy)} onChange={event => setHappyJumpDvdHappy(Number(event.target.value))}>
+                <option value="2500">2,500 · standard</option><option value="5000">5,000 · 10★ Adult Novelties scenario</option>
+              </select><small className="tc-hint">Manual scenario choice. No current company/job data is read.</small></label>
+              <NumberField label="Projected Yellow Easter Eggs" value={happyJumpYellowEggCount} onChange={setHappyJumpYellowEggCount} min={0} max={20}
+                hint="Each adds +10,000 happiness." testId="training-yellow-egg-count" />
+              <NumberField label="Projected Poison Mistletoe uses" value={happyJumpMistletoeCount} onChange={setHappyJumpMistletoeCount} min={0} max={happyJumpMaximumMistletoeCount}
+                hint={"Each use transfers 25% of the target's remaining projected happiness. Maximum " + happyJumpMaximumMistletoeCount + " uses."} testId="training-mistletoe-count" />
+              <NumberField label="Target's projected starting happiness" value={happyJumpTargetHappy} onChange={setHappyJumpTargetHappy} min={0} max={HAPPY_CAP}
+                hint="Enter a scenario value for the target. No target/player live data is used." testId="training-mistletoe-target" />
+              <NumberField label="Other projected flat happiness" value={happyJumpOtherHappy} onChange={setHappyJumpOtherHappy} min={0} max={happyJumpMaximumOtherHappy}
+                hint={"Optional additional happiness. Maximum " + fmt(happyJumpMaximumOtherHappy) + " before the 99,999 cap."} testId="training-other-happy" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-ecstasy" checked={happyJumpEcstasy} onChange={event => setHappyJumpEcstasy(event.target.checked)} />
+                <span><strong>Project Ecstasy last</strong><small>Doubles accumulated happiness, capped at 99,999. This is a scenario toggle and does not inspect drug cooldown.</small></span>
               </label>
             </div>
-            <div className="tc-inline-note"><strong>Sequence:</strong> Xanax → FHC → Erotic DVDs → Yellow Easter Eggs → Poison Mistletoe → other happy → Ecstasy → train. This planner does not assume drug cooldowns can be bypassed.</div>
+            <div className="tc-inline-note"><strong>Projected sequence:</strong> Xanax → FHC → Erotic DVDs → Yellow Easter Eggs → Poison Mistletoe → other happiness → Ecstasy → train. No inventory, bars, job, faction perk or cooldown values are borrowed from another calculator.</div>
+          </Panel>
+          <Panel title="Post-jump training scenario" eyebrow="STAT GAIN PROJECTION">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-happy-stat-select" value={happyJumpStat} onChange={event => setHappyJumpStat(event.target.value as StatKey)}>
+                {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select></label>
+              <label className="tc-field"><span>Gym</span><select data-testid="training-happy-gym-select" value={happyJumpGymId} onChange={event => setHappyJumpGymId(event.target.value)}>
+                {FALLBACK_GYMS.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
+              </select></label>
+              <NumberField label="Projected individual trains" value={happyJumpTrainCount} onChange={setHappyJumpTrainCount} min={0} max={20000}
+                hint="Enter the number of trains you expect to perform after the jump." testId="training-happy-train-count" />
+              <NumberField label="Projected gym-gain modifier" value={happyJumpGymModifier} onChange={setHappyJumpGymModifier} min={0.0001} max={100} step={0.0001}
+                hint="Scenario input only. Enter your expected combined gym/perk multiplier." testId="training-happy-gym-modifier" />
+              <div className="tc-readout-field"><span>Live {happyJumpStatLabel} battle stat</span><strong>{fmt(happyJumpStartingStat, 2)}</strong><small>The only live profile value used by this gain forecast</small></div>
+              <div className="tc-readout-field"><span>Static gym efficiency</span><strong>{fmt(happyJumpDots, 2)} dots</strong><small>{happyJumpGym.name} · {fmt(happyJumpGym.energyCost)}E per train</small></div>
+            </div>
             <div className="tc-form-grid tc-price-grid">
-              <PriceField label="Erotic DVD · live Item Market average" value={priceOverrides.dvd || ""} autoValue={marketPrice(liveData?.items?.eroticDvd)} onChange={value => setPriceOverride("dvd", value)} hint={liveData?.items?.eroticDvd?.name || "Live market price not returned"} testId="training-dvd-price" />
-              <PriceField label="Yellow Easter Egg · live Item Market average" value={priceOverrides.yellowEgg || ""} autoValue={marketPrice(liveData?.items?.yellowEgg)} onChange={value => setPriceOverride("yellowEgg", value)} hint={liveData?.items?.yellowEgg?.name || "If untradeable, no market listing exists."} testId="training-yellow-egg-price" />
-              <PriceField label="Poison Mistletoe · live Item Market average" value={priceOverrides.mistletoe || ""} autoValue={marketPrice(liveData?.items?.poisonMistletoe)} onChange={value => setPriceOverride("mistletoe", value)} hint={liveData?.items?.poisonMistletoe?.name || "Live market price not returned"} />
+              <PriceField label="Xanax · live Item Market average" value={happyJumpPriceOverrides.xanax || ""} autoValue={marketPrice(liveData?.items?.xanax)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, xanax: value }))} hint={liveData?.items?.xanax?.name || "Live market price not returned"} testId="training-happy-xanax-price" />
+              <PriceField label="Feathery Hotel Coupon · live Item Market average" value={happyJumpPriceOverrides.fhc || ""} autoValue={marketPrice(liveData?.items?.fhc)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, fhc: value }))} hint={liveData?.items?.fhc?.name || "Live market price not returned"} testId="training-happy-fhc-price" />
+              <PriceField label="Erotic DVD · live Item Market average" value={happyJumpPriceOverrides.dvd || ""} autoValue={marketPrice(liveData?.items?.eroticDvd)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, dvd: value }))} hint={liveData?.items?.eroticDvd?.name || "Live market price not returned"} testId="training-dvd-price" />
+              <PriceField label="Yellow Easter Egg · live Item Market average" value={happyJumpPriceOverrides.yellowEgg || ""} autoValue={marketPrice(liveData?.items?.yellowEgg)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, yellowEgg: value }))} hint={liveData?.items?.yellowEgg?.name || "If untradeable, no market listing exists."} testId="training-yellow-egg-price" />
+              <PriceField label="Poison Mistletoe · live Item Market average" value={happyJumpPriceOverrides.mistletoe || ""} autoValue={marketPrice(liveData?.items?.poisonMistletoe)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, mistletoe: value }))} hint={liveData?.items?.poisonMistletoe?.name || "Live market price not returned"} />
             </div>
           </Panel>
         </div>
@@ -1255,19 +1273,19 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <Metric label="After all happiness items" value={fmt(happyJump.beforeEcstasy)} detail="Before Ecstasy" tone="blue" />
               <Metric label="After Ecstasy" value={fmt(happyJump.finalHappy)} detail="Hard cap 99,999" tone="green" />
               <Metric label="Happiness from mistletoe" value={"+" + fmt(happyJump.mistletoeGain)} detail={"Target left with " + fmt(happyJump.targetRemaining)} />
-              <Metric label="Projected stat gain" value={"+" + fmt(happySession.statGain, 2)} detail={happySession.trains + " trains from your energy plan"} tone="green" />
+              <Metric label="Projected stat gain" value={"+" + fmt(happyJumpSession.statGain, 2)} detail={happyJumpSession.trains + " projected trains · " + happyJumpStatLabel} tone="green" />
             </div>
             <div className="tc-result-total"><span>Happy used as the first training input</span><strong>{fmt(happyJump.finalHappy)}</strong></div>
-            <p className="tc-muted">The happy bar also regenerates naturally at the rate shown by your live Torn bars. This estimate uses the entered starting happy, not a guessed default when live data is present.</p>
+            <p className="tc-muted">Battle stats and Item Market prices are live. All Happy Jump quantities, starting happiness, gym, train count and multiplier are projection inputs. No other calculator setup is used.</p>
           </Panel>
-          <Panel title="Jump checklist" eyebrow="BEFORE YOU TRAIN">
+          <Panel title="Projection checklist" eyebrow="SCENARIO SUMMARY">
             <div className="tc-condition-list">
-              <div><span>All Xanax doses used first</span><strong>{xanaxCount} planned</strong></div>
-              <div><span>Booster items before Ecstasy</span><strong>{fmt(fhcCount + dvdCount + yellowEggCount + mistletoeCount)} planned</strong></div>
-              <div><span>Ecstasy is last consumable</span><strong>{ecstasy ? "Included" : "Not included"}</strong></div>
-              <div><span>Happy cap reached</span><strong>{happyJump.finalHappy >= HAPPY_CAP ? "Yes" : "Not yet"}</strong></div>
+              <div><span>Projected Xanax doses</span><strong>{happyJumpXanaxCount} planned</strong></div>
+              <div><span>Projected FHCs</span><strong>{happyJumpFhcCount} planned</strong></div>
+              <div><span>Projected booster/happy items</span><strong>{fmt(happyJumpDvdCount + happyJumpYellowEggCount + happyJumpMistletoeCount)} planned</strong></div>
+              <div><span>Ecstasy included</span><strong>{happyJumpEcstasy ? "Yes" : "No"}</strong></div>
+              <div><span>99,999 happiness cap reached</span><strong>{happyJump.finalHappy >= HAPPY_CAP ? "Yes" : "Not yet"}</strong></div>
             </div>
-            <p className="tc-muted">Ecstasy itself causes drug cooldown. Timing between Xanax and Ecstasy matters; do not treat the item order as permission to ignore Torn's drug cooldown.</p>
           </Panel>
         </aside>
       </main>}
