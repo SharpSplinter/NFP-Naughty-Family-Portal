@@ -1,8 +1,25 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   validateProductionCutoverInputs,
   verifyProductionCutoverEvidence,
 } from "./production-cutover-preflight.mjs";
+
+const workflow = readFileSync(".github/workflows/worker-deploy.yml", "utf8");
+assert.match(workflow, /workflow_dispatch:/);
+assert.doesNotMatch(workflow, /^\\s{2}(?:push|pull_request):/m, "Production deployment must remain manual-only.");
+assert.match(workflow, /environment:\\s+name: production/, "Production deployment must use the protected GitHub Environment.");
+assert.match(workflow, /inputs\\.release_authorization/);
+assert.match(workflow, /inputs\\.queue_configuration_ack/);
+assert.match(workflow, /inputs\\.backup_sha256/);
+assert.match(workflow, /inputs\\.d1_usage_checked_at/);
+assert.match(workflow, /inputs\\.restore_rehearsal_run_url/);
+assert.match(workflow, /inputs\\.staging_acceptance_run_url/);
+const preflightPosition = workflow.indexOf("node scripts/production-cutover-preflight.mjs");
+const firstCloudflarePosition = workflow.indexOf("uses: cloudflare/wrangler-action@v4");
+assert.ok(preflightPosition >= 0 && firstCloudflarePosition > preflightPosition,
+  "Evidence preflight must run before the first Cloudflare action.");
+assert.match(workflow, /confirm_target == 'naughtyfamily-api'/);
 
 const now = new Date("2026-11-17T04:00:00.000Z");
 const candidate = "8e34071abe0f570a171cfe919ddbc16a92b689ab";
