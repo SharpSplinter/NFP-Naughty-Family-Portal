@@ -61,7 +61,7 @@ jobs:
           node --check scripts/test-staging-admin-acceptance.mjs
           node --check scripts/staging-d1-read-budget.mjs
           node --check scripts/staging-private-history-fixtures.mjs
-          node --check scripts/test-staging-fixture-cleanup.mjs
+          python3 -m py_compile scripts/test-staging-fixture-cleanup.py
           node --check scripts/test-staging-safety-contract.mjs
 
       - name: Verify every deployment target is isolated staging
