@@ -33,35 +33,46 @@ assert.match(admin, /const adminEndpoints = \[\s*"\/api\/admin\/overview",\s*"\/
 assert.match(admin, /round < 1/);
 assert.doesNotMatch(admin, /const sectionNames = \[/, "Admin smoke must not cycle all admin sections by default.");
 
-assert.doesNotMatch(seed, /DELETE FROM\\s+players/i, "Seed must not delete parent player rows.");
-assert.doesNotMatch(cleanup, /DELETE FROM\\s+players/i, "Cleanup must not invoke unbounded player foreign-key cascades.");
+assert.doesNotMatch(seed, /DELETE FROM\s+players/i, "Seed must not delete parent player rows.");
+assert.doesNotMatch(cleanup, /DELETE FROM\s+players/i, "Cleanup must not invoke unbounded player foreign-key cascades.");
 assert.match(fixtures, /event_year = 2026 AND player_id/);
 assert.match(fixtures, /recordWranglerD1Metrics/);
 assert.match(fixtures, /maximumRows <= 10000/);
 assert.match(cleanup, /cleanup identity preflight/);
 assert.match(seed, /fixture identity preflight/);
-const infrastructureMutationSteps = [
+
+// The targeted Gym-only retest must reuse the already deployed staging
+// services. It may not provision Queues, apply migrations, deploy Worker,
+// or deploy Pages while validating only fixture-harness changes.
+for (const step of [
   "Provision isolated staging Queues",
   "Apply pending migrations to staging D1 only",
   "Deploy isolated staging API Worker",
   "Deploy to the isolated naughtyfamily-staging Pages project",
-];
-for (const step of infrastructureMutationSteps) {
-  const escaped = step.replace(/[.*+?^${}()|[\]\\]/g, "\\for (const step of [
-  "Seed isolated authenticated private-history fixtures",
-  "Remove synthetic private-history fixtures from staging D1",
 ]) {
-  const start = workflow.indexOf("name: " + step);
+  const start = workflow.indexOf("      - name: " + step + "\n");
   assert.notEqual(start, -1, step + " must exist.");
-  const next = workflow.indexOf("\\n      - name: ", start);
+  const next = workflow.indexOf("\n      - name: ", start + 1);
   const block = workflow.slice(start, next === -1 ? workflow.length : next);
-  assert.match(block, /D1_BUDGET_STATE_FILE: \\\x24\\{\\{ runner\\.temp \\}\\}\\/ncd-d1-read-budget\\.json/);
-  assert.match(block, /D1_RUN_BUDGET_ROWS: "100000"/);
-}
-console.log("PASS staging safety contract:");
-  assert.match(workflow, new RegExp("name: " + escaped + "\\n\\s+if: inputs\\.feature_suite != 'gym-training'"),
+  assert.match(block, /^        if: inputs\.feature_suite != 'gym-training'$/m,
     step + " must be skipped for the harness-only Gym Training retest.");
 }
 assert.match(workflow, /name: Verify the staging Pages origin/);
 assert.match(workflow, /name: Run exactly one selected feature suite/);
-console.log("PASS staging safety contract: manual-only acceptance, one-feature selection, account-wide D1 hard budgets, no sustained load replay, and bounded admin smoke.");
+
+// Direct Wrangler counters are the authoritative per-command read meter.
+// Both fixture scripts must receive the same persistent state file as the
+// analytics watchdog and cannot silently fall back to unmetered execution.
+for (const step of [
+  "Seed isolated authenticated private-history fixtures",
+  "Remove synthetic private-history fixtures from staging D1",
+]) {
+  const start = workflow.indexOf("      - name: " + step + "\n");
+  assert.notEqual(start, -1, step + " must exist.");
+  const next = workflow.indexOf("\n      - name: ", start + 1);
+  const block = workflow.slice(start, next === -1 ? workflow.length : next);
+  assert.match(block, /D1_BUDGET_STATE_FILE:\s+\$\{\{\s*runner\.temp\s*\}\}\/ncd-d1-read-budget\.json/);
+  assert.match(block, /D1_RUN_BUDGET_ROWS:\s+"100000"/);
+}
+
+console.log("PASS staging safety contract: manual-only acceptance, bounded per-command Wrangler reads, shared run budget state, indexed-only fixture cleanup, reserved identity preflight, and no infrastructure mutation for the Gym-only retest.");
