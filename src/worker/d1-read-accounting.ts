@@ -8,9 +8,9 @@ export type D1ReadMeta = {
 }
 
 export type D1ReadResult<T = Record<string, unknown>> = {
-  results?: T[] | null
+  results?: T[]
   success?: boolean
-  meta?: D1ReadMeta
+  meta?: D1ReadMeta & { changes?: number }
 }
 
 export type D1PreparedStatement = {
@@ -53,7 +53,7 @@ function readMetric(meta: D1ReadMeta | undefined, snake: "rows_read" | "rows_wri
 }
 
 function stripTrailingSemicolon(sql: string): string {
-  return sql.trim().replace(/;\\s*$/, "")
+  return sql.trim().replace(/;\s*$/, "")
 }
 
 /**

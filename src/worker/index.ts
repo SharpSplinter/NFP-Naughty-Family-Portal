@@ -6568,7 +6568,7 @@ export default {
     ctx = meter.wrapWaitUntil(ctx)
     const requestStartedAt = Date.now()
     const requestId = request.headers.get("cf-ray") ?? crypto.randomUUID()
-    const route = new URL(request.url).pathname.replace(/\\/\\d+(?=\\/|$)/g, "/:id")
+    const route = new URL(request.url).pathname.replace(/\/\d+(?=\/|$)/g, "/:id")
     try {
       const origin = allowedOrigin(request, env)
     if (!origin) return jsonResponse({ error: "Origin not allowed." }, 403)
