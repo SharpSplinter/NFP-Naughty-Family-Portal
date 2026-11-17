@@ -29,6 +29,7 @@ const sourceFiles = [
   "src/worker/company-history.ts",
   "src/worker/ranking-snapshots.ts",
   "src/worker/daily-read-cache.ts",
+  "src/worker/d1-read-accounting.ts",
   "src/components/floor/ranking-utils.ts",
   "src/components/floor/financial-utils.ts",
 ].map((file) => resolve(root, file))
@@ -95,6 +96,7 @@ try {
   ]
   const worker = require(join(temp, "worker/index.js")).default
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
+  const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
@@ -206,6 +208,158 @@ try {
     passed += 1
     console.log("PASS", name)
   }
+
+  await test("Worker D1 accounting meters first/all/run/batch statement metadata", async () => {
+    const nativeStatements = new WeakSet()
+    const executions = []
+    let firstSequence = 0
+    function makeNativeStatement(sql, bindings = []) {
+      const statement = {
+        sql,
+        bindings,
+        bind(...values) { return makeNativeStatement(sql, values) },
+        async all() {
+          executions.push({ sql, bindings, method: "all" })
+          if (sql.startsWith("SELECT * FROM (")) {
+            firstSequence += 1
+            return {
+              results: [{ id: 17, label: "first-row" }],
+              success: true,
+              meta: { rows_read: firstSequence === 1 ? 4 : 2, rows_written: 0 },
+            }
+          }
+          return { results: [{ value: "all-row" }], success: true, meta: { rows_read: 6, rows_written: 0 } }
+        },
+        async run() {
+          executions.push({ sql, bindings, method: "run" })
+          return { results: [], success: true, meta: { rows_read: 2, rows_written: 1 } }
+        },
+      }
+      nativeStatements.add(statement)
+      return statement
+    }
+    const database = {
+      prepare(sql) { return makeNativeStatement(sql) },
+      async batch(statements) {
+        assert.ok(statements.every((statement) => nativeStatements.has(statement)),
+          "batch receives native D1 statements rather than the accounting wrappers")
+        return statements.map((statement) => ({
+          results: [],
+          success: true,
+          meta: {
+            rows_read: statement.sql.includes("batch-one") ? 3 : 5,
+            rows_written: statement.sql.includes("batch-one") ? 1 : 2,
+          },
+        }))
+      },
+    }
+    const entries = []
+    const meter = new D1RequestReadMeter((entry) => entries.push(entry))
+    const db = meter.wrapDatabase(database)
+    const first = await db.prepare("SELECT id, label FROM records WHERE owner_id = ? ORDER BY created_at DESC;")
+      .bind("private-owner-value").first()
+    assert.equal(first.id, 17)
+    const firstColumn = await db.prepare("SELECT id FROM records WHERE owner_id = ?")
+      .bind("private-owner-value").first("id")
+    assert.equal(firstColumn, 17)
+    const all = await db.prepare("SELECT value FROM records WHERE owner_id = ?").bind("private-owner-value").all()
+    assert.equal(all.results[0].value, "all-row")
+    await db.prepare("UPDATE records SET value = ? WHERE id = ?").bind("updated", 17).run()
+    await db.batch([
+      db.prepare("UPDATE records SET value = ? WHERE id = ?").bind("one", 1),
+      db.prepare("DELETE FROM records WHERE id = ?").bind(2),
+    ])
+    meter.finish({ eventType: "test", route: "/accounting" })
+
+    assert.equal(executions.length, 4, "first() is executed once via all(), with direct all() and run() calls preserved")
+    assert.equal(executions[0].sql, 'SELECT * FROM (SELECT id, label FROM records WHERE owner_id = ? ORDER BY created_at DESC) AS "__ncd_first_row" LIMIT 1')
+    assert.deepEqual(executions[0].bindings, ["private-owner-value"])
+    assert.equal(buildFirstRowSql("SELECT id FROM records WHERE id = ?;"), 'SELECT * FROM (SELECT id FROM records WHERE id = ?) AS "__ncd_first_row" LIMIT 1')
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].accountingStatus, "complete")
+    assert.equal(entries[0].rowsRead, 22)
+    assert.equal(entries[0].rowsWritten, 4)
+    assert.equal(entries[0].statementCount, 6)
+    assert.deepEqual(entries[0].methodCounts, { first: 2, all: 1, run: 1, batch: 2, raw: 0, exec: 0 })
+    const serialized = JSON.stringify(entries[0])
+    assert.equal(serialized.includes("private-owner-value"), false, "accounting telemetry must not expose bound values")
+    assert.equal(Object.prototype.hasOwnProperty.call(entries[0], "sql"), false, "accounting telemetry must not expose SQL")
+  })
+
+  await test("Worker D1 accounting fails closed when D1 metadata omits rows_read", async () => {
+    const entries = []
+    const database = {
+      prepare() {
+        return {
+          bind() { return this },
+          async all() { return { results: [], success: true } },
+          async run() { return { success: true } },
+        }
+      },
+    }
+    const meter = new D1RequestReadMeter((entry) => entries.push(entry))
+    await meter.wrapDatabase(database).prepare("SELECT 1").all()
+    meter.finish({ eventType: "test" })
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].accountingStatus, "incomplete")
+    assert.equal(entries[0].rowsRead, 0)
+    assert.equal(entries[0].missingReadMetrics, 1)
+  })
+
+  await test("Worker D1 accounting waits for tracked waitUntil reads before emitting totals", async () => {
+    const entries = []
+    let release
+    let acceptedPromise
+    const gate = new Promise((resolve) => { release = resolve })
+    const database = {
+      prepare() {
+        return {
+          bind() { return this },
+          async all() { return { results: [], success: true, meta: { rows_read: 0, rows_written: 0 } } },
+          async run() { return { success: true, meta: { rows_read: 7, rows_written: 0 } } },
+        }
+      },
+    }
+    const meter = new D1RequestReadMeter((entry) => entries.push(entry))
+    const db = meter.wrapDatabase(database)
+    const context = meter.wrapWaitUntil({ waitUntil(promise) { acceptedPromise = promise } })
+    context.waitUntil((async () => {
+      await gate
+      await db.prepare("UPDATE background_work SET finished = 1").run()
+    })())
+    meter.finish({ eventType: "test", route: "/background" })
+    assert.equal(entries.length, 0, "the summary must wait while a tracked event promise is outstanding")
+    release()
+    await acceptedPromise
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].rowsRead, 7)
+    assert.equal(entries[0].backgroundTasks, 1)
+    assert.equal(entries[0].accountingStatus, "complete")
+  })
+
+  await test("Worker D1 accounting marks raw and exec as unmetered operations", async () => {
+    const entries = []
+    const database = {
+      prepare() {
+        return {
+          bind() { return this },
+          async raw() { return [[1]] },
+          async all() { return { results: [], meta: { rows_read: 0, rows_written: 0 } } },
+          async run() { return { meta: { rows_read: 0, rows_written: 0 } } },
+        }
+      },
+      async exec() { return { count: 1, duration: 1 } },
+    }
+    const meter = new D1RequestReadMeter((entry) => entries.push(entry))
+    const db = meter.wrapDatabase(database)
+    await db.prepare("SELECT value FROM legacy").raw()
+    await db.exec("SELECT value FROM legacy")
+    meter.finish({ eventType: "test" })
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].accountingStatus, "incomplete")
+    assert.equal(entries[0].unsupportedOperations, 2)
+    assert.equal(entries[0].missingReadMetrics, 1)
+  })
 
   await test("gym training historical log classifier accepts explicit gym sessions and excludes adjacent gym actions", () => {
     assert.equal(isGymTrainingLog({
