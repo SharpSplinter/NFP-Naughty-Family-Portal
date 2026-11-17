@@ -40,4 +40,17 @@ assert.match(fixtures, /recordWranglerD1Metrics/);
 assert.match(fixtures, /maximumRows <= 10000/);
 assert.match(cleanup, /cleanup identity preflight/);
 assert.match(seed, /fixture identity preflight/);
+const infrastructureMutationSteps = [
+  "Provision isolated staging Queues",
+  "Apply pending migrations to staging D1 only",
+  "Deploy isolated staging API Worker",
+  "Deploy to the isolated naughtyfamily-staging Pages project",
+];
+for (const step of infrastructureMutationSteps) {
+  const escaped = step.replace(/[.*+?^${}()|[\]\\]/g, "\\console.log("PASS staging safety contract:");
+  assert.match(workflow, new RegExp("name: " + escaped + "\\n\\s+if: inputs\\.feature_suite != 'gym-training'"),
+    step + " must be skipped for the harness-only Gym Training retest.");
+}
+assert.match(workflow, /name: Verify the staging Pages origin/);
+assert.match(workflow, /name: Run exactly one selected feature suite/);
 console.log("PASS staging safety contract: manual-only acceptance, one-feature selection, account-wide D1 hard budgets, no sustained load replay, and bounded admin smoke.");
