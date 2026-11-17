@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import {
+  validateProductionCutoverInputs,
+  verifyProductionCutoverEvidence,
+} from "./production-cutover-preflight.mjs";
+
+const now = new Date("2026-11-17T04:00:00.000Z");
+const candidate = "8e34071abe0f570a171cfe919ddbc16a92b689ab";
+const release = "451869f0ae3ba7ae37aeca4d15ac34680d74ab6c";
+const treeSha = "a".repeat(40);
+
+function validEnv() {
+  return {
+    CONFIRM_TARGET: "naughtyfamily-api",
+    RELEASE_AUTHORIZATION: "I approve production D1 migrations and Worker deployment",
+    QUEUE_CONFIGURATION_ACK: "I approve reconciliation of configured Queue bindings",
+    BACKUP_REFERENCE: "https://backup.example.invalid/ncd/prod-2026-11-17.enc",
+    BACKUP_SHA256: "b".repeat(64),
+    BACKUP_CREATED_AT: "2026-11-17T03:00:00.000Z",
+    TIME_TRAVEL_BOOKMARK_REFERENCE: "https://dash.cloudflare.com/example/d1/bookmark/abc",
+    D1_LEDGER_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/100",
+    D1_USAGE_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/101",
+    D1_USAGE_CHECKED_AT: "2026-11-17T03:55:00.000Z",
+    D1_ROWS_READ: "3500000",
+    D1_HARD_STOP_ROWS: "4000000",
+    D1_RELEASE_RESERVE_ROWS: "100000",
+    SERVICE_KEY_PERMISSION_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/102",
+    QUEUE_CONFIGURATION_REVIEW_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/103",
+    RESTORE_REHEARSAL_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/104",
+    RESTORE_REHEARSAL_COMMIT: candidate,
+    STAGING_ACCEPTANCE_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/105",
+    STAGING_ACCEPTANCE_COMMIT: candidate,
+    CANDIDATE_COMMIT: candidate,
+    GITHUB_REPOSITORY: "SharpSplinter/Naughty-Company-Dashboard",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_SHA: release,
+    GITHUB_TOKEN: "test-token",
+  };
+}
+
+const env = validEnv();
+assert.deepEqual(validateProductionCutoverInputs(env, now).errors, []);
+
+const staleBackup = validEnv();
+staleBackup.BACKUP_CREATED_AT = "2026-11-15T03:00:00.000Z";
+assert.ok(validateProductionCutoverInputs(staleBackup, now).errors.some(x => x.includes("backup creation time is too old")));
+
+const staleUsage = validEnv();
+staleUsage.D1_USAGE_CHECKED_AT = "2026-11-17T03:40:00.000Z";
+assert.ok(validateProductionCutoverInputs(staleUsage, now).errors.some(x => x.includes("D1 usage check time is too old")));
+
+const exhaustedBudget = validEnv();
+exhaustedBudget.D1_ROWS_READ = "3950000";
+assert.ok(validateProductionCutoverInputs(exhaustedBudget, now).errors.some(x => x.includes("exceed the declared hard stop")));
+
+const badChecksum = validEnv();
+badChecksum.BACKUP_SHA256 = "not-a-sha";
+assert.ok(validateProductionCutoverInputs(badChecksum, now).errors.some(x => x.includes("64 hexadecimal")));
+
+const badTarget = validEnv();
+badTarget.CONFIRM_TARGET = "naughty-company-api";
+assert.ok(validateProductionCutoverInputs(badTarget, now).errors.some(x => x.includes("naughtyfamily-api")));
+
+const missingQueueApproval = validEnv();
+missingQueueApproval.QUEUE_CONFIGURATION_ACK = "";
+assert.ok(validateProductionCutoverInputs(missingQueueApproval, now).errors.some(x => x.includes("Queue bindings")));
+
+const wrongAcceptanceCommit = validEnv();
+wrongAcceptanceCommit.STAGING_ACCEPTANCE_COMMIT = release;
+assert.ok(validateProductionCutoverInputs(wrongAcceptanceCommit, now).errors.some(x => x.includes("exact candidate commit")));
+
+function response(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+const successfulRun = {
+  status: "completed",
+  conclusion: "success",
+  event: "workflow_dispatch",
+  head_branch: "portal-rebuild",
+  head_sha: candidate,
+  repository: { full_name: "SharpSplinter/Naughty-Company-Dashboard" },
+};
+
+const fakeFetch = async url => {
+  const value = String(url);
+  if (value.endsWith("/actions/runs/104") || value.endsWith("/actions/runs/105")) {
+    return response(successfulRun);
+  }
+  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`)) {
+    return response({ commit: { tree: { sha: treeSha } } });
+  }
+  return response({ message: "not found" }, 404);
+};
+
+const verified = await verifyProductionCutoverEvidence(env, fakeFetch, now);
+assert.equal(verified.candidateCommit, candidate);
+assert.equal(verified.releaseCommit, release);
+assert.equal(verified.treeSha, treeSha);
+assert.equal(verified.d1RowsRead, 3500000);
+
+const failedAcceptanceFetch = async url => {
+  if (String(url).endsWith("/actions/runs/105")) {
+    return response({ ...successfulRun, conclusion: "failure" });
+  }
+  return fakeFetch(url);
+};
+await assert.rejects(
+  verifyProductionCutoverEvidence(env, failedAcceptanceFetch, now),
+  /Stateful staging acceptance must be a completed successful/
+);
+
+const mismatchedTreeFetch = async url => {
+  if (String(url).endsWith(`/commits/${release}`)) {
+    return response({ commit: { tree: { sha: "c".repeat(40) } } });
+  }
+  return fakeFetch(url);
+};
+await assert.rejects(
+  verifyProductionCutoverEvidence(env, mismatchedTreeFetch, now),
+  /Git tree does not exactly match/
+);
+
+console.log("PASS production cutover preflight: evidence references, backup and usage freshness, D1 reserve, explicit acknowledgements, exact tested commit, successful restore/staging runs, and matching release tree.");
