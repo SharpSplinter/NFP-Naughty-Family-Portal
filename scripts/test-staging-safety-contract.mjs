@@ -93,6 +93,7 @@ assert.match(accounting, /meta\?\.\[snake\]/);
 assert.match(accounting, /buildFirstRowSql\(sql\)/);
 assert.match(accounting, /context\.waitUntil = \(promise\)/);
 assert.match(accounting, /accountingStatus:/);
+assert.match(accounting, /console\.log\(entry\)/, "D1 accounting must emit structured log objects, not JSON strings.");
 assert.match(accounting, /unsupportedOperations/);
 assert.match(productionWorkerConfig, /\[observability\]\s+enabled = true\s+head_sampling_rate = 1\.0/);
 assert.match(stagingWorkerConfig, /\[observability\]\s+enabled = true\s+head_sampling_rate = 1\.0/);

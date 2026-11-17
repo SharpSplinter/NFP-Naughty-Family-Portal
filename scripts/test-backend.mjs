@@ -271,7 +271,7 @@ try {
     ])
     meter.finish({ eventType: "test", route: "/accounting" })
 
-    assert.equal(executions.length, 4, "first() is executed once via all(), with direct all() and run() calls preserved")
+    assert.equal(executions.length, 4, "each first() is executed once via all(), with direct all() and run() calls preserved")
     assert.equal(executions[0].sql, 'SELECT * FROM (SELECT id, label FROM records WHERE owner_id = ? ORDER BY created_at DESC) AS "__ncd_first_row" LIMIT 1')
     assert.deepEqual(executions[0].bindings, ["private-owner-value"])
     assert.equal(buildFirstRowSql("SELECT id FROM records WHERE id = ?;"), 'SELECT * FROM (SELECT id FROM records WHERE id = ?) AS "__ncd_first_row" LIMIT 1')

@@ -119,9 +119,7 @@ export class D1RequestReadMeter {
     if (!context || typeof context.waitUntil !== "function") return context
     const originalWaitUntil = context.waitUntil.bind(context)
     const meter = this
-    const wrapped = Object.create(Object.getPrototypeOf(context)) as T
-    Object.assign(wrapped, context)
-    wrapped.waitUntil = (promise: Promise<unknown>) => {
+    const trackWaitUntil = (promise: Promise<unknown>) => {
       meter.pendingBackgroundTasks += 1
       meter.backgroundTasks += 1
       const tracked = Promise.resolve(promise).then(
@@ -146,7 +144,15 @@ export class D1RequestReadMeter {
         throw error
       }
     }
-    return wrapped
+    // Preserve ExecutionContext behavior and receiver identity for every
+    // property except waitUntil, which is the only method we need to track.
+    return new Proxy(context, {
+      get(target, property) {
+        if (property === "waitUntil") return trackWaitUntil
+        const value = Reflect.get(target, property, target)
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
   }
 
   finish(event: D1ReadEvent): void {
