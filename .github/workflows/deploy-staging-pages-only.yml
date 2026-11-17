@@ -1,0 +1,146 @@
+name: Deploy Naughty Family staging Pages only
+
+on:
+  push:
+    branches: [portal-rebuild]
+    paths:
+      - ".github/workflows/deploy-staging-pages-only.yml"
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: Confirm the isolated staging Pages project
+        required: true
+        type: choice
+        options:
+          - naughtyfamily-staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naughty-family-staging-pages-only
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging-pages:
+    if: github.ref == 'refs/heads/portal-rebuild' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.confirm_target == 'naughtyfamily-staging'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the requested portal-rebuild commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check without Cloudflare access
+        run: npm run typecheck
+
+      - name: Run offline gym-training and calculator regression
+        run: node scripts/test-gym-training-history.mjs
+
+      - name: Build Pages bundle for the isolated staging API
+        env:
+          VITE_API_BASE_URL: https://naughtyfamily-api-staging.kboone801.workers.dev
+        run: npm run build
+
+      - name: Verify the deployment target is staging Pages only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/portal-rebuild"
+          grep -F 'name = "naughtyfamily-api-staging"' wrangler.acceptance.toml
+          grep -F 'ALLOWED_ORIGIN = "https://naughtyfamily-staging.pages.dev"' wrangler.acceptance.toml
+          grep -Fq 'naughtyfamily-api-staging.kboone801.workers.dev' dist/assets/*.js
+          ! grep -Fq 'naughtyfamily-api.kboone801.workers.dev' dist/assets/*.js
+          echo "Verified: isolated staging API URL is compiled into the frontend; this job deploys Pages only."
+
+      - name: Deploy only to the naughtyfamily-staging Pages project
+        uses: cloudflare/wrangler-action@v4
+        with:
+          wranglerVersion: "4.156.2"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 6c03b978ed9a59adc3f61c715bdad45c
+          command: pages deploy dist --project-name naughtyfamily-staging --branch main
+
+      - name: Verify the published staging Pages bundle without calling the API
+        env:
+          STAGING_PAGES_URL: https://naughtyfamily-staging.pages.dev
+        run: |
+          node --input-type=module <<'NODE'
+          const base = process.env.STAGING_PAGES_URL;
+          const expectedApiBase = "naughtyfamily-api-staging.kboone801.workers.dev";
+          const forbiddenProductionApi = "naughtyfamily-api.kboone801.workers.dev";
+          let verified = null;
+          let lastObservation = null;
+
+          for (let attempt = 1; attempt <= 12; attempt++) {
+            const pageUrl = new URL(base);
+            pageUrl.searchParams.set("__pages_only_deploy_check", String(Date.now()) + "-" + attempt);
+            const response = await fetch(pageUrl, {
+              cache: "no-store",
+              signal: AbortSignal.timeout(15000),
+            }).catch(() => null);
+            const html = response ? await response.text() : "";
+            const assets = [...html.matchAll(/<script[^>]+src=["']([^"']+\.js[^"']*)["']/g)]
+              .map(match => match[1]);
+
+            if (response?.ok && html.includes('id="root"') && assets.length > 0) {
+              const bundles = await Promise.all(assets.map(async path => {
+                const assetUrl = new URL(path, base);
+                assetUrl.searchParams.set("__pages_only_deploy_check", String(attempt));
+                const assetResponse = await fetch(assetUrl, {
+                  cache: "no-store",
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (!assetResponse.ok) throw new Error("Staging asset failed: " + assetResponse.status);
+                return assetResponse.text();
+              }));
+              const combined = bundles.join(" ");
+              lastObservation = {
+                status: response.status,
+                rootMount: true,
+                jsAssets: assets.length,
+                stagingApiPresent: combined.includes(expectedApiBase),
+                productionApiAbsent: !combined.includes(forbiddenProductionApi),
+              };
+              if (lastObservation.stagingApiPresent && lastObservation.productionApiAbsent) {
+                verified = lastObservation;
+                break;
+              }
+            } else {
+              lastObservation = {
+                status: response?.status ?? "unreachable",
+                rootMount: html.includes('id="root"'),
+                jsAssets: assets.length,
+              };
+            }
+            console.log("Waiting for Pages alias propagation (" + attempt + "/12): " + JSON.stringify(lastObservation));
+            if (attempt < 12) await new Promise(resolve => setTimeout(resolve, 2500));
+          }
+
+          if (!verified) throw new Error("Published staging Pages bundle did not verify. Last observation: " + JSON.stringify(lastObservation));
+          console.log("STAGING PAGES verified: " + JSON.stringify(verified));
+          NODE
+
+      - name: Record strict no-data-operations deployment scope
+        if: always()
+        run: |
+          {
+            echo "## Staging Pages-only deployment"
+            echo ""
+            echo "- Target: `naughtyfamily-staging`"
+            echo "- Source: ${GITHUB_SHA} on `portal-rebuild`"
+            echo "- No Worker deployment."
+            echo "- No D1 SQL, reads, migrations, backups, or budget API calls."
+            echo "- No Queue provisioning, configuration changes, sends, receives, acknowledgements, retries, purges, or replays."
+            echo "- No staging API or Worker endpoint was called by this workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
