@@ -522,6 +522,35 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const gyms = liveData?.gyms?.length ? liveData.gyms : FALLBACK_GYMS
   const gymId = selectedGymId || String(activeGym?.id || liveData?.gym?.id || "gun-shop")
   const selectedGym = gyms.find(gym => String(gym.id) === gymId) || activeGym || FALLBACK_GYMS.find(gym => gym.id === "gun-shop")!
+  const gymTrainResolvedGymId = gymTrainGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
+  const gymTrainGym = gyms.find(gym => String(gym.id) === gymTrainResolvedGymId)
+    || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const gymTrainStatLabel = STAT_OPTIONS.find(option => option.value === gymTrainStat)?.label || "Strength"
+  const gymTrainStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[gymTrainStat]))
+  const gymTrainDots = safeNumber(gymTrainGym.dots[gymTrainStat])
+  const gymTrainModifierProfile = liveData?.gymModifiers?.[gymTrainStat]
+  const gymTrainAutoModifier = safeNumber(gymTrainModifierProfile?.multiplier, 1)
+  const gymTrainCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[gymTrainStat] || [], {
+    gymId: gymTrainGym.id, dots: gymTrainDots, modifier: gymTrainAutoModifier,
+  })
+  const gymTrainEffectiveModifier = gymTrainAutoModifier * gymTrainCalibration.factor
+  const projectionResolvedGymId = projectionGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
+  const projectionGym = gyms.find(gym => String(gym.id) === projectionResolvedGymId)
+    || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const projectionStatLabel = STAT_OPTIONS.find(option => option.value === projectionStat)?.label || "Strength"
+  const projectionStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[projectionStat]))
+  const projectionDots = safeNumber(projectionGym.dots[projectionStat])
+  const projectionModifierProfile = liveData?.gymModifiers?.[projectionStat]
+  const projectionAutoModifier = safeNumber(projectionModifierProfile?.multiplier, 1)
+  const projectionCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[projectionStat] || [], {
+    gymId: projectionGym.id, dots: projectionDots, modifier: projectionAutoModifier,
+  })
+  const projectionEffectiveModifier = projectionAutoModifier * projectionCalibration.factor
+  const happyJumpGym = FALLBACK_GYMS.find(gym => gym.id === happyJumpGymId)
+    || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const happyJumpStatLabel = STAT_OPTIONS.find(option => option.value === happyJumpStat)?.label || "Strength"
+  const happyJumpStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[happyJumpStat]))
+  const happyJumpDots = safeNumber(happyJumpGym.dots[happyJumpStat])
   const liveStatValue = liveData?.battleStats?.[selectedStat] ?? null
   const statOverride = manualStats[selectedStat]
   const currentStat = statOverride.trim() === "" ? safeNumber(liveStatValue) : Math.max(0, safeNumber(statOverride))
@@ -556,6 +585,47 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   // estimate, then apply any verified company reduction multiplicatively.
   // The same value is shown in the setup readout and applied sequentially.
   const happyLossPercent = 50 * (1 - autoHappyLossReduction / 100)
+  const liveEnergyBook = activeBookChoice(liveData)
+  const projectedNaturalEnergyPerDay = energyBar
+    ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval))
+      * (liveEnergyBook === "higher-daddy" ? 1.2 : 1))
+    : 0
+  const projectedRefillEnergy = hasLiveUglyEnergy
+    ? Math.max(250, liveBarMaximum)
+    : Math.max(0, liveBarMaximum || 150)
+  const projectedCanEnergyMultiplier = (1 + activeEnergyDrinkBonus / 100) * (liveEnergyBook === "fuelling" ? 2 : 1)
+  const gymTrainDailyCan = ENERGY_DRINKS.find(item => item.id === gymTrainCanId) || ENERGY_DRINKS[3]
+  const projectionDailyCan = ENERGY_DRINKS.find(item => item.id === projectionCanId) || ENERGY_DRINKS[3]
+  const gymTrainDailySupply = calculateDailyTrainingSupply({
+    naturalEnergyPerDay: projectedNaturalEnergyPerDay,
+    xanaxPerDay: gymTrainXanaxPerDay,
+    fhcPerDay: gymTrainFhcPerDay,
+    refillEnergyPerFhc: projectedRefillEnergy,
+    cansPerDay: gymTrainCanPerDay,
+    energyPerCan: gymTrainDailyCan.energy,
+    canEnergyMultiplier: projectedCanEnergyMultiplier,
+    mcsEnabled: gymTrainMcsEnabled,
+  })
+  const gymTrainSession = useMemo(() => estimateGymSession({
+    stat: gymTrainStartingStat,
+    statKey: gymTrainStat,
+    happy: currentHappyFromApi,
+    energy: clamp(gymTrainCount, 0, 20000) * gymTrainGym.energyCost,
+    dots: gymTrainDots,
+    energyPerTrain: gymTrainGym.energyCost,
+    modifier: gymTrainEffectiveModifier,
+    happyLossRate: happyLossPercent / 100,
+  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainCount, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
+  const gymTrainOne = useMemo(() => estimateGymSession({
+    stat: gymTrainStartingStat,
+    statKey: gymTrainStat,
+    happy: currentHappyFromApi,
+    energy: gymTrainGym.energyCost,
+    dots: gymTrainDots,
+    energyPerTrain: gymTrainGym.energyCost,
+    modifier: gymTrainEffectiveModifier,
+    happyLossRate: happyLossPercent / 100,
+  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
