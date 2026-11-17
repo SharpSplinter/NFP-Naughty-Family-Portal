@@ -633,7 +633,7 @@ The production Pages recovery and the portal staging Pages publication do not au
 ### Latest portal staging Pages publication
 
 - The latest Pages-only staging publication is GitHub Actions [run #44012054870](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012054870), sourced from commit `9cd4271e8d90d2223abdb9a8bcc2ef74a37a26ba`.
-- Cloudflare deployment `55411c48-dc2a-4df1-bcd9-b42b29822ad4` published successfully to `naughtyfamily-staging`: [immutable deployment](https://55411c48.naughtyfamily-staging.pages.dev). The current reconciled branch tree is identical to that published tree, so the merge commit introduced no new frontend artifact requiring another Pages publish.
+- Cloudflare deployment `55411c48-dc2a-4df1-bcd9-b42b29822ad4` published successfully to `naughtyfamily-staging`: [immutable deployment](https://55411c48.naughtyfamily-staging.pages.dev). The reconciliation merge commit's tree was identical to the published tree. The subsequent commit changed only this cutover-review document, leaving frontend build inputs unchanged; no new frontend artifact was introduced after the staging publication.
 - The published bundle's static verification confirmed the staging API hostname. This remains a Pages-only frontend publication, not stateful staging acceptance.
 
 ### Offline validation on the reconciled branch head
