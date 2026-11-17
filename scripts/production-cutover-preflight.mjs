@@ -138,7 +138,10 @@ function validateRun(run, expectedSha, label, expectedWorkflowPath) {
   if (run.repository?.full_name !== REPOSITORY) {
     throw new Error(`${label} must originate from the canonical repository.`);
   }
-  if (run.path !== expectedWorkflowPath) {\n    throw new Error(`${label} must use ${expectedWorkflowPath}.`);\n  }\n  if (run.event !== "workflow_dispatch") {
+  if (run.path !== expectedWorkflowPath) {
+    throw new Error(`${label} must use ${expectedWorkflowPath}.`);
+  }
+  if (run.event !== "workflow_dispatch") {
     throw new Error(`${label} must be an explicitly dispatched workflow run.`);
   }
   if (run.head_sha?.toLowerCase() !== expectedSha.toLowerCase()) {
