@@ -6,6 +6,14 @@ import {
 } from "./production-cutover-preflight.mjs";
 
 const workflow = readFileSync(".github/workflows/worker-deploy.yml", "utf8");
+const restoreWorkflow = readFileSync(".github/workflows/restore-production-backup-rehearsal.yml", "utf8");
+assert.match(restoreWorkflow, /workflow_dispatch:/);
+assert.match(restoreWorkflow, /environment:\\s+name: production-backup/);
+assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_URL/);
+assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_PASSWORD/);
+assert.match(restoreWorkflow, /replay-production-backup-migrations.py/);
+assert.doesNotMatch(restoreWorkflow, /cloudflare\\/wrangler-action|api\\.cloudflare\\.com/i,
+  "The offline restore rehearsal must not call Cloudflare or D1.");
 assert.match(workflow, /workflow_dispatch:/);
 assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "Production deployment must remain manual-only.");
 assert.match(workflow, /environment:\s+name: production/, "Production deployment must use the protected GitHub Environment.");
@@ -104,8 +112,11 @@ const successfulRun = {
 
 const fakeFetch = async url => {
   const value = String(url);
-  if (value.endsWith("/actions/runs/104") || value.endsWith("/actions/runs/105")) {
-    return response(successfulRun);
+  if (value.endsWith("/actions/runs/104")) {
+    return response({ ...successfulRun, path: ".github/workflows/restore-production-backup-rehearsal.yml" });
+  }
+  if (value.endsWith("/actions/runs/105")) {
+    return response({ ...successfulRun, path: ".github/workflows/deploy-staging-acceptance.yml" });
   }
   if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`)) {
     return response({ commit: { tree: { sha: treeSha } } });
@@ -121,7 +132,7 @@ assert.equal(verified.d1RowsRead, 3500000);
 
 const failedAcceptanceFetch = async url => {
   if (String(url).endsWith("/actions/runs/105")) {
-    return response({ ...successfulRun, conclusion: "failure" });
+    return response({ ...successfulRun, conclusion: "failure", path: ".github/workflows/deploy-staging-acceptance.yml" });
   }
   return fakeFetch(url);
 };
