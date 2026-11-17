@@ -167,7 +167,7 @@ export class D1RequestReadMeter {
   }
 
   private async executeStatement<T>(
-    method: "first" | "all" | "run",
+    method: "first" | "all" | "run" | "raw",
     operation: () => Promise<T>,
     record: (result: T) => void,
   ): Promise<T> {
@@ -235,12 +235,12 @@ export class D1RequestReadMeter {
     try {
       if (!database.batch) throw new Error("D1 batch is unavailable on this binding.")
       const results = await database.batch(rawStatements)
-      this.methodCounts.batch += 1
       if (!Array.isArray(results) || results.length !== rawStatements.length) {
         this.batchResultMismatches += 1
-        const observed = Array.isArray(results) ? results : []
-        this.statementCount += Math.max(rawStatements.length, observed.length)
-        this.missingReadMetrics += Math.max(rawStatements.length, observed.length)
+        const observedCount = Array.isArray(results) ? results.length : 0
+        const missingCount = Math.abs(rawStatements.length - observedCount)
+        this.statementCount += missingCount
+        this.missingReadMetrics += missingCount
       }
       if (Array.isArray(results)) {
         for (const result of results) this.recordResult(result, "batch")

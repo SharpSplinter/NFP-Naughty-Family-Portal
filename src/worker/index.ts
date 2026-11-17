@@ -33,14 +33,9 @@ import { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } from "./
 import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company-history"
 import { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible, type FactionDirectorRankingInput, type RankingCompanyInput } from "./ranking-snapshots"
 import { withDailySnapshotReadCache, type DailyReadCacheKV } from "./daily-read-cache"
+import { D1RequestReadMeter, type D1Database } from "./d1-read-accounting"
 import { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isSnapshotStale, normalizeWebhookUrl, normalizeAlertThreshold, normalizeCooldownHours } from "../lib/automation/rules"
 
-type D1Result<T = Record<string, unknown>> = { results?: T[]; success?: boolean; meta?: { changes?: number } }
-type D1Statement = { bind(...values: (string | number | null)[]): D1Statement; first<T = Record<string, unknown>>(): Promise<T | null>; all<T = Record<string, unknown>>(): Promise<D1Result<T>>; run(): Promise<D1Result> }
-type D1Database = {
-  prepare(sql: string): D1Statement
-  batch?(statements: D1Statement[]): Promise<D1Result[]>
-}
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
 type QueueMessage = { body: unknown; attempts?: number; ack(): void; retry(options?: { delaySeconds?: number }): void }
 type TornFixtureBinding = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> }
@@ -6545,17 +6540,37 @@ async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number)
 
 export default {
   async queue(batch: { messages: QueueMessage[]; queue?: string }, env: WorkerEnv): Promise<void> {
-    await handleGlobalRankingQueueBatch(batch, env)
+    const meter = new D1RequestReadMeter()
+    env = { ...env, DB: env.DB ? meter.wrapDatabase(env.DB) : undefined }
+    try {
+      await handleGlobalRankingQueueBatch(batch, env)
+    } finally {
+      meter.finish({ eventType: "queue", queue: batch.queue ?? null, messageCount: batch.messages.length })
+    }
   },
   async scheduled(controller: { scheduledTime: number; cron: string }, env: WorkerEnv, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<void> {
-    if (controller.cron.trim() === "*/5 * * * *") {
-      ctx.waitUntil(runFiveMinuteScheduledJobs(env, controller.scheduledTime))
-      return
+    const meter = new D1RequestReadMeter()
+    env = { ...env, DB: env.DB ? meter.wrapDatabase(env.DB) : undefined }
+    ctx = meter.wrapWaitUntil(ctx)
+    try {
+      if (controller.cron.trim() === "*/5 * * * *") {
+        ctx.waitUntil(runFiveMinuteScheduledJobs(env, controller.scheduledTime))
+        return
+      }
+      ctx.waitUntil(runScheduledAutomation(controller, env))
+    } finally {
+      meter.finish({ eventType: "scheduled", cron: controller.cron.trim() })
     }
-    ctx.waitUntil(runScheduledAutomation(controller, env))
   },
   async fetch(request: Request, env: WorkerEnv, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
-    const origin = allowedOrigin(request, env)
+    const meter = new D1RequestReadMeter()
+    env = { ...env, DB: env.DB ? meter.wrapDatabase(env.DB) : undefined }
+    ctx = meter.wrapWaitUntil(ctx)
+    const requestStartedAt = Date.now()
+    const requestId = request.headers.get("cf-ray") ?? crypto.randomUUID()
+    const route = new URL(request.url).pathname.replace(/\\/\\d+(?=\\/|$)/g, "/:id")
+    try {
+      const origin = allowedOrigin(request, env)
     if (!origin) return jsonResponse({ error: "Origin not allowed." }, 403)
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": origin, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "Authorization, Content-Type, X-Admin-Confirm-Restore", "access-control-max-age": "86400", vary: "Origin" } })
     const url = new URL(request.url)
@@ -9469,5 +9484,14 @@ export default {
       } catch (error) { return tornError(error, origin) }
     }
     return jsonResponse({ error: "Route not found." }, 404, origin)
+    } finally {
+      meter.finish({
+        eventType: "fetch",
+        requestId,
+        method: request.method,
+        route,
+        durationMs: Math.max(0, Date.now() - requestStartedAt),
+      })
+    }
   },
 }
