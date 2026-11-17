@@ -247,8 +247,8 @@ try {
           results: [],
           success: true,
           meta: {
-            rows_read: statement.sql.includes("batch-one") ? 3 : 5,
-            rows_written: statement.sql.includes("batch-one") ? 1 : 2,
+            rows_read: statement.bindings[0] === "one" ? 3 : 5,
+            rows_written: statement.bindings[0] === "one" ? 1 : 2,
           },
         }))
       },
