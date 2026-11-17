@@ -682,7 +682,7 @@ A dedicated manual workflow now exists at `.github/workflows/restore-production-
 
 - It runs only from `portal-rebuild` and requires the supplied candidate commit to equal the workflow's exact `github.sha`.
 - It uses the protected GitHub Environment `production-backup` and expects the environment secrets `PRODUCTION_D1_BACKUP_URL` (HTTPS download reference) and `PRODUCTION_D1_BACKUP_PASSWORD` (archive password). Neither secret was read or configured from this preparation session; the environment's reviewer/branch rules were not verified.
-- The default archive and untouched SQL-export checksums are the fresh 2026-11-17 values: encrypted GPG archive `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5` and SQL export `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`. Inputs can be changed only when a different independently verified archive is used.
+- The default archive and untouched SQL-export checksums are the fresh 2026-11-17 values: encrypted GPG archive `1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97` and SQL export `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`. Inputs can be changed only when a different independently verified archive is used.
 - It downloads the GPG AES-256 encrypted archive to the ephemeral runner, checks its SHA-256, decrypts it using the protected environment secret, verifies the untouched SQL export's exact SHA-256, and runs `scripts/replay-production-backup-migrations.py`.
 - The replay applies all 25 ordered migrations `0013` through `0037` to an in-memory local SQLite restore. It verifies the starting 16-entry migration ledger, final 41-entry ledger, SQLite `integrity_check`, `foreign_key_check`, preservation of every pre-existing application table, and no decrease in any pre-existing application table's row count.
 - Only an aggregate sanitized JSON report is retained as a 14-day Actions artifact. The encrypted archive, decrypted SQL, and in-memory restored database are not uploaded or retained.
@@ -726,7 +726,7 @@ The exact untouched export was downloaded into an isolated processing sandbox an
 
 <badge color="success">Local replay passed</badge>
 
-- Source code commit used for the replay tooling: `22136fe1d35e589989f689184112c2df03f4eb6c`; tree `356df1ea7242c9d9f28bd34cf7697560aed8dd0b`. The 25 migration files were unchanged between the checked source tree and the later branch head.
+- Replay tooling/source commit: `22136fe1d35e589989f689184112c2df03f4eb6c`; tree `356df1ea7242c9d9f28bd34cf7697560aed8dd0b`. The replay was repeated against the current candidate `2896275a75d39894e36ca48e7a2f65380dd4ad4b` (tree `8fc5070c700dd4f9e5767d9f3c1ab03685e84c45`); GitHub comparison confirmed no `migrations/auth/` files or replay-validator script changed between the replay source commit and the current candidate.
 - Starting migration ledger: 16 entries. Migrations `0013` through `0037` all applied in filename order. Final migration ledger: 41 entries.
 - Existing application tables preserved: 39 of 39. Starting application row count: 16,307. Final application row count: 16,313. Existing row counts decreased: zero.
 - SQLite `integrity_check`: `ok`. `foreign_key_check`: zero violations.
@@ -738,7 +738,7 @@ The exact untouched export was downloaded into an isolated processing sandbox an
 - Archive: `ncd-prod-d1-backup-2026-11-17.tar.gz.gpg`.
 - The archive contains the untouched SQL export, a manifest with the D1 ID/bookmark/checksums and replay commit, and the sanitized migration replay report.
 - Encryption: GnuPG symmetric AES-256, S2K mode 3, SHA-512.
-- Encrypted archive size: 1,281,414 bytes. SHA-256: `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5`.
+- Encrypted archive size: 1,281,443 bytes. SHA-256: `1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97`.
 - Decrypt-and-byte-compare verification passed. The uploaded encrypted file was downloaded again and independently matched the same size and SHA-256.
 - The encrypted file download link and its separate passphrase were delivered directly to the owner in the conversation. Neither the SQL export nor its passphrase is committed to the repository.
 
