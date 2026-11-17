@@ -47,7 +47,18 @@ const infrastructureMutationSteps = [
   "Deploy to the isolated naughtyfamily-staging Pages project",
 ];
 for (const step of infrastructureMutationSteps) {
-  const escaped = step.replace(/[.*+?^${}()|[\]\\]/g, "\\console.log("PASS staging safety contract:");
+  const escaped = step.replace(/[.*+?^${}()|[\]\\]/g, "\\for (const step of [
+  "Seed isolated authenticated private-history fixtures",
+  "Remove synthetic private-history fixtures from staging D1",
+]) {
+  const start = workflow.indexOf("name: " + step);
+  assert.notEqual(start, -1, step + " must exist.");
+  const next = workflow.indexOf("\\n      - name: ", start);
+  const block = workflow.slice(start, next === -1 ? workflow.length : next);
+  assert.match(block, /D1_BUDGET_STATE_FILE: \\\x24\\{\\{ runner\\.temp \\}\\}\\/ncd-d1-read-budget\\.json/);
+  assert.match(block, /D1_RUN_BUDGET_ROWS: "100000"/);
+}
+console.log("PASS staging safety contract:");
   assert.match(workflow, new RegExp("name: " + escaped + "\\n\\s+if: inputs\\.feature_suite != 'gym-training'"),
     step + " must be skipped for the harness-only Gym Training retest.");
 }
