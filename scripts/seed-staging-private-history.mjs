@@ -4,6 +4,11 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  assertFixtureIdentityOutput, buildFixtureCleanupStatements,
+  parseWranglerD1Metrics, recordWranglerD1Metrics, sqlQuote as fixtureSqlQuote,
+  STAGING_FIXTURE_IDENTITIES,
+} from "./staging-private-history-fixtures.mjs";
 
 const CONFIG = "wrangler.acceptance.toml";
 const DATABASE = "naughtyfamily-acceptance-staging";
@@ -83,6 +88,16 @@ assert.match(config, /database_name\s*=\s*"naughtyfamily-acceptance-staging"/);
 assert.ok(config.includes('database_id = "' + DATABASE_ID + '"'), "Refusing to seed a different D1 database.");
 assert.ok(!config.includes("bbbe128a-c5cc-46ec-b8ef-93860183e795"), "Production D1 must not appear in the acceptance config.");
 
+
+const identitySql = "SELECT player_id, player_name FROM players WHERE player_id IN (" +
+  STAGING_FIXTURE_IDENTITIES.map(row => fixtureSqlQuote(row.playerId)).join(", ") + ");";
+const identityOutput = execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
+  "wrangler", "d1", "execute", DATABASE, "--remote", "--config", CONFIG,
+  "--command", identitySql, "--json",
+], { encoding: "utf8", env: process.env, maxBuffer: 4 * 1024 * 1024 });
+assertFixtureIdentityOutput(identityOutput);
+recordWranglerD1Metrics(parseWranglerD1Metrics(identityOutput), "fixture identity preflight", 10);
+
 const now = new Date();
 const nowIso = now.toISOString();
 const expiresAt = Math.floor(now.getTime() / 1000) + 3600;
@@ -100,12 +115,9 @@ const featurePlayerId = FEATURE_MEMBER.id;
 const featureDiscordUserId = "999999999999999999";
 const incomeSeries = MEMBERS.map(member => Array.from({ length: 7 }, (_, index) => member.incomeBase + index * member.incomeStep));
 
+const preSeedCleanupAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 const statements = [
-  "PRAGMA foreign_keys = ON;",
-  // Only previously created fixture identities are removed. A colliding real member ID is never deleted.
-  "DELETE FROM admin_audit_log WHERE actor_player_id IN (" + [MEMBERS[0].id, MEMBERS[1].id, ADMIN.id, CONSENT_MEMBER.id].map(sqlQuote).join(", ") + ");",
-  "DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ") OR (player_id = " + sqlQuote(CONSENT_MEMBER.id) + " AND player_name = " + sqlQuote(CONSENT_MEMBER.name) + "));",
-  "DELETE FROM players WHERE (player_id = " + sqlQuote(MEMBERS[0].id) + " AND player_name = " + sqlQuote(MEMBERS[0].name) + ") OR (player_id = " + sqlQuote(MEMBERS[1].id) + " AND player_name = " + sqlQuote(MEMBERS[1].name) + ") OR (player_id = " + sqlQuote(ADMIN.id) + " AND player_name = " + sqlQuote(ADMIN.name) + ") OR (player_id = " + sqlQuote(CONSENT_MEMBER.id) + " AND player_name = " + sqlQuote(CONSENT_MEMBER.name) + ");",
+  ...buildFixtureCleanupStatements({ createdAt: preSeedCleanupAt }),
 ];
 for (let index = 0; index < MEMBERS.length; index += 1) {
   const member = MEMBERS[index];
@@ -212,9 +224,7 @@ const christmasSeasonEnd = "2026-01-01T00:00:00.000Z";
 const gymTimestamp1 = Math.floor(Date.parse("2026-11-12T12:00:00.000Z") / 1000);
 const gymTimestamp2 = Math.floor(Date.parse("2026-11-14T12:00:00.000Z") / 1000);
 
-// Recreate only the exact, named synthetic feature fixtures if this workflow is re-run.
-statements.push("DELETE FROM api_keys WHERE player_id IN (SELECT player_id FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + "));");
-statements.push("DELETE FROM players WHERE (player_id = " + sqlQuote(FEATURE_MEMBER.id) + " AND player_name = " + sqlQuote(FEATURE_MEMBER.name) + ") OR (player_id = " + sqlQuote(PARTIAL_MEMBER.id) + " AND player_name = " + sqlQuote(PARTIAL_MEMBER.name) + ");");
+// Feature and partial-coverage rows are cleared by the shared indexed cleanup above.
 // The second synthetic member explicitly shares its staged Halloween archive and
 // opts into faction-member visibility for the live board. These are separate
 // policy controls: archive sharing does not implicitly expose live private data.
@@ -301,6 +311,13 @@ insertSql("gym_training_event_logs", "player_id, log_id, event_timestamp, log_ty
 const tempDir = mkdtempSync(join(tmpdir(), "ncd-private-history-seed-"));
 const sqlPath = join(tempDir, "seed-private-history.sql");
 try {
+  appendFileSync(process.env.GITHUB_ENV, "STAGING_FIXTURE_CREATED_AT=" + nowIso + "\n");
+  // Re-activate reserved IDs only after the preflight confirmed their names.
+  for (let index = 0; index < statements.length; index += 1) {
+    if (statements[index].startsWith("INSERT INTO players (")) {
+      statements[index] = statements[index].replace(/;$/, " ON CONFLICT(player_id) DO UPDATE SET player_name = excluded.player_name, updated_at = excluded.updated_at, faction_id = excluded.faction_id, faction_verified_at = excluded.faction_verified_at WHERE players.player_name = excluded.player_name;");
+    }
+  }
   writeFileSync(sqlPath, statements.join("\n") + "\n", "utf8");
   console.log("::add-mask::" + tokens[0]);
   console.log("::add-mask::" + tokens[1]);
@@ -308,9 +325,18 @@ try {
   console.log("::add-mask::" + featureToken);
   console.log("::add-mask::" + consentToken);
   console.log("Seeding synthetic first-login consent, private-history, feature-walkthrough, partial-coverage and administrator fixtures in the isolated acceptance D1.");
-  execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
-    "wrangler", "d1", "execute", DATABASE, "--remote", "--config", CONFIG, "--file", sqlPath,
-  ], { stdio: "inherit", env: process.env });
+  let output;
+  try {
+    output = execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
+      "wrangler", "d1", "execute", DATABASE, "--remote", "--config", CONFIG, "--file", sqlPath,
+    ], { encoding: "utf8", env: process.env, maxBuffer: 16 * 1024 * 1024 });
+  } catch (error) {
+    if (error.stdout) process.stdout.write(String(error.stdout));
+    if (error.stderr) process.stderr.write(String(error.stderr));
+    throw error;
+  }
+  process.stdout.write(output);
+  recordWranglerD1Metrics(parseWranglerD1Metrics(output), "synthetic fixture seed");
 
   const envValues = {
     STAGING_TEST_SESSION_TOKEN: tokens[0],

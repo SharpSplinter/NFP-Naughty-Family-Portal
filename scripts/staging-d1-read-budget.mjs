@@ -85,15 +85,17 @@ function assertBudget(currentRows, state, label) {
     currentRowsReadToday: currentRows,
     baselineRowsRead: state.baselineRowsRead,
     rowsReadSinceStart: deltaRows,
+    locallyMeteredWranglerRowsRead: Number(state.directRowsRead || 0),
+    analyticsUnderreportsDirectReads: deltaRows < Number(state.directRowsRead || 0),
     perRunBudgetRows: state.runBudgetRows,
     dailyStopRows: state.dailyStopRows,
   }));
   if (currentRows >= state.dailyStopRows) {
     throw new Error("D1 daily safety stop reached: " + currentRows.toLocaleString("en-US") + " rows read today.");
   }
-  if (deltaRows > state.runBudgetRows) {
+  if (Math.max(deltaRows, Number(state.directRowsRead || 0)) > state.runBudgetRows) {
     throw new Error("Hard per-run D1 read budget exceeded: " + deltaRows.toLocaleString("en-US") +
-      " rows read since staging started; maximum is " + state.runBudgetRows.toLocaleString("en-US") + ".");
+      " rows read by account analytics or direct Wrangler statements; maximum is " + state.runBudgetRows.toLocaleString("en-US") + ".");
   }
 }
 
@@ -111,6 +113,8 @@ if (mode === "start") {
     runBudgetRows,
     dailyStopRows,
     startedAt: new Date().toISOString(),
+    directRowsRead: 0,
+    directReadOperations: 0,
   };
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", { flag: "wx" });
   console.log("D1 BUDGET START " + JSON.stringify({

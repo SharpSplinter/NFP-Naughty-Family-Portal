@@ -5,6 +5,9 @@ const workflow = readFileSync(".github/workflows/deploy-staging-acceptance.yml",
 const feature = readFileSync("scripts/test-staging-features.mjs", "utf8");
 const admin = readFileSync("scripts/test-staging-admin-acceptance.mjs", "utf8");
 const budget = readFileSync("scripts/staging-d1-read-budget.mjs", "utf8");
+const fixtures = readFileSync("scripts/staging-private-history-fixtures.mjs", "utf8");
+const seed = readFileSync("scripts/seed-staging-private-history.mjs", "utf8");
+const cleanup = readFileSync("scripts/cleanup-staging-private-history.mjs", "utf8");
 
 assert.match(workflow, /workflow_dispatch:/);
 assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "D1-backed acceptance must never run on pushes or pull requests.");
@@ -30,4 +33,11 @@ assert.match(admin, /const adminEndpoints = \[\s*"\/api\/admin\/overview",\s*"\/
 assert.match(admin, /round < 1/);
 assert.doesNotMatch(admin, /const sectionNames = \[/, "Admin smoke must not cycle all admin sections by default.");
 
+assert.doesNotMatch(seed, /DELETE FROM\\s+players/i, "Seed must not delete parent player rows.");
+assert.doesNotMatch(cleanup, /DELETE FROM\\s+players/i, "Cleanup must not invoke unbounded player foreign-key cascades.");
+assert.match(fixtures, /event_year = 2026 AND player_id/);
+assert.match(fixtures, /recordWranglerD1Metrics/);
+assert.match(fixtures, /maximumRows <= 10000/);
+assert.match(cleanup, /cleanup identity preflight/);
+assert.match(seed, /fixture identity preflight/);
 console.log("PASS staging safety contract: manual-only acceptance, one-feature selection, account-wide D1 hard budgets, no sustained load replay, and bounded admin smoke.");

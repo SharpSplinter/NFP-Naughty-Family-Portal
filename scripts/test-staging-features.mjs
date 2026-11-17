@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright";
 
 const baseUrl = process.env.STAGING_PAGES_URL || "https://naughtyfamily-staging.pages.dev";
@@ -159,6 +159,8 @@ if (featureSuite === "discord") {
   const generatedCode = await api("/api/me/discord-link-code", { method: "POST", body: "{}" });
   ok(generatedCode, "Discord one-time link-code creation");
   assert.match(generatedCode.payload?.code ?? "", /^[a-f0-9]{48}$/);
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required to remove the synthetic Discord link code by its primary key.");
+  appendFileSync(process.env.GITHUB_ENV, "STAGING_DISCORD_LINK_CODE=" + generatedCode.payload.code + "\n");
   assert.equal(generatedCode.payload?.expiresInSeconds, 300);
   const discordUserId = "999999999999999999";
   const redemption = await api("/api/discord/link/redeem", {
