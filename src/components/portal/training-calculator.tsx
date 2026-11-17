@@ -954,17 +954,17 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const calibrationCandidates = historyConnected ? logRows.map(log => ({
     log,
     details: parseGymHistoryLog(log),
-  })).filter(item => item.details.stat === selectedStat
+  })).filter(item => item.details.stat === gymTrainStat
     && item.details.energy !== null && item.details.trains !== null && item.details.trains > 0
     && item.details.statBefore !== null && item.details.statAfter !== null && item.details.gain !== null
-    && item.details.gym !== null && String(item.details.gym) === String(selectedGym.id)
-    && Math.abs(item.details.energy / item.details.trains - selectedGym.energyCost) < 0.0001) : []
+    && item.details.gym !== null && String(item.details.gym) === String(gymTrainGym.id)
+    && Math.abs(item.details.energy / item.details.trains - gymTrainGym.energyCost) < 0.0001) : []
   const selectedCalibrationCandidate = calibrationCandidates.find(item => item.log.logId === calibrationLogId)
     || calibrationCandidates[0] || null
-  const selectedStatCalibrationSamples = calibrationProfile.samples[selectedStat] || []
+  const selectedStatCalibrationSamples = calibrationProfile.samples[gymTrainStat] || []
   const applyGymCalibration = () => {
     if (!selectedCalibrationCandidate) {
-      setCalibrationMessage("No complete Torn log matches the selected stat and gym.")
+      setCalibrationMessage("No complete Torn log matches the Gym Trains stat and gym.")
       return
     }
     if (!calibrationStartingHappy.trim()) {
@@ -976,10 +976,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       timestamp: selectedCalibrationCandidate.log.timestamp,
       log: selectedCalibrationCandidate.details,
       startingHappy: safeNumber(calibrationStartingHappy, Number.NaN),
-      gymId: selectedGym.id,
-      dots: selectedDots,
-      modifier: autoModifier,
-      energyPerTrain: selectedGym.energyCost,
+      gymId: gymTrainGym.id,
+      dots: gymTrainDots,
+      modifier: gymTrainAutoModifier,
+      energyPerTrain: gymTrainGym.energyCost,
       happyLossRate: happyLossPercent / 100,
     })
     if (!result.ok) {
@@ -987,9 +987,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       return
     }
     setCalibrationProfile(current => {
-      const prior = current.samples[selectedStat] || []
+      const prior = current.samples[gymTrainStat] || []
       const next = [...prior.filter(sample => sample.logId !== result.sample.logId), result.sample].slice(-8)
-      return { version: 1, samples: { ...current.samples, [selectedStat]: next } }
+      return { version: 1, samples: { ...current.samples, [gymTrainStat]: next } }
     })
     setCalibrationMessage(
       "Saved calibration from Torn log #" + result.sample.logId + ": " + fmt(result.sample.correctionFactor, 6)
@@ -999,10 +999,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const resetGymCalibration = () => {
     setCalibrationProfile(current => {
       const samples = { ...current.samples }
-      delete samples[selectedStat]
+      delete samples[gymTrainStat]
       return { version: 1, samples }
     })
-    setCalibrationMessage("Removed this browser's " + selectedStat + " calibration.")
+    setCalibrationMessage("Removed this browser's " + gymTrainStat + " calibration.")
   }
   const canRefresh = !loading && Boolean(apiBase && sessionToken)
   const setPriceOverride = (key: string, value: string) => setPriceOverrides(current => ({ ...current, [key]: value }))
@@ -1450,8 +1450,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         )}
         <div className="tc-calibration-panel">
           <div className="tc-history-heading"><div><span>PLAYER-SPECIFIC MODEL CORRECTION</span><h2>Calibrate against a verified Torn log</h2></div>
-            <span>{activeCalibration.sampleCount ? "Active for this stat and gym" : "No matching calibration"}</span></div>
-          <p className="tc-muted">Choose a stored Torn training log for the selected stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
+            <span>{gymTrainCalibration.sampleCount ? "Active for this Gym Trains setup" : "No matching calibration"}</span></div>
+          <p className="tc-muted">Choose a stored Torn training log matching the Gym Trains stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
           <div className="tc-form-grid">
             <label className="tc-field"><span>Verified Torn training log</span>
               <select data-testid="training-calibration-log" value={selectedCalibrationCandidate?.log.logId || ""}
@@ -1462,14 +1462,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                     </option>)
                   : <option value="">No matching verified log available</option>}
               </select>
-              <small className="tc-hint">Only complete Torn history records matching {currentStatLabel.toLowerCase()}, {selectedGym.name}, and {fmt(selectedGym.energyCost)}E per train are eligible.</small>
+              <small className="tc-hint">Only complete Torn history records matching {gymTrainStatLabel.toLowerCase()}, {gymTrainGym.name}, and {fmt(gymTrainGym.energyCost)}E per train are eligible.</small>
             </label>
             <TextNumberField label="Starting happiness before that log" value={calibrationStartingHappy} fallbackValue={null}
               onChange={setCalibrationStartingHappy} max={HAPPY_CAP}
               hint="Required because Torn records happiness used, not the happiness value before the session." testId="training-calibration-happy" />
             <div className="tc-readout-field"><span>Current calibration</span>
-              <strong>{activeCalibration.sampleCount ? fmt(activeCalibration.factor, 6) + "×" : "Not yet calibrated"}</strong>
-              <small>{activeCalibration.sampleCount + " matching verified log(s) · forecast correction is applied only when the gym dots and live perk multiplier still match."}</small>
+              <strong>{gymTrainCalibration.sampleCount ? fmt(gymTrainCalibration.factor, 6) + "×" : "Not yet calibrated"}</strong>
+              <small>{gymTrainCalibration.sampleCount + " matching verified log(s) · correction applies only when this Gym Trains stat, gym dots and live perk multiplier match."}</small>
             </div>
             <div className="tc-readout-field"><span>Selected stat samples saved in this browser</span>
               <strong>{selectedStatCalibrationSamples.length}</strong>
@@ -1478,13 +1478,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           </div>
           <button type="button" className="tc-primary-button" data-testid="training-calibration-apply"
             onClick={applyGymCalibration}
-            disabled={!selectedCalibrationCandidate || !calibrationStartingHappy.trim() || gymBookChoice !== "auto" || manualModifierEnabled}>
+            disabled={!selectedCalibrationCandidate || !calibrationStartingHappy.trim()}>
             Save calibration from selected log
           </button>
           {selectedStatCalibrationSamples.length > 0 && <button type="button" className="tc-secondary-button"
             data-testid="training-calibration-reset" onClick={resetGymCalibration}>Reset {currentStatLabel} calibration</button>}
           {!historyConnected && <p className="tc-muted">Connect Gym Training history in Account Settings to select verified Torn logs here.</p>}
-          {(gymBookChoice !== "auto" || manualModifierEnabled) && <p className="tc-inline-warning">Return to the live automatic perk modifier and turn off the manual modifier override before adding a calibration sample.</p>}
           {calibrationMessage && <p className="tc-inline-note" role="status">{calibrationMessage}</p>}
         </div>
       </section>
