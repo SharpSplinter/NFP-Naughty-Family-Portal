@@ -812,6 +812,53 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const naturalEnergyPerDay = energyBar
     ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval)) * regenMultiplier)
     : 0
+  const projectionDailySupply = calculateDailyTrainingSupply({
+    naturalEnergyPerDay: projectedNaturalEnergyPerDay,
+    xanaxPerDay: projectionXanaxPerDay,
+    fhcPerDay: projectionFhcPerDay,
+    refillEnergyPerFhc: projectedRefillEnergy,
+    cansPerDay: projectionCanPerDay,
+    energyPerCan: projectionDailyCan.energy,
+    canEnergyMultiplier: projectedCanEnergyMultiplier,
+    mcsEnabled: projectionMcsEnabled,
+  })
+  const longTermProjection = useMemo(() => {
+    let stat = projectionStartingStat
+    let happy = startingHappy
+    let totalGain = 0
+    let totalEnergy = 0
+    let totalTrains = 0
+    const days = clamp(projectionDays, 1, 3650)
+    for (let day = 0; day < days; day++) {
+      const mcsEnergy = getWeeklyStockEnergyBonus(day, projectionMcsEnabled)
+      const energyForDay = projectionDailySupply.baseEnergyPerDay + mcsEnergy
+      const happyBeforeTraining = Math.min(HAPPY_CAP,
+        happy + projectionXanaxPerDay * 75 + projectionFhcPerDay * 500)
+      const result = estimateGymSession({
+        stat,
+        statKey: projectionStat,
+        happy: happyBeforeTraining,
+        energy: energyForDay,
+        dots: projectionDots,
+        energyPerTrain: projectionGym.energyCost,
+        modifier: projectionEffectiveModifier,
+        happyLossRate: happyLossPercent / 100,
+      })
+      stat = result.endingStat
+      totalTrains += result.trains
+      totalEnergy += energyForDay
+      happy = applyDailyHappyRegeneration(
+        happyBeforeTraining,
+        result.trains * projectionGym.energyCost * happyLossPercent / 100,
+        naturalHappyPerDay,
+        dailyHappyBarMaximum,
+      )
+      totalGain += result.statGain
+    }
+    return { stat, totalGain, energy: totalEnergy, trains: totalTrains, days }
+  }, [projectionStartingStat, startingHappy, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
+    projectionStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
+    projectionXanaxPerDay, projectionFhcPerDay, naturalHappyPerDay, dailyHappyBarMaximum])
   const naturalHappyPerDay = happyBar
     ? Math.max(0, safeNumber(happyBar.increment) * 86400 / Math.max(1, safeNumber(happyBar.interval)))
     : 0
