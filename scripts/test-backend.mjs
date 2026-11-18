@@ -101,7 +101,7 @@ try {
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
   const { placement } = require(join(temp, "components/floor/ranking-utils.js"))
-  const { estimateWeeklyProfit, financialCosts, reportedCompanyProfit, resolveDisplayedDailyProfit, stockCostTotal } = require(join(temp, "components/floor/financial-utils.js"))
+  const { estimateWeeklyProfit, financialCosts, isIsoReportingDay, reportedCompanyProfit, resolveDisplayedDailyProfit, stockCostTotal } = require(join(temp, "components/floor/financial-utils.js"))
   const { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isWithinQuietHours, normalizeWebhookUrl, isSnapshotStale, normalizeAlertThreshold, normalizeCooldownHours } = require(join(temp, "lib/automation/rules.js"))
   const { evaluateDiscordPollHealth } = require(join(temp, "lib/automation/discord-poll-monitoring.js"))
 
@@ -455,6 +455,15 @@ try {
     assert.equal(future.elapsedSeconds, 0)
     assert.equal(future.lastActionAt, new Date(1_800_000_100_000).toISOString())
     assert.equal(classifyFactionInactivity(1_800_000_000, "not-a-date").classification, "unknown")
+  })
+
+  await test("company history date keys accept canonical ISO days and reject malformed dates", () => {
+    assert.equal(isIsoReportingDay("2026-11-17"), true)
+    assert.equal(isIsoReportingDay("2026-02-30"), false)
+    assert.equal(isIsoReportingDay("2026/11/17"), false)
+    assert.equal(isIsoReportingDay("17-11-2026"), false)
+    assert.equal(isIsoReportingDay(null), false)
+    assert.equal(isIsoReportingDay(20261117), false)
   })
 
   await test("rolling weekly profit reconstructs complete windows and falls back to reported totals", () => {
@@ -2453,6 +2462,11 @@ try {
     assert.match(workerSource, /fetchedAtMs - 18 \* 60 \* 60 \* 1000/)
     assert.ok(uiSource.includes("/api/me/companies/\u0024{encodeURIComponent(companyId)}/history?days=all"))
     assert.match(uiSource, /const officialStockSnapshots = officialStockHistory/)
+    assert.ok(uiSource.includes("if (!isIsoReportingDay(day)) return []"), "valid ISO reporting days must be retained by the history parser")
+    assert.ok(uiSource.includes('point.stockSnapshotKind === "lock-in"'), "stock differences must only use official lock-in rows")
+    assert.ok(uiSource.includes("weeklyProfitSourceNote"), "reconstructed weekly profit must disclose its source")
+    assert.ok(uiSource.includes("if (!/^[0-9]+$/.test(targetCompanyId))"), "company IDs must pass numeric validation")
+    assert.ok(workerSource.includes("/^[0-9]+$/.test(chance)"), "revitalize chance keys must accept numeric IDs")
     assert.match(uiSource, /const stockDifference = currentOfficialStockSnapshot\?\.stockQuantity != null && previousStockSnapshot\?\.stockQuantity != null/)
     assert.match(uiSource, /missingStockSnapshotDays\.join\(" and "\)/)
     assert.doesNotMatch(uiSource, /const officialStockSnapshots = \(currentChartCompany\?\.history \?\? \[\]\)/)

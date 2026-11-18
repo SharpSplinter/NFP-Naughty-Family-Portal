@@ -1,5 +1,12 @@
 import type { CompanyDashboardModel } from "../../lib/company/types"
 
+/** Accept only real YYYY-MM-DD reporting-day keys, rejecting impossible dates. */
+export function isIsoReportingDay(value: unknown): value is string {
+  if (typeof value !== "string" || value.length !== 10) return false
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`)
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value
+}
+
 export function firstNumeric(root: unknown, names: string[]): number | null {
   const visit = (value: unknown, depth: number): number | null => {
     if (!value || typeof value !== "object" || depth > 5) return null

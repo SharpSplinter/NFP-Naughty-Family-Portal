@@ -2144,7 +2144,7 @@ async function loadHalloweenEventMetricsForPlayers(db: D1Database, eventYear: nu
       if (isRecord(chances)) {
         metrics.revitalizeChanceCounts = Object.fromEntries(
           Object.entries(chances).filter(([chance, count]) =>
-            /^\\d+$/.test(chance) && typeof count === "number" && Number.isFinite(count) && count >= 0)
+            /^[0-9]+$/.test(chance) && typeof count === "number" && Number.isFinite(count) && count >= 0)
         ) as Record<string, number>
       }
     } catch { metrics.revitalizeChanceCounts = {} }
