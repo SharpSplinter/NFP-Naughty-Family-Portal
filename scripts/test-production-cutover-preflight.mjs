@@ -41,6 +41,7 @@ const candidate = "8e34071abe0f570a171cfe919ddbc16a92b689ab";
 const stagingRuntimeCommit = "f25c2980d186124441baf84184e90a3942b25ef4";
 const release = "451869f0ae3ba7ae37aeca4d15ac34680d74ab6c";
 const treeSha = "a".repeat(40);
+const stagingTreeSha = "b".repeat(40);
 const stagingEvidenceReference = "https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/main/docs/audits/2026-11-17-pr152-bounded-staging-acceptance.md";
 const stagingEvidence = [
   "# PR #152 bounded staging acceptance",
@@ -142,16 +143,26 @@ const fakeFetch = async url => {
       path: ".github/workflows/worker-build-artifact.yml",
     });
   }
-  if (value.endsWith(`/compare/${stagingRuntimeCommit}...${candidate}`)) {
+  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`) || value.endsWith(`/commits/${stagingRuntimeCommit}`)) {
+    return response({ commit: { tree: { sha: value.endsWith(stagingRuntimeCommit) ? stagingTreeSha : treeSha } } });
+  }
+  if (value.endsWith(`/git/trees/${treeSha}?recursive=1`)) {
     return response({
-      status: "ahead",
-      ahead_by: 2,
-      behind_by: 0,
-      files: [{ filename: ".github/workflows/restore-production-backup-rehearsal.yml" }],
+      truncated: false,
+      tree: [
+        { path: "src/worker/index.ts", type: "blob", sha: "runtime-unchanged" },
+        { path: ".github/workflows/restore-production-backup-rehearsal.yml", type: "blob", sha: "restore-new" },
+      ],
     });
   }
-  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`) || value.endsWith(`/commits/${stagingRuntimeCommit}`)) {
-    return response({ commit: { tree: { sha: value.endsWith(stagingRuntimeCommit) ? "b".repeat(40) : treeSha } } });
+  if (value.endsWith(`/git/trees/${stagingTreeSha}?recursive=1`)) {
+    return response({
+      truncated: false,
+      tree: [
+        { path: "src/worker/index.ts", type: "blob", sha: "runtime-unchanged" },
+        { path: ".github/workflows/restore-production-backup-rehearsal.yml", type: "blob", sha: "restore-old" },
+      ],
+    });
   }
   if (value === "https://raw.githubusercontent.com/SharpSplinter/Naughty-Company-Dashboard/main/docs/audits/2026-11-17-pr152-bounded-staging-acceptance.md") {
     return new Response(stagingEvidence, { status: 200, headers: { "content-type": "text/plain" } });
@@ -164,7 +175,7 @@ assert.equal(verified.candidateCommit, candidate);
 assert.equal(verified.releaseCommit, release);
 assert.equal(verified.treeSha, treeSha);
 assert.equal(verified.stagingAcceptanceCommit, stagingRuntimeCommit);
-assert.equal(verified.stagingTreeSha, "b".repeat(40));
+assert.equal(verified.stagingTreeSha, stagingTreeSha);
 assert.deepEqual(verified.stagingRuntimeEquivalentFiles, [".github/workflows/restore-production-backup-rehearsal.yml"]);
 assert.equal(verified.d1RowsRead, 3500000);
 
@@ -185,12 +196,13 @@ await assert.rejects(
 );
 
 const changedRuntimeFetch = async url => {
-  if (String(url).includes(`/compare/${stagingRuntimeCommit}...${candidate}`)) {
+  if (String(url).endsWith(`/git/trees/${stagingTreeSha}?recursive=1`)) {
     return response({
-      status: "ahead",
-      ahead_by: 3,
-      behind_by: 0,
-      files: [{ filename: "src/worker/index.ts" }],
+      truncated: false,
+      tree: [
+        { path: "src/worker/index.ts", type: "blob", sha: "runtime-old" },
+        { path: ".github/workflows/restore-production-backup-rehearsal.yml", type: "blob", sha: "restore-old" },
+      ],
     });
   }
   return fakeFetch(url);
