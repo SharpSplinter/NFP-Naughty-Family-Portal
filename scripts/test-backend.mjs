@@ -2300,8 +2300,10 @@ try {
     const enqueueStart = workerSource.indexOf("async function enqueueHalloweenLiveSnapshot")
     const enqueueEnd = workerSource.indexOf("async function enqueueScheduledHalloweenSnapshots", enqueueStart)
     const enqueueSource = workerSource.slice(enqueueStart, enqueueEnd)
-    assert.ok(enqueueSource.includes("if (existing) return"), "terminal jobs must not be re-enqueued on every scheduler tick")
-    assert.doesNotMatch(enqueueSource, /UPDATE halloween_live_snapshot_jobs SET status = 'queued'/, "a failed event bucket must not create an unbounded retry loop")
+    assert.ok(enqueueSource.includes("INSERT OR IGNORE INTO halloween_live_snapshot_jobs"), "the unique event/member/kind/bucket key must make insertion idempotent without a preflight SELECT")
+    assert.ok(enqueueSource.includes("inserted.meta?.changes"), "a duplicate unique bucket must not send another Queue message")
+    assert.ok(enqueueSource.includes("DELETE FROM halloween_live_snapshot_jobs WHERE job_id = ? AND status = 'queued'"), "a failed Queue send must remove only its unsent placeholder so a later scheduler tick can retry")
+    assert.doesNotMatch(enqueueSource, /UPDATE halloween_live_snapshot_jobs SET status = 'queued'/, "a terminal failed event bucket must not create an unbounded retry loop")
   })
 
   await test("Trick or Treat event windows follow each member's selected TCT slot", () => {
