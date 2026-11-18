@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          const base = "https://naughty-company-api.kboone801.workers.dev";
+          const base = "https://naughtyfamily-api.kboone801.workers.dev";
           const apiKey = process.env.TORN_API_KEY;
           if (!apiKey) { console.error("Required repository secret TORN_API_KEY is missing."); process.exit(1); }
           let failed = false;

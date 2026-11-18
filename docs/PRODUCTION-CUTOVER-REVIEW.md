@@ -1,0 +1,945 @@
+# Production backup, migration, rollback and cutover review
+
+**Original review date:** 2026-11-03  
+**State refresh:** 2026-11-18 UTC (focused security/correctness review, quota-focused scheduler/read-path fixes, offline regression validation, and current release gates reconciled)
+**Scope:** PR #152, branch `portal-rebuild`  
+**Decision:** **NO-GO for production cutover.** PR #152 remains OPEN/DRAFT, with no independent approving review recorded and no approval to merge or deploy. The focused review's two quota findings have now been addressed in the runtime code and covered by offline regression checks. Stateful D1/Queue staging acceptance has **not** been run or authorized. The production service-key permission is owner-confirmed, not independently probed. Production remains untouched.
+
+**2026-11-13 baseline update:** PR #155 merged at `f0420232231fa9708cece921a4fd5921eaad8e71`. Its production Worker deployment succeeded, migration `0012_company_ranking_snapshots.sql` was applied, and the existing `naughty-company-dashboard` Pages site was manually deployed from Android. The owner confirmed Trends & Charts displays the correct data. This does **not** deploy the Naughty Family portal branch or authorize its remaining migrations.
+
+## Current release-candidate status (authoritative, 2026-11-18 UTC)
+
+This is the controlling status snapshot for the current candidate. Dated sections below retain their historical evidence and decisions; where their status statements conflict with this section, this section takes precedence. Sections 9, 24, and 25 describe older gate snapshots, not the current candidate state.
+
+- **PR state:** PR #152 remains OPEN/DRAFT. The runtime quota fixes are in code SHA `fc4aad54393fbe114ec935ccf901e6cba415c99f`. Offline validation was run on test tip `0351c8690a0ac93b714ad08eb572d475159eb527`; subsequent commits update cutover documentation only.
+- **Current offline validation:** Quality Gates [#44214129955](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214129955) passed on test tip `0351c`, including TypeScript, production frontend build, staging-harness syntax, and the complete backend regression suite. Discord Bot Quality Gates [#44214139306](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214139306) and the seasonal UI/browser audit [#44214129949](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214129949) also passed on that tip. No frontend files were changed by the quota fixes.
+- **Offline scheduler SQL check:** The new candidate CTE was exercised against an in-memory SQLite fixture for opening, periodic, and closing windows, including duplicate-bucket suppression. This did not contact Cloudflare or staging D1.
+- **Prior candidate staging Pages-only publication:** [#44209816972](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209816972) passed on runtime SHA `082e611` and published [the immutable staging Pages deployment](https://a3763cc7.naughtyfamily-staging.pages.dev). The publication did not deploy/call the staging Worker, read or write D1, apply migrations, or use Queues. No frontend source changed in the current quota-fix commits.
+- **Production backup rehearsal:** [#44210665274](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44210665274) passed on earlier runtime SHA `082e611` using local SQLite on an ephemeral GitHub runner. It replayed the encrypted production export plus migrations `0013`–`0037`; SQLite integrity was `ok`, with zero foreign-key violations. The later quota fixes add no migrations or schema changes. This was **not** a Cloudflare D1 restore or staging integration and did not contact Cloudflare, Torn, or Queues.
+- **Stateful staging acceptance:** **NOT RUN or authorized** on the current runtime code. The earlier Halloween acceptance [#44203293682](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203293682) tested the older SHA `e20add2b80312f07d32036f677f2ec6ea4b8ff0a`; its pass is historical evidence only.
+- **Read-only account-wide D1 snapshot:** Cloudflare Insights for 2026-11-18 00:00:00–00:38:57.832 UTC showed 9,116 rows read and 428 rows written across the account. Against the observed Free-plan daily allowances of 5,000,000 rows read and 100,000 rows written, that left 4,990,884 read and 99,572 written at that timestamp. This is a point-in-time snapshot, **not** a current reserve or permission to spend quota. No newer quota snapshot was taken for this code-only work. Prior observations show account analytics can under-report direct Wrangler reads; retain the local per-operation meter and hard-stop arithmetic for any future acceptance.
+- **Production service key:** On 2026-11-17 the owner confirmed that `TORN_API_KEY_SERVICE` is Full Access for the shared faction roster, user-job, and company-profile requests. This is owner attestation, not a live `/key/info` probe. The secret value was not read or disclosed.
+- **Still required before any production cutover:** a separately authorized and budgeted exact-candidate staging decision; final review of the production Queue binding/configuration diff; independent approval of the latest PR push and required conversation resolution; fresh verification of protected Environment/branch controls; a fresh production Time Travel bookmark and backup-access/checksum check immediately before migration; and explicit owner authorization for merge, production migrations/Worker deployment, and the separate `naughtyfamily` Pages production publication.
+- **Quota decision:** The two code-level query/write findings from Section 27 have been addressed in Section 28. Do not dispatch stateful staging acceptance merely because offline tests pass. First obtain a fresh read-only account-wide quota snapshot, calculate and reserve a small single-suite D1 read/write budget with the hard stop, and obtain explicit authorization before any D1/Queue staging activity.
+
+## 1. Acceptance status
+
+### Company API keys — accepted on staging
+
+The operator confirmed successful company-data refresh on the isolated staging portal with:
+
+- A primary Torn Full Access key.
+- A primary Torn Custom Access key.
+- Secondary company API keys.
+
+Secondary company keys were also added and removed successfully. A secondary key is validated by the company profile returned by Torn, and the returned company ID scopes the credential under the authenticated portal account. It is not required to belong to the portal member's Torn player ID. It does not replace the primary sign-in key or grant director permissions.
+
+This acceptance is specifically for company profile/employee/stock refresh. It does **not** establish permission acceptance for owner-only bars/cooldowns, detailed networth, or Halloween historical logs; those features have separate selections and consent requirements.
+
+The stateful acceptance environment is:
+
+- Pages: `https://naughtyfamily-staging.pages.dev`
+- Worker: `https://naughtyfamily-api-staging.kboone801.workers.dev`
+- D1: `naughtyfamily-acceptance-staging`
+
+The portal staging D1 migration ledger was read after the final PR #152 staging integration: 30 migration records through `0025_halloween_attack_metrics.sql`, with 64 tables. Full quality gates passed on [run #43508964744](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43508964744), and the complete isolated D1/Queue integration passed on [run #43508964870](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43508964870). That integration verified private-live consent/owner checks, faction stats missing/unexpected-field metadata, roster/personalstats/gym-energy collection, immutable weekly report creation and comparison, authenticated APIs, admin recovery safeguards, transient-error retries and DLQ behavior. These runs contacted only portal staging D1 and sanitized fixture Workers; no production D1 or Worker was contacted.
+
+## 2. Production administrator-access blocker (owner-reported, 2026-11-14)
+
+The project owner reports being unable to reach the production administrator controls because production still uses the legacy separate administrator username/password step-up. This is consistent with the current `main` implementation: the Worker expects the `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` configuration and the production UI presents a separate administrator credential form after the member session is established. This is distinct from the PR #152 portal implementation, which has not been deployed.
+
+The intended PR #152 authorization flow is:
+
+1. The member signs in with a Torn API key belonging to their own account. The Worker validates that key with Torn, confirms the player's identity and Naughty Souls faction membership, and creates a session tied to that verified Torn player ID.
+2. Administrator privilege is a separate role attached to that verified player ID in the D1 `administrators` registry. The Worker joins the active role to the authenticated session and checks it on every `/api/admin/*` request.
+3. The portal administrator registry UI grants/revokes by Torn player ID. The owner bootstrap is limited to the configured `ADMIN_PLAYER_ID` and uses insert-if-absent semantics; it does not override a previously revoked row.
+4. A Torn ID by itself is not an authentication secret. The Torn API key proves account control; the verified player ID is the stable identity to which the administrator role is attached.
+
+**Operational consequence:** The new Torn-identity/administrator-registry flow cannot provide production admin access until the portal D1 migrations (including `0012_administrator_registry.sql`), the portal Worker, and the `naughtyfamily` Pages frontend are deployed together. Until then, production continues to use the legacy administrator credential step-up, which the owner reports is currently unusable. Staging acceptance of the new role flow is not proof that production has switched over.
+
+Do not attempt to work around production authorization, alter production administrator records, or change production secrets as an interim fix. A full production D1 export backup and isolated restore rehearsal have completed successfully; the exact backup/checksum and rehearsal results are recorded in Section 6 and the exact-candidate local replay is recorded in the current status above. The last recorded Time Travel bookmark was re-read at 2026-11-14 04:23:12.859 UTC; it is historical and must be re-read immediately before any approved migration. The production service-key permission is now owner-confirmed Full Access (2026-11-17), but no live key-info probe was performed. Cutover remains paused pending exact-candidate stateful acceptance if explicitly authorized, Queue binding/config review, independent PR approval, and explicit release approval. Production remains unchanged.
+
+## 3. Verified production baseline
+
+These values were read from Cloudflare and the live production D1 database during this review. Re-check them immediately before a release; do not assume they remain unchanged.
+
+| Resource | Verified state |
+|---|---|
+| Production API Worker | `naughtyfamily-api` |
+| Production D1 | `naughty-company-dashboard` |
+| Production D1 UUID | `bbbe128a-c5cc-46ec-b8ef-93860183e795` |
+| Production D1 schema | 41 tables; existing member/session/company/history data is present |
+| Production migration ledger | 16 entries; latest is `0012_company_ranking_snapshots.sql` |
+| Portal-branch migrations requiring pre-cutover ledger reconciliation | `0012_administrator_registry.sql` and `0013` through `0037` |
+| Active Worker version | `af3b0630-c758-4910-9a41-d43c8c330960` (100% traffic; deployed 2026-11-13 20:00:55 UTC) |
+| Legacy Pages site | `https://naughty-company-dashboard.pages.dev` |
+| Legacy Pages canonical production deployment | `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13; PR #155 frontend) |
+| New Pages target | `https://naughtyfamily.pages.dev`; no production deployment yet |
+| New Pages API base | `https://naughtyfamily-api.kboone801.workers.dev` |
+
+At the last recorded read-only production D1 check (2026-11-14), the ledger contained 16 migration records and ended with `0012_company_ranking_snapshots.sql`; the schema had 41 tables. The portal branch additions after that recorded baseline are `0012_administrator_registry.sql` and `0013` through `0037`. The two `0012` filenames are distinct. This production ledger is not freshly re-read as part of the 2026-11-16 staging work; reconcile the exact live filenames immediately before any approved migration. Production is not a clean or empty database. Do not repoint acceptance resources at production.
+
+Cloudflare D1 Time Travel bookmarks are generated automatically; there is no manual bookmark-creation action. A fresh read-only `GET` of the current bookmark was completed at **2026-11-14T04:23:12.859Z** for production D1 `naughty-company-dashboard`. It returned `000004ca-0000033a-00005123-06be4f012000b1afd17db773eeaf4ef8`, unchanged from the export-time bookmark recorded in Section 6. This is a freshly revalidated current-bookmark reference, **not a newly minted snapshot**. Cloudflare documents that bookmarks advance automatically and can also move due to internal maintenance without application SQL writes. Re-read the current bookmark immediately before the actual migration if the cutover is delayed or any writes/maintenance events occur.
+
+## 4. Deployment safety controls
+
+### Pages
+
+The legacy `naughty-company-dashboard` Pages project's Git automatic deployments are currently disabled. The latest production deployment is `b0352cf1-db23-437e-87b4-a363d08b53b8`, published on 2026-11-13 after PR #155. Preserve this site as the current live Company Dashboard and fallback; do not publish the separate portal branch to this project.
+
+The new `naughtyfamily` Pages target is configured for `main`, with automatic production and preview deployments disabled. It has no production deployment yet. The production `VITE_API_BASE_URL` is set to the current production API Worker.
+
+The legacy Pages production publish for PR #155 has already completed. The separate `naughtyfamily` target still has no production deployment. For the eventual portal cutover, deploy deliberately to `naughtyfamily` only after its Worker/schema is ready. Do not re-enable legacy Git deployment during the release.
+
+### Worker
+
+The previous `.github/workflows/worker-deploy.yml` ran on pushes to `main`, applied pending production D1 migrations, then deployed the production Worker. That made a merge capable of changing production implicitly.
+
+The PR branch now makes this workflow `workflow_dispatch` only. It requires:
+- The workflow to be run from `main`.
+- The explicit target `naughtyfamily-api`.
+- An operator-supplied reference to a verified production backup stored outside this repository.
+
+The workflow lists pending migrations, applies them, lists the ledger again, deploys the Worker, and checks production health plus encryption readiness. The backup-reference input is a manual gate only: the workflow does not create, download, inspect, or validate the backup. The operator must complete those checks independently before dispatching it. This safeguard takes effect when the PR's workflow change is merged to `main`.
+
+## 5. Migration review
+
+The current `portal-rebuild` branch contains **42 SQL migration files**, with the latest migration `0037_private_data_visibility.sql`. This is the complete ordered filename inventory, not just the newer tail of the chain:
+
+```text
+0001_auth.sql
+0002_company_financial_history.sql
+0002_faction_directors.sql
+0003_company_data_sharing.sql
+0003_faction_star_weekly_counts.sql
+0004_company_data_sharing.sql
+0005_admin_panel.sql
+0006_automation.sql
+0007_automation_delivery_and_rules.sql
+0008_admin_endpoint_refresh.sql
+0008_combined_webhook_delivery.sql
+0009_discord_alert_poll_monitoring.sql
+0009_faction_director_snapshot_kind.sql
+0010_admin_step_up.sql
+0011_discord_account_linking.sql
+0012_administrator_registry.sql
+0012_company_ranking_snapshots.sql
+0013_faction_membership_verification.sql
+0014_halloween_historical_keys.sql
+0015_halloween_shared_archive.sql
+0016_membership_revalidation_scheduler.sql
+0017_halloween_member_event_slots.sql
+0018_membership_verification_state.sql
+0019_faction_performance_collection.sql
+0020_faction_weekly_boundaries.sql
+0021_faction_weekly_reports.sql
+0022_faction_stats_snapshots.sql
+0023_member_private_live_connections.sql
+0024_halloween_custom_key_support.sql
+0025_halloween_attack_metrics.sql
+0026_halloween_attack_outcome_metrics.sql
+0027_halloween_exchange_market_price_cache.sql
+0028_christmas_town_archive.sql
+0029_halloween_historical_event_years.sql
+0030_event_history_consent_records.sql
+0031_torn_event_calendar_windows.sql
+0032_portal_first_login_consent.sql
+0033_gym_training_history.sql
+0034_portal_api_key_usage_consent.sql
+0035_portal_api_key_access_type.sql
+0036_admin_read_path_indexes.sql
+0037_private_data_visibility.sql
+```
+
+There are multiple files with the same numeric prefix (`0002`, `0003`, `0008`, `0009`, and `0012`). Migration checks and release records must compare the complete filenames, not numeric prefixes alone. In particular, `0012_administrator_registry.sql` and `0012_company_ranking_snapshots.sql` are distinct migrations.
+
+At the last recorded read-only production ledger check (2026-11-14), production D1 had 16 migration records and ended at `0012_company_ranking_snapshots.sql`. The portal branch additions after that recorded baseline are `0012_administrator_registry.sql` and `0013` through `0037`. This is a historical baseline, not a claim that the live ledger has been re-read on 2026-11-16. Re-read the exact production ledger immediately before any approved migration.
+
+| Migration file(s) | Purpose |
+|---|---|
+| `0012_administrator_registry.sql` | Durable administrator role registry |
+| `0013_faction_membership_verification.sql` | Torn faction membership verification |
+| `0014_halloween_historical_keys.sql` | Member-owned Halloween historical collection key metadata |
+| `0015_halloween_shared_archive.sql` | Shared Halloween archive structures |
+| `0016_membership_revalidation_scheduler.sql` | Scheduled member revalidation state |
+| `0017_halloween_member_event_slots.sql` | Per-member Halloween event windows |
+| `0018_membership_verification_state.sql` | Membership verification and fail-closed state |
+| `0019_faction_performance_collection.sql` | Public faction roster/stat/gym collection runs and snapshots |
+| `0020_faction_weekly_boundaries.sql` | Idempotent Sunday-boundary run registry |
+| `0021_faction_weekly_reports.sql` | Immutable completed-week reports and member results |
+| `0022_faction_stats_snapshots.sql` | Faction-wide stats collection and snapshots |
+| `0023_member_private_live_connections.sql` | Private-live consent metadata, snapshots, and request throttling |
+| `0024_halloween_custom_key_support.sql` | Rebuilds Halloween historical-key storage to support Full and Custom Access while copying existing rows |
+| `0025_halloween_attack_metrics.sql` | Halloween attack and Revitalize metrics |
+| `0026_halloween_attack_outcome_metrics.sql` | Successful/lost/stalemated attack outcome totals and version metadata |
+| `0027_halloween_exchange_market_price_cache.sql` | Shared public item-market average-price cache |
+| `0028_christmas_town_archive.sql` | Encrypted Christmas Town history connections, collection jobs, and event logs |
+| `0029_halloween_historical_event_years.sql` | Known historical Halloween event windows for 2021–2025 |
+| `0030_event_history_consent_records.sql` | Per-player event-history consent records and legacy backfill |
+| `0031_torn_event_calendar_windows.sql` | Torn calendar source/confirmation metadata and per-player event-calendar cache |
+| `0032_portal_first_login_consent.sql` | Centralized first-login/policy consent and collection/sharing preferences |
+| `0033_gym_training_history.sql` | Member-owned Gym Training key metadata, collection jobs, logs, and indexes |
+| `0034_portal_api_key_usage_consent.sql` | API-key usage consent, acknowledgement timestamp, and key fingerprint |
+| `0035_portal_api_key_access_type.sql` | Constrained `custom` / `full` API-key access declaration |
+| `0036_admin_read_path_indexes.sql` | Company/player administrative and faction-boundary read indexes |
+| `0037_private_data_visibility.sql` | Private-data visibility preferences and fingerprint-bound member-key capability cache |
+
+The current-candidate staging acceptance runs [#316](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43792813370) and [#317](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793005243) passed their isolated-staging migration-apply and migration-ledger verification steps. Those runs targeted `naughtyfamily-acceptance-staging` only. They do not establish that production has applied any of the portal migrations.
+
+The migration review found no intentional deletion of company history. In particular, migration `0024_halloween_custom_key_support.sql` rebuilds the Halloween historical-key table by copying its existing rows before replacing the table. The ordered chain, final table definition, row counts, and foreign-key integrity still require verification against a restored production-data copy before release.
+
+**Important distinction:** the 2026-11-14 production-data restore rehearsal replayed the backup through its existing migration ledger ending at `0012_company_ranking_snapshots.sql`; it did not replay migrations `0013`–`0037`. The isolated acceptance D1 migration run is not a substitute for replaying this full chain against restored production data. See Section 6 and Section 15.
+
+## 6. Production backup procedure
+
+D1 Time Travel provides point-in-time recovery within the preceding 30 days. A separate SQL export provides a portable backup. Cloudflare notes that a D1 export can block queries while it runs, so schedule it during a quiet release window.
+
+### Completed production export and isolated restore rehearsal (2026-11-14)
+
+A full D1-compatible SQL export was completed from production database `naughty-company-dashboard` (`bbbe128a-c5cc-46ec-b8ef-93860183e795`). The export captured Time Travel bookmark `000004ca-0000033a-00005123-06be4f012000b1afd17db773eeaf4ef8` at 2026-11-14 03:38:56 UTC. The untouched SQL export is 7,706,099 bytes with SHA-256 `8ac318ed69c22eea82d8bc5cff55fe010236a3dc9c979ed718fae3ee0282eb7e`.
+
+**Current bookmark recheck (2026-11-14 04:23:12.859 UTC):** a read-only `GET /time_travel/bookmark` with no timestamp parameter returned the same bookmark token as the export-time record above. This validates that token as the current bookmark at the time of this review; it does not create a new manual snapshot. Cloudflare states Time Travel is always enabled, bookmarks are automatically generated, and bookmark values may advance due to internal maintenance events. See [Cloudflare D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/).
+
+The first direct import attempt exposed a 4.3 MB `global_rankings_cache` statement exceeding D1's per-statement limit. The export also interleaves data for a child table before a later referenced table definition. A lossless import-normalized derivative was prepared: it breaks the 4,295,173-character JSON value into bounded hex-literal append operations, creates all 40 application tables before row data, inserts parent tables before dependants using the exported foreign-key graph, restores `sqlite_sequence` state after data, and creates all 22 explicit indexes last. The JSON value and its `fetched_at` timestamp were reconstructed and compared exactly.
+
+The normalized SQL is 12,029,770 bytes, SHA-256 `1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2`. It passed a complete local SQLite transaction replay in 0.48 seconds: `PRAGMA integrity_check` returned `ok`, `PRAGMA foreign_key_check` returned zero violations, 40 application tables and 934 rows were present, and the 16-entry migration ledger ended with `0012_company_ranking_snapshots.sql`.
+
+The same normalized SQL then imported successfully into temporary isolated D1 database `naughty-company-dashboard-restore-rehearsal-v3-20261113` in ENAM: 1,270 statements completed, with 40 application tables, 22 explicit indexes, 934 application rows, and 16 migration entries. All 40 per-table row counts matched the local replay. The 4,295,173-character global rankings JSON was valid and contained 15,344 array entries. Cloudflare D1's table-valued `pragma_foreign_key_check` returned zero violations. Cloudflare's D1 REST query API rejected a direct `PRAGMA integrity_check` request with `SQLITE_AUTH`; therefore the local integrity result is explicitly not represented as a direct D1 integrity-check result.
+
+All three temporary restore-rehearsal D1 databases (two failed attempts and the successful verified copy) were deleted after the checks. No rehearsal database remains. No production D1 writes, migrations, restores, Worker deployments, Pages deployments, or secret changes were performed.
+
+The refreshed encrypted archive is stored outside the repository and includes both the untouched original export and the normalized restore SQL, sanitized production metadata, checksums and this rehearsal report. Archive SHA-256: `052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b`. The download reference and separately issued archive password are retained in the owner conversation; neither is committed here.
+
+From a trusted, authenticated operator environment:
+
+```sh
+npx wrangler whoami
+npx wrangler d1 migrations list naughty-company-dashboard --remote --config wrangler.toml
+npx wrangler d1 export naughty-company-dashboard --remote --output "$BACKUP_PATH"
+sha256sum "$BACKUP_PATH"
+```
+
+Requirements:
+- `BACKUP_PATH` must resolve to encrypted, access-controlled storage outside the repository.
+- Confirm that the export completed, is non-empty, and has a recorded SHA-256 checksum.
+- Keep the export and its checksum in a restricted location accessible to the recovery operator. Do not upload the SQL export to a general CI artifact, commit it, or paste it into chat.
+- Record the backup storage reference in the manual Worker workflow's `backup_reference` input.
+- Capture a fresh Time Travel bookmark through Cloudflare's D1 Time Travel API immediately before migrations. Keep the bookmark alongside the backup reference.
+- Do not use the review-time bookmark as the pre-release bookmark if any writes have occurred since it was captured.
+
+Cloudflare Wrangler documents that `d1 migrations apply` captures a backup and that a failed migration is rolled back while earlier successful migrations remain applied. Treat this as an additional safety net, not as a replacement for the verified external export and Time Travel bookmark.
+
+## 7. Migration and deployment order
+
+After the preceding checks and explicit approval:
+
+1. Merge PR #152 only after final code review and remaining feature-level acceptance.
+2. Confirm the legacy Pages production deployment remains frozen and the new Pages target remains paused.
+3. Complete the external D1 export and fresh Time Travel bookmark; verify the backup checksum and access.
+4. On `main`, manually dispatch **Deploy Cloudflare Worker** with the exact production target `naughtyfamily-api` and the external backup reference. The protected workflow applies pending D1 migrations, verifies the exact migration ledger, deploys the renamed Worker, then checks `/health`, D1 health, and key-encryption readiness.
+5. Confirm the production ledger includes the approved portal migration files through `0037_private_data_visibility.sql`. Run the approved integrity and foreign-key checks and verify the event-history, Gym Training, consent, private-data-visibility, and member-key-capability schemas and expected row preservation.
+6. Verify the production Worker accepts CORS from `https://naughtyfamily.pages.dev`.
+7. Run authenticated smoke tests with a standard member and an administrator: sign-in, session, company data refresh, member settings, public faction endpoints, consent-gated feature endpoints, and admin authorization. Confirm no private data is exposed to another member.
+8. Build with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and manually publish `dist/` to Pages project `naughtyfamily`. Do not publish the portal bundle to the legacy `naughty-company-dashboard` project.
+9. Verify the new Pages root, JavaScript bundle API URL, browser CORS, sign-in, company refresh, and critical workspace flows. The preserved legacy Pages deployment currently points at the retired `naughty-company-api` Worker hostname and is **not** a verified rollback until it is rebuilt and checked against `naughtyfamily-api`.
+10. Record the deployed Worker version, Pages deployment ID, exact D1 migration ledger, backup reference/checksum, rollback bundle verification, and smoke-test results in the release record.
+
+## 8. Rollback plan and limitations
+
+### Worker code rollback
+
+The active production Worker version observed during the 2026-11-13 refresh was `af3b0630-c758-4910-9a41-d43c8c330960` (100% traffic). Re-read the active deployment immediately before portal cutover and record that exact pre-release version ID for any code rollback.
+
+Cloudflare supports:
+
+```sh
+npx wrangler rollback <PREVIOUS_VERSION_ID> --name naughtyfamily-api
+```
+
+A Worker rollback changes code deployment, not D1 schema or data. Cloudflare also warns that bindings are not rolled back and older code may fail against changed data structures. Prefer a forward-fix migration when the schema has changed, and only roll code back after confirming compatibility with the migrated schema.
+
+### Pages rollback
+
+The legacy project remains at `https://naughty-company-dashboard.pages.dev`, with current PR #155 deployment `b0352cf1-db23-437e-87b4-a363d08b53b8` preserved. It is the immediate fallback destination if the new `naughtyfamily` cutover fails.
+
+The new `naughtyfamily` project currently has no production deployment, so there is no prior deployment inside that project to roll back to before its first release. After the first successful production deployment, Cloudflare Pages can roll back to an earlier successful production deployment in that same project. For the first cutover, keep the legacy project and deployment available and document the user-facing fallback URL.
+
+### D1 data rollback
+
+Use the fresh pre-migration Time Travel bookmark for point-in-time restore only as a last resort, with explicit approval and after assessing all writes made since that bookmark. Restoring D1 rewinds the database itself; it is not an application-only rollback and can discard legitimate writes created after the restore point.
+
+Prefer forward fixes for schema/application defects. If restoring is unavoidable:
+- Stop writes and scheduled/queue activity through an approved maintenance action.
+- Take a second backup of the current, post-failure database before restoring.
+- Restore using the captured bookmark or timestamp, following Cloudflare's Time Travel procedure.
+- Reconcile any valid post-bookmark writes from the post-failure export.
+- Deploy code compatible with the restored schema.
+- Verify ledger, integrity, foreign keys, authentication, company/history records and all critical routes before reopening traffic.
+
+Do not run a restore or overwrite production D1 as part of a routine application rollback.
+
+## 9. Remaining production gates (historical snapshot; superseded by the 2026-11-18 current status above)
+
+- [x] Operator-confirmed real-key permission/consent acceptance for private bars/cooldowns, optional detailed networth, and Halloween historical summaries/logs, as recorded in the PR's validation history. This does not replace the staging functional acceptance still required for the latest Halloween dashboard changes.
+- [x] Admin/non-admin end-to-end acceptance on the isolated staging Worker/D1/Pages environment, including the synthetic administrator and denied non-admin paths. Production authorization has not been switched.
+- [x] Physical Android TalkBack/layout review, automated accessibility checks, sustained staging load and read-only production request-budget review. Device/version details and granular per-control/table outcomes remain documented limitations.
+- [x] Full production D1 export completed, SQL checksum verified, and AES-256 archive uploaded outside the repository; owner should retain a downloaded copy separately.
+- [x] Isolated production-data restore rehearsal completed; 40 application tables, 22 explicit indexes and 934 rows matched, with zero D1 foreign-key violations. Direct D1 PRAGMA integrity_check remains unavailable through the REST API; exact normalized SQL passed local SQLite integrity_check.
+- [x] Current production Time Travel bookmark re-read and recorded at 2026-11-14 04:23:12.859 UTC. The value is unchanged from the export-time bookmark; Cloudflare automatically generates bookmarks and does not offer manual snapshot creation. Re-read immediately before migration if anything changes or time passes.
+- [x] Production migration ledger and schema rechecked read-only at 2026-11-14 04:24 UTC: 16 migrations, 41 tables; last applied migration remains `0012_company_ranking_snapshots.sql`. Portal-specific `0012_administrator_registry.sql` and `0013`–`0025` remain pending.
+- [x] Production Worker secret binding names inspected without reading values. `KEY_ENCRYPTION_SECRET`, `TORN_API_KEY_CUSTOM`, and `TORN_FACTION_API_KEY` are present. The optional dedicated `TORN_API_KEY_FULL_ACCESS` binding is not configured; the portal code falls back to the Custom Access service key for the public global-ranking path. That fallback must be functionally accepted on staging before release.
+- [ ] Functional acceptance on the current release candidate in isolated staging: Live/current-year and Historical/all-time/year-specific scopes, member comparisons, partial-coverage behavior, Revitalize proc percentage and exact numerator/denominator, plus critical admin/member flows. The latest quality gates are not a substitute for this runtime acceptance.
+- [ ] Explicit owner approval to merge PR #152, dispatch the production Worker migration/deployment workflow, and publish the new `naughtyfamily` Pages target.
+- [ ] Post-deployment smoke tests completed and rollback operator available.
+
+## 10. Current production changes versus the separate portal cutover
+
+The existing Company Dashboard release is live; the Naughty Family portal branch is not.
+
+Completed before this state refresh:
+- PR #155 merged at `f0420232231fa9708cece921a4fd5921eaad8e71`.
+- Production D1 migration `0012_company_ranking_snapshots.sql` applied successfully.
+- Production Worker deployed as version `af3b0630-c758-4910-9a41-d43c8c330960`, 100% traffic.
+- Existing Pages project manually deployed from Android; canonical deployment `b0352cf1-db23-437e-87b4-a363d08b53b8`; user confirmed Trends & Charts displays the correct data.
+- Automatic production/preview Git deployments on the legacy Pages project remain disabled.
+
+Not performed for the separate Naughty Family portal cutover:
+- Full production D1 SQL export backup has been created, checksummed, and packaged in an AES-256 archive outside the repository. An import-normalized derivative passed an isolated D1 data restore rehearsal; the original export remains unchanged in the archive.
+- No portal migrations `0012_administrator_registry.sql` or `0013`–`0025` have been applied to production.
+- No portal-branch Worker has been deployed to production.
+- No production deployment has been created for the `naughtyfamily` Pages target.
+- No production rollback/restore has been performed.
+
+The portal branch Worker deployment workflow remains manual-only and requires the explicit `naughty-company-api` target plus an operator-supplied backup reference. That manual reference input is still not an automated check of backup contents; the owner must supply the verified archive reference at release time. The backup now exists and has passed the isolated restore rehearsal documented above. This workflow safeguard becomes effective after merge. This section is a state clarification, not authorization to deploy.
+
+## 11. Final release review (2026-11-14 04:24 UTC)
+
+### Read-only production evidence
+
+- Production D1 identity was verified as `naughty-company-dashboard` / `bbbe128a-c5cc-46ec-b8ef-93860183e795`. A read-only schema query returned 41 tables (including Cloudflare's internal `_cf_KV` table) and a read-only `d1_migrations` query returned 16 records, ending with `0012_company_ranking_snapshots.sql`. No portal migration has been applied.
+- The current production Worker deployment is `naughty-company-api`, version `af3b0630-c758-4910-9a41-d43c8c330960`, serving 100% traffic from deployment `c1705050-3a5b-424d-bd1d-50a71c185fcc` (created 2026-11-13 20:00:55 UTC).
+- Legacy Pages project `naughty-company-dashboard` remains on successful production deployment `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13 20:23:19 UTC). Its Git automatic production/preview deployments are disabled.
+- Separate Pages project `naughtyfamily` has no production deployment. Its automatic production/preview Git deployments are disabled. It remains the intended target for the future portal deployment; the legacy Pages project remains the fallback.
+- Production Worker secret binding names were read without accessing values. `KEY_ENCRYPTION_SECRET`, `TORN_API_KEY_CUSTOM`, and `TORN_FACTION_API_KEY` are present. `TORN_API_KEY_FULL_ACCESS` is absent; the branch code has a Custom Access fallback. Do not change secrets as part of this review.
+- The branch Worker deployment workflow was inspected. It is `workflow_dispatch` only, requires the `main` ref, explicit `naughty-company-api` target, and a non-empty external-backup reference. It independently verifies the production Worker/D1 names and IDs. The reference input is not cryptographic validation of backup contents; the operator remains responsible for checksum/access verification.
+
+### PR and validation evidence
+
+- PR #152 remains OPEN/DRAFT. No GitHub review approvals or inline review threads are recorded. The branch has no commits behind current `main` (merge base `097762ac6f1d8afc071b37c1518f235073834644`).
+- Latest release-candidate code commit reviewed: `a9f4d8b8e10c7ed7eb5832c6bd9711f65d444361`.
+- [Quality Gates #1021](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43556243253) passed TypeScript, production frontend build, staging harness syntax checks and backend regression tests. [Discord Bot Quality Gates #123](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43556243261) also passed.
+- The prior full isolated D1/Queue staging integration and sustained-load acceptance remain valid for the code they tested, but they predate the latest Halloween event-year/member-comparison and Revitalize-rate changes. No functional staging deployment/acceptance was performed on this exact release candidate; CI does not prove runtime behavior against staging D1/Queue/Pages.
+- The current bookmark was read again at 04:23:12.859 UTC and matched the export-time bookmark. Cloudflare documents that bookmarks are generated automatically; this was a fresh read of the current token, not a separately minted backup snapshot.
+
+### Release decision
+
+**NO-GO for production cutover.** The production baseline, external SQL backup/restore rehearsal, current Time Travel bookmark, target isolation and manual deployment safeguards have been reviewed. Before any merge/deployment, complete functional staging acceptance on this exact release candidate, resolve/accept the Custom Access fallback for the public global-ranking service-key path, and obtain explicit owner approval. After approval, take another current bookmark immediately before migration, verify the external backup is accessible/checksummed, recheck pending migration filenames, then follow Sections 7–8. This review did not merge the PR, change its draft status, deploy Worker/Pages, run SQL writes, apply migrations, modify secrets, or restore production D1.
+
+## 12. Post-sync branch and environment refresh (2026-11-14 19:56 UTC)
+
+**Scope:** read-only GitHub/Cloudflare verification after synchronizing `portal-rebuild` with `main`. This is not production-release approval.
+
+### Branch synchronization
+
+- The GitHub branch merge completed successfully without conflicts. Merge commit: [`a333a2292b5bb154f59bb14e3d64e7ebd2787b42`](https://github.com/SharpSplinter/Naughty-Company-Dashboard/commit/a333a2292b5bb154f59bb14e3d64e7ebd2787b42), message: “Merge current main into portal-rebuild”.
+- Merge parents are the previous portal head `e8d3b3c45101bb966e4fb3b8a6adc88e64f1a421` and current `main` head `ddb0257f8d99905f9e1fc3080e7c4d1ea2b36a8b`.
+- GitHub compare `main...portal-rebuild` reports status `ahead`, 689 commits ahead and **zero commits behind**. Merge base equals current `main` at `ddb0257f8d99905f9e1fc3080e7c4d1ea2b36a8b`.
+- PR #152 remains OPEN/DRAFT and GitHub reports it mergeable. No submitted PR reviews or inline review threads were returned. The two prior quality-gate successes (runs #43631623195 and #43631623177) predate this merge commit; they are not validation of the synchronized HEAD. The staging workflow below runs its own typecheck, backend tests and production frontend build.
+
+### Complete portal migration chain
+
+The current branch carries the portal migration chain through `0031_torn_event_calendar_windows.sql`. Production currently has 16 migration entries and ends at `0012_company_ranking_snapshots.sql`; exact filename matters because `0012_administrator_registry.sql` is a distinct pending migration. The 20 portal-specific pending files are `0012_administrator_registry.sql` and `0013` through `0031`. The added migrations after the previous 0025 cutover-review ceiling are:
+
+| Migration | Schema/data effect |
+|---|---|
+| `0026_halloween_attack_outcome_metrics.sql` | Adds successful-attack and lost/stalemated-attack totals plus an outcomes-version field to per-member Halloween attack jobs |
+| `0027_halloween_exchange_market_price_cache.sql` | Creates a shared public item-market average-price cache keyed by Torn item ID |
+| `0028_christmas_town_archive.sql` | Creates owner-scoped encrypted Christmas Town history credentials, per-member/year collection jobs and event logs, with supporting indexes |
+| `0029_halloween_historical_event_years.sql` | Seeds known October 25–November 1 historical Halloween event windows for 2021–2025, preserving existing rows |
+| `0030_event_history_consent_records.sql` | Creates per-player Halloween/Christmas Town initial-consent records and backfills records from existing keys and collection jobs |
+| `0031_torn_event_calendar_windows.sql` | Adds source/confirmation metadata to event windows and member slots; creates the per-player Torn event-calendar cache and index |
+
+Together with the previously reviewed migrations 0012–0025, this brings the portal release's pending production chain to 20 exact migration filenames. The isolated staging D1 has already recorded 36 migrations through `0031_torn_event_calendar_windows.sql` and 72 tables. Staging ledger evidence is not proof that production has applied any of these migrations.
+
+### Current production baseline (read-only recheck)
+
+- Production D1: `naughty-company-dashboard`, UUID `bbbe128a-c5cc-46ec-b8ef-93860183e795`. The read-only migration query still returns 16 entries, ending at `0012_company_ranking_snapshots.sql`. The SQLite catalog query returned 42 table names including Cloudflare's `_cf_KV` and SQLite's `sqlite_sequence`; no writes were made.
+- The current D1 Time Travel bookmark read during this refresh is `000004ca-000007b8-00005123-478147ed475d7c4eb4a1ec783f8bcffa`. Bookmarks are automatically generated; re-read immediately before migrations and verify that the encrypted external backup remains accessible and checksummed.
+- Production Worker `naughty-company-api` remains on version `af3b0630-c758-4910-9a41-d43c8c330960`, deployment `c1705050-3a5b-424d-bd1d-50a71c185fcc`, serving 100% traffic. Live binding names still include legacy `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`, `DB`, `GLOBAL_RANKINGS_QUEUE`, `KEY_ENCRYPTION_SECRET`, `TORN_API_KEY_CUSTOM` and `TORN_FACTION_API_KEY`. `TORN_API_KEY_FULL_ACCESS` remains absent. Secret values were not read.
+- Legacy Pages project `naughty-company-dashboard` remains the live fallback, with latest known successful deployment `b0352cf1-db23-437e-87b4-a363d08b53b8`. Separate production Pages project `naughtyfamily` still has no production deployment. Production and preview automatic Git deployments remain disabled for both projects.
+
+### Isolated staging baseline before manual run
+
+- Staging D1: `naughtyfamily-acceptance-staging`, UUID `02cca699-1232-495f-8a0a-de525058b92a`, with 36 migration entries through `0031_torn_event_calendar_windows.sql` and 72 tables. This is a separate database from production.
+- Latest successful `naughtyfamily-staging` Pages deployment observed before the manual rerun: deployment `4a20a907-340b-44ca-8cec-b619544f3446`, 2026-11-14 18:51:56 UTC, commit `ec43ebfa8535e597bd103b9cf46f15742b6915e8`. The staging Worker also received a deployment at approximately 18:51 UTC. Deployment success does not by itself prove every later GitHub acceptance step completed.
+- The merged head includes the Discord reconnect UI commit after that Pages deployment. The staging workflow's push path list does not include `src/components/floor/alerts-panel.tsx`; therefore the manual staging dispatch is required to deploy and validate this UI change as part of the synchronized branch.
+- The manual workflow is `.github/workflows/deploy-staging-acceptance.yml`, dispatched on ref `portal-rebuild` with input `confirm_target=naughtyfamily-staging`. It runs repository typecheck, backend tests and frontend build; verifies staging-only D1/Queue/Worker targets; applies pending migrations to the staging D1; deploys the staging API Worker; checks API health, DB, encryption readiness and browser CORS; builds and deploys the staging Pages project with the staging API URL; runs responsive and authenticated admin/non-admin/accessibility/request-budget checks; performs a 285-second read-only sustained request test at 5 requests/second; and cleans synthetic private-history fixtures in an `always()` step.
+- This acceptance workflow does not replace the separately scoped explicit functional walkthrough for every Halloween/Christmas feature. Review the exact workflow result and, where not covered by its automated steps, verify Halloween Live/current-year and Historical all-time/year-specific views, member comparisons, partial coverage and Revitalize numerator/denominator, Christmas Town archive views, Torn calendar windows, and Discord reconnect/`/link-code` before production approval.
+
+### Manual isolated staging acceptance result (2026-11-14 19:57–20:04 UTC)
+
+[Run #43634883077](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43634883077) completed **SUCCESS** on `portal-rebuild` at exact tested HEAD `b6fee3526614bbf97caff2281222918f9b29fcd4`. This HEAD includes merge commit `a333a2292b5bb154f59bb14e3d64e7ebd2787b42` and the initial cutover-review refresh. The run completed all 25 job steps successfully.
+
+- Repository typecheck, backend test suite and production frontend build passed.
+- Explicit staging-target checks passed. Staging-only Queues were provisioned; migrations were applied/listed against `naughtyfamily-acceptance-staging` only. Its ledger remains 36 entries through `0031_torn_event_calendar_windows.sql`.
+- The isolated staging API Worker deployment succeeded. `/health` returned HTTP 200 with database and key-encryption readiness `ok`; CORS origin matched, and OPTIONS preflight returned 204.
+- Pages deployed successfully to the separate `naughtyfamily-staging` project. The deployment was `https://500dbeae.naughtyfamily-staging.pages.dev`; the stable staging origin returned HTTP 200, included the root mount and JavaScript asset, and its bundle contained the staging API Worker URL.
+- Responsive Company workspace checks passed at eight viewports, including Trends data and Rankings/Faction navigation. Account Settings bounds/card-spacing checks passed at eight viewports.
+- Admin role enforcement passed: admin recognized, ordinary member denied, anonymous request 401, and eight representative member admin attempts 403. Non-admin browser denied direct admin navigation. Admin UI opened all nine sections with grant/refresh actions disabled; the walkthrough made 15 GETs and zero mutations.
+- Automated accessibility scan covered 11 screens with zero axe violations (zero serious/critical). Android viewport emulation covered four portrait/landscape sizes with no document-level horizontal overflow. This remains automated/emulated testing, not a substitute for the separately recorded physical-device TalkBack review.
+- Request-budget smoke passed for 22 admin GETs in two five-request bursts: p50 351.6 ms, p95 681.5 ms, max 1,582.1 ms.
+- Sustained read-only load passed for 285.1 seconds: 1,425 requests at 5 requests/second, observed concurrency 4, zero failures, p50 336.4 ms, p95 487.1 ms, p99 581.8 ms, max 1,459.6 ms.
+- The `always()` cleanup passed and removed synthetic private-history users, sessions, company rows and history from staging D1. Screenshot artifact `company-dashboard-staging-validation` uploaded as artifact [14129902331](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43634883077/artifacts/14129902331) (14,580,952 bytes).
+
+**Coverage limit:** this workflow validates the portal staging foundation, general member/admin flows, accessibility, responsiveness and request budget. It does not itself record a dedicated interactive walkthrough of the newest Halloween Live/Historical scopes, all-time/year-specific member comparisons and Revitalize numerator/denominator, Christmas Town event archive, Torn calendar window behavior, or the Discord reconnect/`/link-code` experience. Those remain explicit release-candidate feature checks before production approval.
+
+### Updated release decision
+
+**NO-GO for production cutover pending feature-specific acceptance, the service-key decision, and explicit release approval.** The manual isolated staging acceptance on the synchronized branch passed. The branch synchronization and this staging deployment do not authorize a production change. The public global-ranking path still prefers `TORN_API_KEY_FULL_ACCESS` and falls back to `TORN_API_KEY_CUSTOM`; the production Worker does not currently have the dedicated Full Access binding. Functionally accept the configured fallback in isolated staging or supply and test a dedicated compatible Full Access service key.
+
+The next controlled sequence is: complete the feature-specific checks listed above; resolve the service-key question; obtain explicit release approval; re-read production's current bookmark and exact migration ledger immediately before the change; then, only after approval, merge PR #152 and manually dispatch the protected production Worker workflow from `main` with the explicit `naughtyfamily-api` target and independently verified external backup reference. Publish the separate `naughtyfamily` Pages target only after production API health is confirmed. Keep the legacy Pages deployment available as the UI fallback.
+
+No production SQL writes, migrations, Worker/Pages deployments, restores, secret changes or PR merge were performed during this refresh.
+
+## 13. Production target and master service-key update (2026-11-15 00:14 UTC)
+
+This section supersedes earlier production Worker-name and Full Access-secret observations above.
+
+### Live Cloudflare configuration verified read-only
+
+- The production API Worker is now `naughtyfamily-api`, with intended endpoint `https://naughtyfamily-api.kboone801.workers.dev`. Cloudflare lists the Worker and its most recent deployment is `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093`, version `54f02948-73b3-4535-bd71-8d9683ad62c9`, receiving 100% traffic. The old Worker name `naughty-company-api` now returns Cloudflare 404 “This Worker does not exist on your account.”
+- Production Worker secret binding names include `TORN_API_KEY_SERVICE` (type `secret_text`), the newly supplied master Full Access service key. `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY` and `KEY_ENCRYPTION_SECRET` are also present. Secret values were not read. The checked-in portal source previously referenced `TORN_API_KEY_FULL_ACCESS`; deployment must use the new `TORN_API_KEY_SERVICE` binding name. The updated branch will prefer SERVICE for shared Full Access operations and retain CUSTOM only as the global-ranking fallback.
+- The production Discord bot's live `DASHBOARD_API` service binding now points to `naughtyfamily-api`. The checked-in `bot/wrangler.production.toml` was still pointing to the retired name and must be updated before a future bot deployment. Its `/link` command must direct members to the new Pages URL.
+- Cloudflare Pages project `naughtyfamily` is configured with subdomain/domain `naughtyfamily.pages.dev`, production branch `main`, and automatic Git production/preview deployments disabled. It currently has **zero production deployments**. The manual Pages release workflow must build with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and deploy to project `naughtyfamily`.
+- The legacy Pages project `naughty-company-dashboard` remains present, but the previous `naughty-company-api` Worker has been removed. Its existing compiled frontend still targets that retired API hostname, so the legacy Pages site is not currently a verified end-to-end rollback. Before relying on it as a fallback, either restore an old-host compatibility Worker or rebuild/redeploy the legacy Pages site against the new Worker and verify it. After the first successful production deployment, the new `naughtyfamily` project can use its own Pages deployment rollback history.
+- Production D1 remains `naughty-company-dashboard` / `bbbe128a-c5cc-46ec-b8ef-93860183e795`; its migration ledger still ends at `0012_company_ranking_snapshots.sql`. Renaming the Worker and Pages target does not rename or replace the production database. The pre-migration backup and immediate Time Travel bookmark gates remain mandatory.
+
+### Required repository alignment and release sequence
+
+The checked-in production configuration must be consistent with the live names before the next production deployment: set `wrangler.toml` to `naughtyfamily-api` and the canonical Pages CORS origin; change the protected Worker workflow's confirmed target and health URL; change the manual Pages workflow's project and API build URL; change the frontend fallback API URL; update the health payload service identity and tests to `naughtyfamily-api`; use `TORN_API_KEY_SERVICE` in the Worker type and Full Access call sites; and align the bot's service binding and `/link` destination. A production bot deployment may be needed to publish the updated link instructions, although the live service binding has already been changed to the new API.
+
+The master service-key binding's presence resolves the earlier “missing Full Access key” configuration blocker, but successful use by the new branch code still needs to be exercised with the updated binding name. Continue to hold production cutover until the updated branch passes quality gates and isolated staging acceptance, the remaining feature-specific Halloween/Christmas/Torn-calendar/Discord-link walkthrough is complete, explicit owner approval is recorded, the external backup is independently verified, and the fresh D1 bookmark plus exact pending migration ledger are rechecked immediately before production migration.
+
+No production D1 writes, migrations, Pages deployment, or portal Worker code deployment were performed as part of this read-only configuration discovery.
+
+## 14. Repository alignment and final master-key staging acceptance (2026-11-15 00:37 UTC)
+
+This section supersedes the outstanding repository-alignment items in Section 13.
+
+### Production configuration and source alignment
+
+- The checked-in production Worker target is now `naughtyfamily-api`; `wrangler.toml` keeps the existing production D1 database ID/name and sets the canonical CORS origin to `https://naughtyfamily.pages.dev`.
+- The protected production Worker workflow confirms `naughtyfamily-api`, validates the existing `naughty-company-dashboard` D1 ID, and probes `https://naughtyfamily-api.kboone801.workers.dev/health`. Production deployment remains manual-only from `main`, requiring explicit target confirmation and an external backup reference.
+- The manual Pages workflow builds with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` and publishes to the separate `naughtyfamily` Pages project. Frontend fallback URL and health payload service identity now use `naughtyfamily-api`.
+- The Worker source now prefers production `TORN_API_KEY_SERVICE` for shared Full Access service calls. It retains `TORN_API_KEY_FULL_ACCESS` only as a compatibility alias for the current isolated staging Worker until its old secret name can be retired. Public global rankings use SERVICE first, then the staging compatibility alias, then the Custom Access service fallback; no service path substitutes a member's private credential.
+- The Discord bot's checked-in Wrangler service binding now names `naughtyfamily-api`, its source `/link` instruction points at `https://naughtyfamily.pages.dev`, and the live production bot's `DASHBOARD_API` service binding was independently verified pointing to `naughtyfamily-api`. The bot source change is in the PR; this review does not claim a new production bot code deployment.
+- Cloudflare's read-only production Worker check still showed deployment `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093`, version `54f02948-73b3-4535-bd71-8d9683ad62c9`, at 100% traffic. This is the already-existing renamed production Worker version, not a deployment of the PR's Worker code.
+- Live production secret *names* include `TORN_API_KEY_SERVICE`, `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY` and `KEY_ENCRYPTION_SECRET`; no secret values were read. The old Worker name `naughty-company-api` remains removed/404. Pages project `naughtyfamily` remains configured at `https://naughtyfamily.pages.dev` with zero production deployments.
+- Production D1 remains `naughty-company-dashboard` / `bbbe128a-c5cc-46ec-b8ef-93860183e795`. The final read-only ledger check still returned 16 migration records ending `0012_company_ranking_snapshots.sql`. No production migration was applied.
+- The legacy Pages project `naughty-company-dashboard` still serves its old compiled API URL. Since the old Worker hostname no longer exists, that site is not a verified operational rollback. Preserve it as an archived prior deployment, but do not rely on it for rollback unless a compatibility Worker is restored or the legacy Pages project is rebuilt against the new API and verified.
+
+### Final isolated staging acceptance with service-key compatibility
+
+[Manual staging acceptance run #43658512441](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43658512441) completed **SUCCESS**, all 25 job steps, on branch `portal-rebuild` at tested HEAD `e4e48e62b52b0e79630999d6c927d586e9b30d3e`.
+
+- Typecheck, backend regression tests, frontend production build, and explicit staging-only Worker/D1/Queue checks passed.
+- Staging D1 migrations were applied and verified through `0031_torn_event_calendar_windows.sql`; production D1 was not targeted.
+- The staging Worker deployed with the `TORN_API_KEY_SERVICE`-first helper and legacy `TORN_API_KEY_FULL_ACCESS` compatibility binding. Staging API `/health` returned 200 with database/encryption readiness `ok`; CORS was correct. The staging Pages origin returned 200 and its bundle embedded the staging API URL.
+- Responsive Company workspace checks passed at eight viewports. Admin/non-admin checks, keyboard/semantic navigation, automated accessibility scan and read-only request-budget smoke passed. The accessibility scan covered 11 screens with zero axe violations.
+- Sustained read-only staging load passed for 285 seconds and 1,425 requests at 5 requests/second, observed concurrency 3, zero failures, p50 120.4 ms, p95 166.5 ms, p99 304.1 ms and max 577.3 ms.
+- Synthetic private-history fixtures were removed successfully. Screenshot artifact [company-dashboard-staging-validation, ID 14139094009](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43658512441/artifacts/14139094009) uploaded (14,625,231 bytes).
+
+This establishes successful isolated acceptance of the branch's renamed Worker/Pages endpoints and its SERVICE-first/legacy-staging-binding compatibility logic. The production SERVICE secret's value was never read or copied to staging; the test run used only the isolated staging Worker's existing configured bindings. It does not, by itself, constitute a production traffic cutover or prove the production secret's external Torn permissions by making a live production call.
+
+### Remaining production release gates
+
+**Production cutover remains NO-GO until the following are completed:**
+
+1. Complete an explicit feature walkthrough of Halloween Live/current-year and Historical all-time/year-specific views, member comparisons, partial coverage and Revitalize numerator/denominator; Christmas Town archive; Torn event calendar windows; and Discord reconnect/`/link-code`.
+2. Record explicit owner approval for PR #152 and the production migration/Worker deployment/Pages publication. PR #152 remains OPEN/DRAFT after this staging result.
+3. Immediately before migration, independently verify the encrypted external D1 backup and checksum/access, re-read the current production D1 Time Travel bookmark, and read the exact pending production migration ledger again.
+4. After the approved merge, manually dispatch the protected production Worker workflow from `main` using target `naughtyfamily-api` and the verified backup reference. Apply the ordered portal D1 migrations, deploy the Worker, verify health/encryption and service-key behavior, then manually publish the separate `naughtyfamily` Pages project.
+5. Run production smoke tests and retain an available rollback operator. The legacy Pages deployment is not a working API fallback while it points at the removed Worker hostname; prepare and verify a real fallback before relying on it.
+
+No production portal migrations, portal Worker code deployment, `naughtyfamily` Pages production deployment, PR merge or secret-value access was performed during this update.
+
+## Cloudflare references
+
+- [D1 import/export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
+- [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)
+- [D1 Wrangler commands and migrations](https://developers.cloudflare.com/d1/wrangler-commands/)
+- [Cloudflare Pages branch deployment controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
+- [Cloudflare Pages rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/)
+- [Cloudflare Worker rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)
+
+
+## 15. 2026-11-16 release-gate refresh (candidate `portal-rebuild`)
+
+**Runtime candidate used by the Christmas Town/Gym Training feature runs:** `ad08d8f11400b7478ba514e3d8cc30fbc6a2e709`  
+**Code/workflow branch head immediately before this documentation-only refresh:** `113d4c922679cb3f694704c9a1c34f17eab77201` (subsequent commits were workflow/script and documentation changes; no Worker runtime source change)
+**Decision:** **NO-GO for production cutover.** This update is scoped to the `portal-rebuild` source branch and read-only production metadata inspection. No production Worker/Pages deploy, production D1 query or migration, secret change, or administrator-data mutation was performed.
+
+### Current candidate acceptance
+
+| Area | Result | Evidence |
+|---|---|---|
+| Halloween | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Consent / Privacy | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Discord | Accepted by owner | Owner-confirmed validation on the current candidate; not rerun |
+| Christmas Town | **PASS** | [Staging workflow #316](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43792813370), selected `christmas-town` suite |
+| Gym Training | **PASS** | [Staging workflow #317](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793005243), selected `gym-training` suite |
+
+Both feature runs checked out this exact candidate from `portal-rebuild`, passed repository quality gates, verified isolated staging targets, applied any pending migrations to staging D1 only, deployed the staging Worker and Pages bundle, executed one selected feature suite, passed the configured D1 budget checks, removed synthetic private-history fixtures, and completed the final budget check. The Gym Training suite verified the private-history response, two synthetic records, and idempotent handling of a collection request when the archive is already complete. The Christmas Town suite verified the normalized 2026 calendar window and synthetic historical archive. These are staging acceptance results, not production acceptance.
+
+### Torn event-calendar integration
+
+The current-candidate repository quality gates passed. The package test suite includes `scripts/test-torn-event-calendar-windows.mjs`, which checks the Worker/UI/migration contract for the Torn V2 calendar endpoints, six-hour cache, nominal versus personal event windows, historical fallback/confirmation behavior, and Christmas Town year gating.
+
+The separate [Torn calendar API probe run #3](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793004998) also passed on this candidate. It made read-only GET requests to Torn V2 `/torn/calendar` and `/user/calendar` using the repository Actions secret `torn_api_key`, and validated the expected response structures.
+
+**Acceptance boundary:** the source-contract tests and upstream Torn endpoint probe passed, but the selected Christmas Town staging feature suite intentionally reads a synthetic cached calendar fixture and makes no Torn call. The API probe does not traverse the authenticated portal Worker route, and its repository secret is not proof that the production Worker binding `TORN_API_KEY_SERVICE` is authorized. Therefore this is upstream/API-contract acceptance, not a complete live member-to-Worker-to-Torn end-to-end acceptance. Keep the live integration gate open until it is exercised with an authorized member session in an isolated environment and the returned Torn window is observed through the portal route.
+
+A queue-free authenticated staging E2E attempt was added to the existing Torn calendar probe workflow and run from `portal-rebuild`: [run #43793815930](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/43793815930). The checkout, script syntax, upstream Torn probe, and D1 budget preflight passed. The E2E script then found that the Torn player associated with the repository key already has a row in staging D1 and **failed closed before sign-in, key save, calendar-route request, or cleanup**. No existing staging identity was overwritten or deleted. The final D1 budget check passed with the run's recorded baseline unchanged at 3,985,750 rows read for the UTC day. Thus the live authenticated portal-route acceptance remains open; provide a dedicated test member/key or authorize a safe strategy for using the existing staging identity without replacing its stored connection.
+
+### Migration inventory through 0037
+
+The current `migrations/auth` chain contains 42 SQL files. The previous review's migration inventory ending at `0031_torn_event_calendar_windows.sql` is superseded. The following later migrations are present on this candidate:
+
+| Migration | Change |
+|---|---|
+| `0032_portal_first_login_consent.sql` | Creates centralized first-login/policy consent state, historical-collection and sharing preferences, and its lookup index |
+| `0033_gym_training_history.sql` | Adds member-owned Gym Training key metadata, collection jobs, event-log history, and supporting indexes |
+| `0034_portal_api_key_usage_consent.sql` | Adds API-key usage consent, acknowledgement timestamp, and key fingerprint |
+| `0035_portal_api_key_access_type.sql` | Adds the constrained `custom` / `full` access-type declaration |
+| `0036_admin_read_path_indexes.sql` | Adds indexes for company/player administrative read paths and faction membership boundary queries |
+| `0037_private_data_visibility.sql` | Adds private-data visibility preferences, member-key capability metadata, and supporting indexes |
+
+The current-candidate staging workflows verified and applied the pending migration chain to the isolated acceptance D1. This does not substitute for a replay against a restored copy of production data.
+
+### Restored-production-backup rehearsal status
+
+The earlier isolated restore rehearsal is still the last evidenced backup replay: normalized SQL SHA-256 `1188579647f91ad310ec9069eaedd2e896c591a2f7e3ac5365474fb790a34ab2`, source archive SHA-256 `052e5bcf352d17ae988eae15ff051e76c5380259c19dc0c694de5611c2c7fb4b`, 1,270 statements, 40 tables, 22 explicit indexes, 934 application rows, matching local replay table counts, and zero foreign-key violations. That restored copy's migration ledger ended at `0012_company_ranking_snapshots.sql`. It did **not** replay migrations `0013` through `0037`.
+
+I searched the currently available conversation/Project/Library files for the referenced production archive and normalized SQL but could not retrieve the restore input. A read-only Cloudflare D1 database metadata listing also found no retained database named for the prior restore rehearsal. The two old October companion JSON exports are not a full D1 database backup and were not substituted. Consequently, a fresh replay of migrations `0013` through `0037` against the restored production backup is **blocked**, not passed. Do not run that replay against production D1. Make the encrypted archive and its authorized decryption material available in the working environment, then restore to a newly isolated temporary D1 and verify counts, migration ledger, foreign keys, and key business-history preservation before deleting the rehearsal database.
+
+### Production service credential authorization
+
+Cloudflare secret-binding metadata previously confirmed that production Worker `naughtyfamily-api` has a `TORN_API_KEY_SERVICE` secret binding. The binding name/type proves configuration presence only; it does not expose the value or prove Torn authorization, access selections, or key validity.
+
+No existing safe, unauthenticated read-only production diagnostic was found that calls Torn with that exact secret. The `/api/me/training-calculator` GET path uses `TORN_API_KEY_SERVICE` for the public `/torn/gyms` request, but requires a live member session and also performs other member-scoped Torn requests; it was not invoked without an authorized session. The calendar API probe above uses the separate repository Actions secret, not this Worker secret. Accordingly, production `TORN_API_KEY_SERVICE` authorization/permission remains **UNVERIFIED**. No secret value was read, changed, rotated, or emitted. Do not infer authorization from the binding listing.
+
+### Rollback Pages compatibility check
+
+Cloudflare Pages project metadata for legacy `naughty-company-dashboard` confirms its current production configuration and latest deployment still build with:
+
+```text
+VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev
+```
+
+The latest legacy Pages deployment is `b0352cf1-db23-437e-87b4-a363d08b53b8` (2026-11-13, source commit `097762ac6f1d8afc071b37c1518f235073834644`). The active renamed production API target is `naughtyfamily-api` at `https://naughtyfamily-api.kboone801.workers.dev`. Therefore the preserved legacy Pages bundle is **NOT a verified rollback** against the renamed Worker: its recorded production build configuration still points at the retired hostname. The project has not been rebuilt or redeployed as part of this verification. Updating its environment and publishing a rebuilt legacy bundle is a separate production Pages change and must be scheduled/approved as such.
+
+### Remaining cutover gates
+
+1. Complete authenticated live Torn calendar integration acceptance through the portal Worker route.
+2. Obtain a safe, authorized read-only check that exercises the exact production `TORN_API_KEY_SERVICE` binding against Torn and reports only sanitized status/permission metadata.
+3. Provide the encrypted production backup archive and authorized decryption material, then replay migrations `0013` through `0037` on an isolated restored copy and validate data preservation.
+4. Rebuild and verify the legacy rollback Pages project against `https://naughtyfamily-api.kboone801.workers.dev`, with explicit approval for that Pages deployment.
+5. Complete PR review/approval, reconcile the live production migration ledger immediately before cutover, confirm the rollback plan, and obtain explicit production release approval.
+
+No production migration or deployment is authorized by this review. Production remains unchanged.
+
+
+## 16. Queue free-tier capacity warning (2026-11-16 UTC)
+
+The operator supplied a Cloudflare notification reporting **91% of the daily Queues free-tier operations limit used**, with the stated reset at `2026-11-16T00:00:00Z`. This leaves only 9% headroom at the time of that notification. Cloudflare warns that message delivery stops when the daily limit is reached.
+
+Read-only Cloudflare Queue API inspection was performed after the alert. It did not send, receive, acknowledge, purge, or modify messages.
+
+| Queue | Backlog | DLQ backlog |
+|---|---:|---:|
+| `ncd-global-rankings-refresh` (production) | 0 | 0 |
+| `ncd-faction-performance-integration` | 0 | 0 |
+| `ncd-naughtyfamily-staging-collection` | 6 | 0 |
+
+The production `naughtyfamily-api` Worker remains configured with scheduled triggers at `10 18 * * *`, `10 0 * * *`, and `*/5 * * * *`, and its global-ranking queue consumer remains attached. The staging collection queue also has a consumer attached and currently shows six pending messages. Queue backlog metrics are not the account's daily operation counter and do not establish which workload used the 91%.
+
+**Temporary operating guard:** no further queue-backed staging tests, fixture jobs, manual collection refreshes, queue replays, retries, or queue provisioning changes while the daily allowance is near the limit. Do not drain or purge the six staging messages merely to reduce the backlog; that would itself create queue operations and could discard work. Do not detach or disable the production consumer or cron triggers without an explicit operational decision, because that may interrupt expected scheduled service. Recheck the Cloudflare usage dashboard after the next UTC reset before resuming queue work. If uninterrupted queue delivery is required, evaluate the Workers Paid plan before the limit is reached.
+
+This warning does not change the previously recorded staging feature acceptance results. No queue configuration or production deployment was modified during this check.
+
+The same 2026-11-16 live-calendar attempt recorded an account-wide D1 rows-read baseline and final value of **3,985,750** against the workflow's **4,000,000-row hard stop**, with a recorded delta of zero. That left only **14,250 rows** below the staging hard stop at the time of the run. Do not start additional D1-backed acceptance work until the UTC usage reset has passed and account-wide D1 usage has been freshly checked.
+
+
+## 17. Queues free-tier limit reached (operator alert, 2026-11-16)
+
+The operator supplied a new Cloudflare account notification confirming that the daily Queues free-tier limit is **exhausted**:
+
+- Daily operation limit: **10,000**
+- Operations used: **10,000 (100%)**
+- New message sends: **blocked**
+- Stated reset: **2026-11-17 00:00:00 UTC**
+- Cloudflare's stated recovery paths: Workers Paid plan upgrade after it takes effect, or the daily reset.
+
+This supersedes the earlier 91% warning in Section 16. The earlier read-only Queue backlog snapshot remains a historical snapshot only; zero backlog does not imply that new sends are available. Queue backlog metrics do not replace the account-level daily operation counter.
+
+**Immediate operating rule:** treat Queue producers as unavailable until a new authoritative usage check confirms the allowance has reset or Cloudflare confirms the paid-plan upgrade is effective. Do not probe by sending a message. Avoid retries, collection-job enqueue, manual refreshes, fixture producers, DLQ replays, and other actions that attempt to send Queue messages. Queue-backed application functions may return errors while the quota is exhausted.
+
+Do not purge messages, detach consumers, delete queues, or disable production schedules as a quota workaround. Those are independent service/configuration changes and could interrupt expected processing; they were not performed. No Queue messages were sent, received, acknowledged, purged, or replayed in response to this alert. No Queue consumer, producer, Worker, Pages, secret, or production schedule was changed.
+
+Recheck account-level Queue usage after **2026-11-17 00:00 UTC** before resuming queue-backed staging acceptance or manual collection work. If service must resume before the reset, confirm that the Workers Paid upgrade has actually taken effect first. Keep D1 reads independently paused until the D1 counter has also reset and been rechecked; the Queues reset does not reset D1 usage ahead of its own daily reset.
+
+
+## 18. 2026-11-17 production Pages recovery and portal staging publication
+
+This section supersedes the earlier statements in Sections 3, 4, 7, 8, 13, 14 and 15 about the current legacy Pages bundle still targeting the removed `naughty-company-api` Worker. The historical descriptions above are retained as an audit trail.
+
+### Production Company Dashboard Pages-only recovery
+
+- The live production `naughty-company-dashboard` Pages project was rebuilt from `main` and successfully deployed on 2026-11-17. GitHub Actions run [#44010742896](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44010742896) completed successfully on commit `84d96e3cc6849afc1b96864fd2309b4b53ef7657`.
+- Cloudflare Pages deployment: `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`, immutable URL `https://02c82647.naughty-company-dashboard.pages.dev`, production stage `success`.
+- The deployed frontend was built with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`. The Pages project's saved production environment variable was also updated to that same API URL, preventing a later build from reintroducing the retired hostname.
+- This was Pages-only. The production Worker, D1, Queues, secrets, and production data were not changed. The existing Company Dashboard UI remains on the legacy Pages project; the separate portal target remains `naughtyfamily`.
+- The static Pages publish and saved API URL are verified. No member login or authenticated API smoke was run as part of this repair. Treat the legacy site as a repaired rollback candidate, not as a fully end-to-end-tested portal rollback.
+
+### Portal branch Pages-only staging publication
+
+- Current branch head at deployment: `portal-rebuild` commit `576b188ee5eb5f72ad01554f8579ae9b9c2df59a`.
+- GitHub Actions [Pages-only staging run #44011739256](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44011739256) completed successfully.
+- Cloudflare deployment: `f2ec0ae1-a263-4f6c-b2e4-480effc246eb`, immutable URL `https://f2ec0ae1.naughtyfamily-staging.pages.dev`, published to the `naughtyfamily-staging` project. The workflow's static verification confirmed the published JavaScript bundle contains `naughtyfamily-api-staging.kboone801.workers.dev`.
+- Typecheck, the offline Gym Training/calculator regression, frontend build, staging-target assertions and static published-bundle verification all passed.
+- The workflow did not call the staging API or deploy a Worker. It performed no D1 SQL, reads, migrations, backup operations or budget API calls, and no Queue provisioning/configuration or message operations. This confirms the staging frontend publication only; it is not a new stateful API/D1/Queue acceptance result.
+
+### Current release metadata checked read-only
+
+| Resource | Observed state |
+|---|---|
+| Production API Worker | `naughtyfamily-api` |
+| Latest recorded production Worker deployment | `f4bfb9cf-f613-4b0c-a3ea-7d30d8200093` |
+| Active Worker version in that deployment | `54f02948-73b3-4535-bd71-8d9683ad62c9`, 100% traffic, deployed 2026-11-15 |
+| Production Worker secret bindings | `TORN_API_KEY_SERVICE`, `TORN_API_KEY_CUSTOM`, `TORN_FACTION_API_KEY`, `KEY_ENCRYPTION_SECRET` are present by name/type; values and live Torn permissions were not inspected |
+| Legacy Company Dashboard Pages | `naughty-company-dashboard`, latest deployment `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`; saved production API URL now points to `naughtyfamily-api` |
+| New portal production Pages | `naughtyfamily`, configured with `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`, still has no production deployment |
+| Portal staging Pages | Latest deployment `f2ec0ae1-a263-4f6c-b2e4-480effc246eb`, sourced from `576b188` |
+
+No D1 API or Queue API was called during this refresh. Therefore, the production D1 migration ledger, current Time Travel bookmark, and current account-wide D1/Queue usage counters have **not** been re-read. The 2026-11-14 migration ledger and backup/rehearsal evidence remain historical only.
+
+### PR/base relationship and remaining cutover gates
+
+- PR #152 remains OPEN and DRAFT. GitHub currently reports it mergeable, but `portal-rebuild` is one commit behind `main`.
+- Current `main` head is `84d96e3cc6849afc1b96864fd2309b4b53ef7657`; that commit updates only `.github/workflows/manual-pages-deploy.yml` to preserve the legacy Company Dashboard Pages target and build it against the active `naughtyfamily-api`. Reconcile this mainline change into the portal release branch and rerun its quality gates before final release approval.
+- The last production-data restore rehearsal replayed the backup only through `0012_company_ranking_snapshots.sql`. It did **not** replay `0013` through `0037` against restored production data. The encrypted archive/decryption input was not available in the recent review environment. This is a hard release blocker until the archive is made available to the authorized operator, the full pending migration chain is replayed against a new isolated restored copy, and row/data preservation plus foreign-key checks are recorded.
+- The production `TORN_API_KEY_SERVICE` binding exists, but the secret value and its actual Torn permissions remain unverified. Binding presence alone is not acceptance evidence.
+- The production D1 migration ledger and bookmark must be freshly read immediately before any approved migration. The 2026-11-14 export/bookmark cannot be treated as a fresh pre-cutover backup. Create and independently verify a current encrypted external export/checksum and capture a fresh Time Travel bookmark in the approved release window.
+- A stateful staging acceptance run was not part of the Pages-only publication. Do not infer that the staging Worker, staging schema or Queue-backed collectors match this frontend bundle. Any additional stateful staging tests require explicit quota review and a narrowly selected suite; do not run broad history scans or the full acceptance workflow under the current no-D1/no-Queue operating guard.
+- Keep PR #152 and production cutover **NO-GO** until the restored-data migration replay, current-candidate stateful feature acceptance, service-key permission verification, fresh backup/bookmark/ledger preflight, final code review and explicit production release approval are complete.
+
+The production Pages recovery and the portal staging Pages publication do not authorize PR merge, production D1 migrations, production Worker deployment, production portal Pages publication, Queue operations, or production secret changes. No such operations were performed in this update.
+
+
+## 19. 2026-11-17 portal branch reconciliation and release-prep validation
+
+### Branch and PR state
+
+- Reconciled `portal-rebuild` with current `main` using merge commit [`8e34071abe0f570a171cfe919ddbc16a92b689ab`](https://github.com/SharpSplinter/Naughty-Company-Dashboard/commit/8e34071abe0f570a171cfe919ddbc16a92b689ab). Its parents are the prior portal head `9cd4271e8d90d2223abdb9a8bcc2ef74a37a26ba` and `main` head `84d96e3cc6849afc1b96864fd2309b4b53ef7657`.
+- The merge commit uses the exact prior portal tree `4d7d0d29c60105720599ff2f4090936e8d84cb1a`; no source file changed during reconciliation. The portal branch already contained the mainline `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev` change. Its intentional production Pages target remains `naughtyfamily`; the legacy recovery project remains `naughty-company-dashboard`.
+- GitHub compare now reports `portal-rebuild` **0 commits behind** `main` (merge base `84d96e3`). The branch is 1,077 commits ahead in history.
+- PR #152 remains OPEN and DRAFT, unmerged, and currently mergeable. Its current review scope is 133 changed files, 31,548 additions and 3,082 deletions. Mergeability is not approval; this substantial diff still requires complete human review and explicit owner release approval.
+
+### Latest portal staging Pages publication
+
+- The latest Pages-only staging publication is GitHub Actions [run #44012054870](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012054870), sourced from commit `9cd4271e8d90d2223abdb9a8bcc2ef74a37a26ba`.
+- Cloudflare deployment `55411c48-dc2a-4df1-bcd9-b42b29822ad4` published successfully to `naughtyfamily-staging`: [immutable deployment](https://55411c48.naughtyfamily-staging.pages.dev). The reconciliation merge commit's tree was identical to the published tree. The subsequent commit changed only this cutover-review document, leaving frontend build inputs unchanged; no new frontend artifact was introduced after the staging publication.
+- The published bundle's static verification confirmed the staging API hostname. This remains a Pages-only frontend publication, not stateful staging acceptance.
+
+### Offline validation on the reconciled branch head
+
+All of the following were run against merge commit `8e34071abe0f570a171cfe919ddbc16a92b689ab` and passed:
+
+- Push quality gates: [#44012565125](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012565125).
+- Pull-request quality gates: [#44012573023](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012573023).
+- Discord Bot Quality Gates: [#44012573065](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012573065).
+- Seasonal UI / UX Playwright audit: [#44012565109](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44012565109). It passed 277/277 assertions across desktop, tablet, mobile and small-mobile views; 32 accessibility scans reported zero axe violations, including zero serious/critical violations; zero page errors. Its two console errors were the intentional HTTP 503 archive-unavailable fixtures for Christmas Town and Halloween, validating the corresponding error states.
+
+The browser audit used a local production preview with mocked authenticated sessions and intercepted API fixtures. The quality gates used local regression/contract tests. The Discord bot gate ran syntax and contract tests only. These workflows did not call the staging or production API, deploy a Worker, execute D1 SQL/reads/migrations, inspect D1 budgets, provision/configure Queues, or send/read/acknowledge Queue messages. The D1-backed acceptance workflow remains manual-only and was not dispatched.
+
+### Cutover status after reconciliation
+
+**Production cutover remains NO-GO.** Branch ancestry is now reconciled and offline validation is green, but the remaining blockers are unchanged:
+
+1. The production-data restore rehearsal still stops at `0012_company_ranking_snapshots.sql`. All 25 source migration files `0013` through `0037` are present in the branch, but they have not been replayed against a restored production-data copy. The encrypted archive/decryption input remains unavailable to the recent review environment. Do not apply these migrations to production as a substitute for the isolated restore rehearsal.
+2. The production `TORN_API_KEY_SERVICE` binding exists, but its live Torn key validity and required permissions have not been verified.
+3. A fresh encrypted production backup/checksum, current Time Travel bookmark, and production D1 migration-ledger preflight remain outstanding. No D1 ledger, bookmark, or usage-counter read was performed during this preparation.
+4. Stateful staging acceptance remains outstanding. No D1-backed feature suite, Queue producer/consumer test, Worker deploy, or API smoke was run. The current D1/Queue quota state is unknown; the prior 2026-11-16 quota alerts are historical and must not be treated as current counters.
+5. PR #152 remains draft and requires full code review, approval, and explicit owner release authorization.
+6. The legacy `naughty-company-dashboard` Pages repair still has no authenticated login/API smoke. The new `naughtyfamily` production Pages project still has no production deployment.
+
+No production Worker, Pages project, secret, D1 database, Queue, or production data was changed in this branch-reconciliation and validation step.
+
+
+## 20. 2026-11-17 production deployment evidence gate hardening
+
+The production Worker workflow has been hardened on `portal-rebuild`:
+
+- It remains `workflow_dispatch` only and can run only from `main` for the exact `naughtyfamily-api` target.
+- The job now selects the GitHub Environment named `production`. **Required reviewers and a main-only deployment branch rule must be configured in repository Environment settings before the workflow is eligible for release use.** That Environment configuration could not be inspected or verified through the available GitHub connection during this preparation.
+- Before the first Cloudflare action, `scripts/production-cutover-preflight.mjs` requires an explicit release acknowledgement and Queue-configuration acknowledgement; HTTPS references for the encrypted backup, Time Travel bookmark, current D1 ledger/usage, service-key permission evidence and Queue review; a 64-character backup SHA-256; backup age under 24 hours; D1 usage evidence under 15 minutes old; and a declared D1 read reserve that stays within the operator-confirmed hard stop.
+- The preflight checks that the restore-rehearsal and stateful-staging GitHub Actions runs are completed successful manual dispatches from this repository, both tested the exact declared candidate SHA, and the candidate Git tree matches the current `main` release tree.
+- Unit/contract coverage was added to `scripts/test-production-cutover-preflight.mjs` and included in `npm test`.
+
+**Preflight limitation:** it verifies URL formats, timestamps, checksum syntax, numeric D1 headroom, GitHub run status/commit identity, and tree identity. It does not download or decrypt the external backup, independently recompute its checksum, query Cloudflare, independently prove the content of supplied D1/Time Travel/service-key/Queue evidence references, or call any D1/Queue API. An authorized operator must inspect those external artifacts before dispatch. The production Environment approval is a separate gate, not a substitute for the evidence.
+
+No production workflow was dispatched as part of this hardening. No Worker, Pages project, D1 database, Queue, secret, or production data was changed. Cutover remains **NO-GO** until the encrypted production archive is available, migrations `0013–0037` replay successfully against an isolated restored production copy, stateful staging acceptance and service-key permissions are proven, fresh preflight evidence is collected, Environment reviewers are confirmed, and final owner approval is recorded.
+
+
+## 21. 2026-11-17 offline restored-backup migration rehearsal workflow
+
+A dedicated manual workflow now exists at `.github/workflows/restore-production-backup-rehearsal.yml`.
+
+- It runs only from `portal-rebuild` and requires the supplied candidate commit to equal the workflow's exact `github.sha`.
+- It uses the protected GitHub Environment `production-backup` and expects the environment secrets `PRODUCTION_D1_BACKUP_URL` (HTTPS download reference) and `PRODUCTION_D1_BACKUP_PASSWORD` (archive password). Neither secret was read or configured from this preparation session; the environment's reviewer/branch rules were not verified.
+- The default archive and untouched SQL-export checksums are the fresh 2026-11-17 values: encrypted GPG archive `1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97` and SQL export `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`. Inputs can be changed only when a different independently verified archive is used.
+- It downloads the GPG AES-256 encrypted archive to the ephemeral runner, checks its SHA-256, decrypts it using the protected environment secret, verifies the untouched SQL export's exact SHA-256, and runs `scripts/replay-production-backup-migrations.py`.
+- The replay applies all 25 ordered migrations `0013` through `0037` to an in-memory local SQLite restore. It verifies the starting 16-entry migration ledger, final 41-entry ledger, SQLite `integrity_check`, `foreign_key_check`, preservation of every pre-existing application table, and no decrease in any pre-existing application table's row count.
+- Only an aggregate sanitized JSON report is retained as a 14-day Actions artifact. The encrypted archive, decrypted SQL, and in-memory restored database are not uploaded or retained.
+
+**Limit:** this workflow intentionally performs no Cloudflare API, D1, Queue, Worker, Torn, or Pages operations. It is an offline production-data SQL replay, not an isolated Cloudflare D1 import. A separate manual stateful staging acceptance run from `.github/workflows/deploy-staging-acceptance.yml` remains necessary to validate D1/runtime behavior with its hard D1 budget and bounded feature suite.
+
+The production deploy preflight now accepts only a successful manual run from this exact restore workflow path and a successful manual stateful acceptance run from the exact staging-acceptance workflow path, both for the exact candidate SHA. The tested candidate tree must match the `main` release tree.
+
+The GitHub Actions workflow itself remains **undispatched** because its protected `production-backup` Environment URL/password secrets were not configured from this execution context. A separate manual production export and local SQLite replay have since completed successfully; see Section 23. The preflight still requires the successful exact-commit GitHub workflow run before it will accept the restore evidence for production release. The D1/Queue usage-counter state remains unknown. Production cutover remains **NO-GO**.
+
+
+## 22. 2026-11-17 latest offline validation after cutover-gate hardening
+
+Latest branch head at this validation: `f3e2f3f503758ce5257c7fe964035a2f02635548`.
+
+- Push quality gate [#44014951799](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014951799) passed, including typecheck, production frontend build, workflow syntax checks, full backend regression suite, production preflight contract tests, and the local offline production-backup replay harness tests.
+- Pull-request quality gate [#44014954841](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014954841) passed on the same commit.
+- Discord Bot Quality Gates [#44014954797](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014954797) passed.
+- Seasonal UI / UX Playwright audit [#44014951841](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44014951841) passed 277/277 assertions, with zero failed assertions, zero axe violations (zero serious/critical), and zero browser page errors. Its two console errors were the intentional mocked HTTP 503 archive-unavailable fixtures for Halloween and Christmas Town. The audit used the local production preview and intercepted API fixtures; it did not call staging or production APIs.
+- The offline replay harness fixture test passed 25-migration ordering, migration-ledger count, SQLite integrity, foreign-key, row-preservation, and checksum-mismatch guards. This validates the replay program's controls on a synthetic fixture only; it is **not** evidence that the encrypted production archive was decrypted or that real restored data completed the replay.
+- Git comparison reports `portal-rebuild` remains **0 commits behind** `main`. PR #152 remains OPEN/DRAFT and unmerged.
+
+No production or staging Worker/API, D1, Queue, Pages deployment, secret value, or production data operation was performed. No D1/Queue usage counters were queried. The manual restore workflow remains undispatched pending protected archive URL/password availability, and the separate stateful staging acceptance remains outstanding. Production cutover is still **NO-GO**.
+
+
+## 23. 2026-11-17 fresh production export and successful local migration replay
+
+A new manual export was created because the prior 2026-11-14 encrypted archive could not be recovered.
+
+### Fresh production export
+
+- Target verified immediately before export: production D1 database `naughty-company-dashboard`, ID `bbbe128a-c5cc-46ec-b8ef-93860183e795`; Cloudflare reported 40 total tables.
+- Export task started at `2026-11-17T04:12:57.797Z` and completed at `2026-11-17T04:13:02.476Z`. It completed in two uploaded parts.
+- The export's stable Time Travel bookmark returned by the D1 API was `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`.
+- Untouched D1-compatible SQL export: 14,770,736 bytes; SHA-256 `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`.
+- The D1 export endpoint temporarily reserves the database while it runs. This export completed after the immediate follow-up poll; no other D1 query or Queue operation was run during it.
+
+### Successful migration replay against the fresh snapshot
+
+The exact untouched export was downloaded into an isolated processing sandbox and replayed against local in-memory SQLite 3.46.1 using the repository's `scripts/replay-production-backup-migrations.py` and the `portal-rebuild` migration files. The replay tool's foreign-key handling was corrected to disable enforcement only during import of the raw export (which can insert child rows before the referenced parent table is declared), then re-enable enforcement before applying migrations and performing the final FK check.
+
+<badge color="success">Local replay passed</badge>
+
+- Replay tooling/source commit: `22136fe1d35e589989f689184112c2df03f4eb6c`; tree `356df1ea7242c9d9f28bd34cf7697560aed8dd0b`. The replay was repeated against the current candidate `2896275a75d39894e36ca48e7a2f65380dd4ad4b` (tree `8fc5070c700dd4f9e5767d9f3c1ab03685e84c45`); GitHub comparison confirmed no `migrations/auth/` files or replay-validator script changed between the replay source commit and the current candidate.
+- Starting migration ledger: 16 entries. Migrations `0013` through `0037` all applied in filename order. Final migration ledger: 41 entries.
+- Existing application tables preserved: 39 of 39. Starting application row count: 16,307. Final application row count: 16,313. Existing row counts decreased: zero.
+- SQLite `integrity_check`: `ok`. `foreign_key_check`: zero violations.
+- Final application tables: 75. The 39 pre-existing application tables remained present; new schema objects were added by the migrations.
+- This is a local SQLite replay of the production export, not a Cloudflare D1 import. No pending migration was applied to production.
+
+### Encrypted backup package
+
+- Archive: `ncd-prod-d1-backup-2026-11-17.tar.gz.gpg`.
+- The archive contains the untouched SQL export, a manifest with the D1 ID/bookmark/checksums and replay commit, and the sanitized migration replay report.
+- Encryption: GnuPG symmetric AES-256, S2K mode 3, SHA-512.
+- Encrypted archive size: 1,281,443 bytes. SHA-256: `1905da3af65fc1de994495f0f6c33dc0062fb0b295ed50cfbe64752624803d97`.
+- Decrypt-and-byte-compare verification passed. The uploaded encrypted file was downloaded again and independently matched the same size and SHA-256.
+- The encrypted file download link and its separate passphrase were delivered directly to the owner in the conversation. Neither the SQL export nor its passphrase is committed to the repository.
+
+### Remaining release requirements
+
+The old missing-archive blocker is resolved: a current export exists and migrations `0013–0037` passed a local SQLite replay against it. However:
+
+1. The protected GitHub Environment `production-backup` still needs the encrypted archive URL and passphrase set as `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` if the exact replay is to be recorded as a GitHub Actions workflow run. The manual workflow was not dispatched in this execution.
+2. Stateful staging acceptance against the current candidate remains separate and outstanding. The local SQLite replay does not prove Cloudflare D1 runtime behavior or Queue consumers.
+3. Current account-wide D1 rows-read usage and the deployment reserve were not queried; no present quota value is asserted. Recheck with the hard stop immediately before any stateful staging test or production change.
+4. Production `TORN_API_KEY_SERVICE` permission evidence, reviewed Queue configuration, protected Environment reviewer/main-branch rules, full PR review, and explicit owner release approval remain outstanding.
+5. PR #152 remains OPEN/DRAFT. Production cutover remains **NO-GO**.
+
+The export did not update production data. No D1 migrations, Worker deployment, Queue provisioning/configuration/message operations, Pages deployment, or secret changes were performed. The only production D1 data operation in this step was the requested export.
+
+
+## 24. 2026-11-17 staging parity and live D1 accounting verification (historical snapshot; exact-candidate results updated above)
+
+### Staging release candidate and deployment parity
+
+- After the prior staging Worker publication, the staging Pages-only workflow was dispatched against source tree `3bc5a915b5160e6d18d276e8b7d85caf291a9765`. Workflow run [#44195342915](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44195342915) completed successfully.
+- The immutable staging Pages deployment is [https://3f502003.naughtyfamily-staging.pages.dev](https://3f502003.naughtyfamily-staging.pages.dev). The build used `VITE_API_BASE_URL=https://naughtyfamily-api-staging.kboone801.workers.dev`; publication verification returned HTTP 200, confirmed the application root mount and JavaScript bundle, and confirmed the staging API origin is present. The production API literal remains in the source bundle as a fallback, but the explicitly compiled staging API base takes precedence.
+- The Pages-only workflow did not deploy a Worker, call a Worker/API endpoint, read or write D1, apply migrations, query D1 budget counters, or call/configure/send/receive/acknowledge/purge/replay a Queue.
+- The corresponding staging Worker deployment remains [#44181207339](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44181207339). It passed typecheck and backend checks, uploaded the Worker to `naughtyfamily-api-staging`, preserved existing staging D1/KV/Queue/secret binding identities, and passed its single read-only health request. The Worker and Pages were built from the same application source tree.
+- Offline Quality Gates passed on the latest branch head `fec7d506406c8580c471ebea586914d84b23502a` in [run #44195461658](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44195461658). TypeScript, production frontend build and backend tests succeeded.
+- Mainline synchronization: `portal-rebuild` incorporated main's isolated backup-rehearsal workflow registration via merge commit `fec7d506406c8580c471ebea586914d84b23502a`. The merge introduced no source-tree changes; it retained tree `3bc5a915b5160e6d18d276e8b7d85caf291a9765`. GitHub comparison now reports zero commits behind `main`. PR #152 remains OPEN/DRAFT; it was not merged or marked ready.
+
+### Live Worker-side D1 accounting evidence
+
+A read-only Workers Observability query filtered to `naughtyfamily-api-staging` and `d1_read_accounting` over 2026-11-17 22:30–22:43 UTC returned 19 accounting events from authenticated application routes.
+
+- Aggregated recorded D1 metadata: 7,007 rows read, 82 rows written, and 187 statements.
+- Across those 19 events: missing read metrics 0; missing write metrics 0; failed statements 0; unsupported operations 0; and unmetered `first()` fallbacks 0.
+- Observed routes included dashboard members, faction directors, faction stats, faction activity, faction performance, weekly rankings and weekly history. A recorded POST to faction directors accounted for 74 of the 82 observed written rows; these were application-originated writes, not generated by this verification.
+- This is evidence that the Worker instrumentation is collecting result metadata for real application traffic and reporting complete per-event accounting. It is not an independent reconciliation with Cloudflare's account-wide daily D1 rows-read meter, and the 19 events are a narrow observation window rather than a daily total.
+- The `rows_read` / `bytes_read` statistics returned by the Workers Observability query describe scanning the telemetry dataset. They are not D1 rows-read usage and must not be used as quota evidence.
+
+### Remaining pre-production gates and release decision
+
+**Production remains NO-GO.** The work above improves staging parity and verifies Worker-side accounting; it does not satisfy the production evidence and authorization gates.
+
+1. The protected GitHub Environment `production-backup` must have its owner-managed `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` secrets configured, with reviewer/branch protection verified. The exact-commit GitHub-hosted backup replay workflow has not yet passed. The encrypted backup and local SQLite replay evidence from Section 23 do not substitute for that workflow result.
+2. Stateful staging acceptance on the exact release candidate remains outstanding. Its current workflow includes D1 and Queue operations. It was deliberately not dispatched under the owner's quota-protection instruction. No D1/Queue staging acceptance is claimed by the Pages-only deployment or offline tests.
+3. Current account-wide D1 rows-read usage, the hard stop, and the reserved deployment budget have not been checked. Do not infer them from Workers telemetry. A fresh account-wide usage check and an explicit release reserve must be supplied and pass the hard-stop arithmetic immediately before any stateful staging or production activity.
+4. Production `TORN_API_KEY_SERVICE` permission evidence remains outstanding.
+5. The production Queue binding/configuration diff still requires operator review, an evidence reference, and the explicit Queue-reconciliation acknowledgement required by the guarded deploy workflow.
+6. Production Environment reviewer/main-branch protection must be verified. PR #152 still has no recorded approving review or inline review resolution; it remains OPEN/DRAFT.
+7. Explicit owner authorization for merge and production D1 migrations / Worker deployment remains outstanding. The separate `naughtyfamily` Pages production publication is also not authorized.
+
+No production D1 migration, production Worker or Pages deployment, production secret mutation, Queue operation, PR merge, or release-state transition was performed for this update. The staging Pages publication itself performed no D1 or Queue operation. Do not convert this review to GO until every required evidence gate is freshly satisfied and the owner explicitly approves release.
+
+
+## 25. 2026-11-17 prior-candidate stateful acceptance, quota evidence, and service-key owner confirmation (historical; not current-candidate acceptance)
+
+### Exact-candidate verification
+
+The candidate tested by the following 2026-11-17 runs was `e20add2b80312f07d32036f677f2ec6ea4b8ff0a`. It is an older SHA, not the current release candidate `082e61136e4f3286f47a63f64b68792753ce11b5`.
+
+- Offline production-backup migration rehearsal [#44203252030](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203252030) completed successfully against this exact candidate.
+- The single-suite stateful staging acceptance [#44203293682](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203293682) completed successfully against the same exact candidate.
+- The selected suite was `halloween`. Repository quality gates, staging-target isolation, account-wide D1 watchdog initialization, staging API/Pages publication and health checks, fixture seeding, selected feature assertions, post-feature budget check, synthetic fixture cleanup, and final budget check all passed.
+- Staging Queues `ncd-naughtyfamily-staging-collection` and `ncd-naughtyfamily-staging-dlq` already existed; the workflow did not need to create them. Staging migration apply reported no pending migrations.
+- Fixture seed: 443 Wrangler rows read / 247 written. Cleanup: 416 rows read / 96 written. Including identity preflights, the workflow's local direct Wrangler meter recorded 883 rows read, below the 100,000-row per-run budget. All fixture-owned rows were removed; reserved test player IDs remain inactive.
+- The Halloween assertions included current-season and all-time Revitalize proc totals, successful-attack denominators, member comparison and partial-coverage rendering, plus first-party browser checks. The feature suite passed.
+
+### Fresh account-wide D1 usage evidence
+
+Cloudflare D1 account-wide Insights was queried over the UTC day through **2026-11-17T23:56:10Z**:
+
+| Database | Rows read | Rows written |
+|---|---:|---:|
+| `naughty-company-dashboard` | 342,443 | 69,802 |
+| `naughtyfamily-acceptance-staging` | 175,506 | 864 |
+| `naughty-company-bot-production` | 85,674 | 2,876 |
+| **Account total** | **603,623** | **73,542** |
+
+Against the configured 4,000,000-row workflow hard stop, the measured read headroom was 3,396,377 rows. Against the 5,000,000 Free-plan daily read allowance, the measured reserve was 4,396,377 rows. Against the 100,000-row daily write allowance, 26,458 writes remained. These are observed account totals at the stated timestamp, not a forward guarantee. The staging run's local Wrangler meter is the stricter acceptance-run read evidence: 883 direct rows read.
+
+The staging watchdog noted that Cloudflare account-wide analytics under-reported direct Wrangler reads during its observation window. Preserve both the Cloudflare account-wide snapshot and local per-operation Wrangler meter in the evidence bundle; do not treat the account-wide metric as a perfect reconciliation of direct CLI operations.
+
+### Production service-key permission confirmation
+
+The production Worker settings read confirmed that `naughtyfamily-api` has a secret binding named `TORN_API_KEY_SERVICE`. The secret value was not read or disclosed.
+
+On **2026-11-17**, the project owner explicitly confirmed that the configured production `TORN_API_KEY_SERVICE` is a **Full Access** Torn API key and has all required permissions. Record this as **owner-confirmed Full Access permission evidence** for the required shared faction-member roster, user-job, and company-profile requests. This satisfies the owner-attestation gate. It is not represented as an independent Torn key-info endpoint response; no live service-key API probe was performed, and no key value was exposed.
+
+### Updated release gates
+
+- Fresh encrypted production backup and local restore replay: completed; exact-candidate GitHub rehearsal passed.
+- Current-candidate stateful staging acceptance: completed successfully; exact-candidate workflow passed.
+- Fresh account-wide D1 quota and reserved headroom: recorded above; acceptance remained within its 100,000-row run budget.
+- Production `TORN_API_KEY_SERVICE` permissions: owner-confirmed Full Access; no secret transfer or disclosure required.
+- Production Queue binding/configuration diff and explicit Queue-reconciliation acknowledgement: still requires operator review.
+- Protected production Environment reviewer/main-branch requirements and final PR review/approval: still require verification.
+- Explicit owner approval to merge and to run production D1 migrations / Worker deployment: still required. The separate `naughtyfamily` Pages production publication remains unauthorized.
+
+**Production remains NO-GO.** The stateful acceptance run touched only isolated staging D1/Worker/Pages resources and staging-only Queue configuration. It did not deploy production Worker or Pages, run production D1 migrations, change production secrets, or mutate production Queues. Do not perform a production release until the remaining gates are satisfied and the owner explicitly authorizes it.
+
+
+## 26. 2026-11-18 five-minute Cron schedule resolution
+
+### Decision and account quota
+
+The candidate's five-minute scheduler is retained. It is needed for bounded membership revalidation, Sunday boundary/report retries, and time-sensitive Halloween event-window work. It is not deployed independently: the new Cron expression and its matching `scheduled()` dispatcher must be activated together by the guarded Wrangler production Worker deployment. The live production Worker currently has the older dispatcher, so attaching `*/5 * * * *` to it by a separate Cloudflare schedule mutation would route an unknown cron value through the ordinary automation path and is expressly not the plan.
+
+A fresh read-only inventory of all six account Workers found **3 active Cron triggers**:
+
+| Worker | Current Cron expression |
+|---|---|
+| `naughty-company-bot` | `* * * * *` |
+| `naughtyfamily-api` | `10 0 * * *` |
+| `naughtyfamily-api` | `10 18 * * *` |
+| Other three Workers, including staging | None |
+
+Cloudflare's current Workers Free limit is **5 Cron Triggers per account** ([official limits](https://developers.cloudflare.com/workers/platform/limits/)). Adding the portal's `*/5 * * * *` expression through the production Wrangler configuration will make the account total **4 of 5**, leaving one unused trigger. The staging acceptance Worker intentionally has no Cron trigger; its configuration comment now says this is to prevent unattended D1/Queue work against the acceptance database, not because the account's Cron quota is already exhausted.
+
+### D1 workload throttles
+
+The previous candidate would have scheduled persistent history capture too frequently. The current source now separates the five-minute dispatcher from expensive capture cadence:
+
+- Membership revalidation runs every **30 minutes**, on every sixth scheduler tick, with a maximum batch of **5 candidates** per run.
+- Faction roster history is enqueued **hourly**, on hourly scheduler boundaries only.
+- Member personalstats, faction gym-energy, and faction-wide stats are enqueued every **4 hours**, on four-hour boundaries only.
+- Weekly boundary/report retry and Halloween event-window checks remain on the five-minute dispatcher where their timing requires it. Their idempotent time-bucket/job checks remain in place.
+
+Relative to the prior candidate, the recurring membership sweep is six times less frequent, roster capture is twelve times less frequent, and personalstats/gym-energy/faction stats are sixteen times less frequent. These are cadence reductions, not a guaranteed rows-written forecast; actual D1 usage also depends on active faction size, event windows, and retry conditions. The five-minute scheduler must still be monitored using complete Worker-side D1 accounting records after release. Do not treat this design estimate as a substitute for a fresh account-wide quota/reserve check.
+
+### Verification
+
+The scheduler implementation and cadence contract were verified on code commit `b50097f69e6ef37e4c4ccef2e0ee4260f8a57165`:
+
+- Quality gates, including TypeScript, production build, and the backend regression suite: [run #44208138119](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208138119) — PASS.
+- Additional quality-gate run: [#44208128300](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208128300) — PASS.
+- Local-preview Halloween / Christmas Town / Training Calculator browser audit: [#44208128308](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208128308) — PASS.
+- Discord bot quality gates: [#44208137955](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208137955) — PASS.
+
+These were offline repository/local-preview checks. They did not run stateful acceptance, access production or staging D1, or send/receive/acknowledge/retry/purge/replay Queue messages. The first quality-gate attempt on the initial throttle commit failed only because a source-contract assertion still expected the previous 15-minute scheduler expression; the cadence assertions were corrected and the later runs passed.
+
+The latest branch also contains a documentation-only update clarifying the staging Cron omission. The exact-SHA local SQLite restore rehearsal has since passed on `082e61136e4f3286f47a63f64b68792753ce11b5` in [run #44210665274](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44210665274). Stateful staging D1/Queue acceptance remains outstanding on that exact SHA.
+
+### Release boundary
+
+**The five-minute Cron discrepancy is resolved in the release candidate's code/configuration and the trigger is not yet active on production.** Do not mutate Cloudflare schedules directly. It will be applied with the matching Worker code via Wrangler in a separately authorized production deployment. The exact-SHA local SQLite backup/migration rehearsal has now passed, but exact-SHA stateful staging acceptance remains outstanding. Production remains **NO-GO** until quota risks in Section 27 are addressed or explicitly budgeted, any approved stateful staging acceptance completes, fresh production D1 evidence and reserve are established, PR review/approval is complete, and production deployment is explicitly authorized. No production resource was changed while resolving this schedule.
+
+
+## 27. 2026-11-18 focused security/correctness review (candidate `082e61136e4f3286f47a63f64b68792753ce11b5`)
+
+**Method:** Read-only source review of the exact candidate. Scope included session/admin authorization, primary-key encryption and replacement, policy consent, private-data visibility, historical Queue consumers, faction membership cleanup, private-live routes, D1 read caching/accounting, weekly scheduler, and event-window scheduler. No Worker/API calls, D1 queries, migrations, Queue operations, Cloudflare mutations, or production access were performed for this review. This is a focused code review, not a full penetration test or an independent GitHub approval.
+
+### Security and correctness observations
+
+- **Authentication and admin roles:** Bearer tokens are hashed before session lookup. The authenticated player is joined to the active administrator registry; revoked roles do not authenticate as administrators. Disabled accounts are rejected. Faction membership is periodically revalidated, with outage grace bounded to the last successful verification; confirmed departures revoke admin rights, remove sessions and sensitive credentials, and fail closed if cleanup is incomplete. Admin grant requires a recently verified active member; revocation protects the last active administrator.
+- **Credential handling:** Member Torn keys are encrypted with AES-GCM and a fresh 12-byte IV. Key consent is tied to a fingerprint of the saved encrypted envelope, so replacing or deleting the primary key invalidates the prior authorization. Replacement/deletion clears private-live credentials/snapshots, faction capability cache, feature collector registrations, and queued/running collection jobs. Secondary company keys are retained unless they are actually the old primary key.
+- **Consent and visibility:** The portal-wide gate requires current policy/version, explicit primary-key authorization, access-type declaration, and a fingerprint matching the current saved key. The UI explicitly explains that supported history imports start automatically after policy acknowledgement and key authorization; Halloween history/live bars and cooldowns follow the single visibility selection, while Gym Training and Christmas Town history remain private and detailed networth is a separate opt-in. The server normalizes unknown visibility values to `self`.
+- **Private-data enforcement:** Halloween leaderboard rows are filtered by each owner's visibility. Detail routes recheck the same rule. `faction_access` requires the viewer's own saved Torn key to be owner-matched and to return explicit faction capability from `/v2/key/info`; an unavailable or invalid result fails closed. Private-live connection/refresh uses the authenticated member's saved key, checks owner identity on connection, requires central faction visibility, applies an atomic 30-second request throttle, and removes snapshots/connection data when sharing is disabled or explicitly disconnected.
+- **Queued collection correctness:** The reviewed historical collection consumers check terminal job state, central history authorization, disabled-account status, current saved key and faction membership before continuing. Key replacement/deletion cancels active jobs and deletes feature key registrations. Queue retries use bounded delays and terminal states; no broad unbounded historical scan was introduced by the reviewed collector paths.
+- **Data-shape handling:** Private-live parsers keep only recognized finite numeric fields. Faction response parsers deduplicate and validate IDs/metrics, and preserve missing/unexpected-field metadata. Weekly calculations use UTC boundaries and avoid turning missing or decreasing counters into fabricated positive deltas.
+- **D1 caching/accounting:** Daily caching is restricted to an allow-list of immutable, completed daily snapshot tables, rejects dynamic/unknown SQL and empty results, and has bounded local/KV entry sizes. Request accounting wraps D1 operations, tracks missing metrics and unsupported operations, and waits for tracked background tasks before emitting its record.
+
+No Critical or High severity authorization/credential exposure issue was identified in this focused slice. That finding is deliberately limited to the paths reviewed and does not replace an independent review of the entire PR.
+
+### Findings to resolve or budget before stateful staging
+
+1. **Medium — five-minute scheduler query amplification. Addressed in Section 28.** The initial review found weekly boundary/report polling on every five-minute tick and per-member Halloween opening/periodic/closing SELECTs. The current runtime code now rate-limits weekly reconciliation to 15 minutes and replaces the per-member lookups with one set-based candidate SELECT. The original query-count estimate above applies to the pre-fix implementation only; no live D1 rows-read measurement has been claimed.
+2. **Low/Medium — write-on-read historical event-window seeding. Addressed in Section 28.** The initial loader inserted missing prior-year fallbacks from GET paths. It now reads existing event-window rows and synthesizes missing historical fallbacks in memory, while respecting explicitly disabled rows. No D1 write occurs in this read helper.
+
+### Review decision
+
+**The two scoped quota findings are fixed in code, but stateful staging acceptance remains unperformed and unauthorized.** Offline quality, backend, Discord, and browser checks all pass on code/test validation tip `0351c`. Before deciding whether to spend any D1 quota, obtain a fresh read-only account-wide quota snapshot, calculate a small single-suite read/write budget with the configured hard stop, preserve the Wrangler per-operation meter, and get explicit authorization. Offline tests and SQLite fixtures do not prove live Worker/D1/Queue integration.
+
+
+## 28. 2026-11-18 quota-focused scheduler and read-path fixes
+
+**Runtime code SHA:** `fc4aad54393fbe114ec935ccf901e6cba415c99f`.  
+**Current PR/test tip at validation:** `0351c8690a0ac93b714ad08eb572d475159eb527`.
+
+1. **Weekly reconciliation cadence:** The five-minute dispatcher still runs faction membership checks and Halloween event-window timing work. Weekly boundary enqueue/report finalization now runs once per 15-minute bucket instead of every five-minute tick. The bucket alignment preserves the Sunday 00:00 UTC first boundary tick. This reduces recurring weekly polling opportunities from 288 to 96 per day; it is a statement-count/cadence reduction, not a measured D1 rows-read forecast. Queue retries remain available, and a failed scheduler enqueue is retried on a later 15-minute reconciliation tick.
+2. **Halloween live-snapshot eligibility:** The scheduler now computes per-member event boundaries, latest capture time, completed opening/closing status, and exact opening/periodic/closing bucket existence in one set-based CTE query. The per-member opening, latest-snapshot, and closing preflight SELECT loop has been removed. Newly eligible jobs are inserted with `INSERT OR IGNORE`; the existing unique event/member/kind/bucket key is the idempotency guard. A Queue send failure deletes only that unsent queued placeholder so the next five-minute sweep can retry it. The query remains indexed by existing event/member/job/snapshot keys, and no migration was needed.
+3. **Historical fallback windows:** `loadRecordedHalloweenEventWindows` is now read-only. It reads existing rows, preserves explicit disabled event definitions, and synthesizes a full October 25–November 1 fallback in memory only for a genuinely missing prior year. No GET-path insert or update is performed by this helper.
+
+### Offline validation
+
+- Quality Gates [#44214129955](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214129955) passed TypeScript, production build, staging-harness syntax, and the complete backend regression suite on current tip `0351c`.
+- Discord Bot Quality Gates [#44214139306](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214139306) passed on current tip.
+- The seasonal UI/browser audit [#44214129949](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44214129949) passed on test tip `0351c`. No UI source changed in the quota-fix commits.
+- The new scheduler CTE was also exercised against an in-memory SQLite schema/fixture: opening and closing windows, the six-hour periodic bucket, and duplicate queued-bucket suppression returned the expected candidates. This test made no Cloudflare/D1/Queue/API calls.
+- No Cloudflare API, staging Worker, staging D1, production resource, migration, Queue operation, secret, or deployment was touched by these fixes or offline validations.
+
+**Acceptance decision:** The code-level query/write risks identified in Section 27 are addressed. This does **not** authorize stateful staging acceptance. Before any such run, re-read account-wide D1 usage, reserve a single-suite budget with a hard stop, retain the direct Wrangler meter, and obtain explicit owner authorization. Production remains **NO-GO**.

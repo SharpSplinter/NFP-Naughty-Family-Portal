@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const url = 'https://naughty-company-api.kboone801.workers.dev/health';
+          const url = 'https://naughtyfamily-api.kboone801.workers.dev/health';
           let response = null;
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -37,9 +37,9 @@ jobs:
           if (!response?.ok || body?.ok !== true || body?.database !== 'ok') process.exit(1);
           NODE
       - name: Checkout workflow source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Install Playwright Chromium
@@ -51,7 +51,7 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { chromium } from 'playwright';
-          const urls = ['https://naughty-company-dashboard.pages.dev/', 'https://a9b464d9.naughty-company-dashboard.pages.dev/'];
+          const urls = ['https://naughtyfamily.pages.dev/'];
           const browser = await chromium.launch({ headless: true });
           let failed = false;
           try {
@@ -89,7 +89,7 @@ jobs:
             // Isolate the live frontend from account data and test the owner-only control with a mocked session.
             const adminPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
             await adminPage.addInitScript(() => localStorage.setItem('ncd_session', 'admin-elevation-ui-smoke'));
-            await adminPage.route('https://naughty-company-api.kboone801.workers.dev/**', async (route) => {
+            await adminPage.route('https://naughtyfamily-api.kboone801.workers.dev/**', async (route) => {
               const pathname = new URL(route.request().url()).pathname;
               if (pathname === '/api/auth/session') {
                 return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ player: { id: '351311', name: 'Admin UI Smoke Test' }, isAdmin: false, adminElevatedUntil: null, key: { saved: true }, company: { isDirector: false, key: { saved: false }, needsSecondaryKey: true } }) });
@@ -102,7 +102,7 @@ jobs:
               }
               return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Isolated UI smoke test' }) });
             });
-            const adminResponse = await adminPage.goto('https://naughty-company-dashboard.pages.dev/', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => null);
+            const adminResponse = await adminPage.goto('https://naughtyfamily.pages.dev/', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => null);
             const unlockButton = adminPage.getByRole('button', { name: 'Unlock administration' });
             await unlockButton.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
             const unlockVisible = await unlockButton.isVisible().catch(() => false);
@@ -131,7 +131,7 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const base = 'https://naughty-company-api.kboone801.workers.dev';
+          const base = 'https://naughtyfamily-api.kboone801.workers.dev';
           const apiKey = process.env.TORN_API_KEY;
           if (!apiKey) { console.error('Required repository secret TORN_API_KEY is missing.'); process.exit(1); }
           let token = ''; let failed = false;

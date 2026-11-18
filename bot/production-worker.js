@@ -19,7 +19,7 @@ function timeoutWithCode(error, timeoutCode) {
 async function dashboardFetch(env, path, init = {}, timeoutCode = null) {
   if (!env.DASHBOARD_API) throw new Error("dashboard_binding_missing");
   try {
-    return await env.DASHBOARD_API.fetch(new Request("https://naughty-company-api" + path, init));
+    return await env.DASHBOARD_API.fetch(new Request("https://naughtyfamily-api" + path, init));
   } catch (error) {
     throw timeoutWithCode(error, timeoutCode);
   }
@@ -614,7 +614,7 @@ async function replyFor(i, env) {
       return privateReply("**Naughty Company Bot status**\nInteraction endpoint: responding\nDashboard API: " + (response.ok && health?.ok ? "healthy" : "unavailable") + "\nDashboard health checked: " + String(health?.checkedAt || "timestamp not provided") + "\nNo account data or credentials are included in this status response.");
     } catch { return privateReply("The bot is responding, but dashboard API health could not be checked."); }
   }
-  if (name === "link") return privateReply("**Secure dashboard linking**\n1. Open https://naughty-company-dashboard.pages.dev and sign in.\n2. Open the Automation Center’s Discord linking section and generate a one-time link code. It expires after five minutes.\n3. Run /link-code and submit that code in the private form.\n\nNever post a Torn API key in a Discord channel. This bot uses the dashboard’s one-time code flow.");
+  if (name === "link") return privateReply("**Secure dashboard linking**\n1. Open https://naughtyfamily.pages.dev and sign in.\n2. Open the Automation Center’s Discord linking section and generate a one-time link code. It expires after five minutes.\n3. Run /link-code and submit that code in the private form.\n\nNever post a Torn API key in a Discord channel. This bot uses the dashboard’s one-time code flow.");
   if (name === "link-code") return { type: 9, data: { custom_id: "link_code_submit", title: "Link from dashboard", components: [{ type: 18, label: "Dashboard link code", component: { type: 4, custom_id: "link_code", style: 1, min_length: 48, max_length: 48, required: true, placeholder: "Paste the one-time dashboard code" } }] } };
   if (name === "status") { const row = await env.BOT_DB.prepare("SELECT dashboard_player_id,updated_at FROM discord_links WHERE discord_user_id=?1").bind(user).first(); return privateReply(row ? "Your dashboard account is linked. Player ID: " + row.dashboard_player_id + ". Last linked: " + row.updated_at + "." : "No dashboard account is linked. Run /link to connect one."); }
   if (name === "unlink") {

@@ -1,0 +1,1497 @@
+import { type ReactNode, useEffect, useMemo, useState } from "react"
+import "./training-calculator.css"
+import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
+import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"
+import { createGymGainCalibrationSample, getGymGainCalibrationSummary } from "../../lib/gym-training/calibration.js"
+import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"
+
+type StatKey = "strength" | "defense" | "speed" | "dexterity"
+type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
+type GymPreset = { id: string; name: string; energyCost: number; dots: Record<StatKey, number | null>; note?: string; available?: boolean }
+type MarketPrice = { itemId: string; name: string; averagePrice: number | null; cacheTimestamp: number | null; fetchedAt: number }
+type EnergyBar = { current: number; maximum: number; increment: number; interval: number; tickTime: number; fullTime: number } | null
+type DonatorStatus = { state: "active" | "inactive" | "unknown"; label: string; detail: string }
+
+function evaluateDonatorStatus(energyBar: EnergyBar, uglyEnergyActive: boolean): DonatorStatus {
+  if (!energyBar) {
+    return { state: "unknown", label: "Awaiting live bar", detail: "Torn has not returned your Energy bar yet." }
+  }
+
+  const maximum = Math.max(0, safeNumber(energyBar.maximum))
+  const interval = Math.max(0, safeNumber(energyBar.interval))
+  const increment = Math.max(0, safeNumber(energyBar.increment))
+  const intervalState = interval === 600 ? "active" : interval === 900 ? "inactive" : null
+  const capacityState = !uglyEnergyActive
+    ? maximum === 150 ? "active" : maximum === 100 ? "inactive" : null
+    : null
+
+  if (intervalState && capacityState && intervalState !== capacityState) {
+    return {
+      state: "unknown",
+      label: "Unconfirmed",
+      detail: "The live Energy bar's maximum and regeneration interval disagree; no Donator assumption was applied.",
+    }
+  }
+
+  const state = intervalState || capacityState
+  const detail = interval > 0
+    ? increment + "E every " + Math.round(interval / 60) + " min · " + maximum + "E bar"
+    : maximum + "E bar · regeneration interval unavailable"
+  if (state === "active") return { state, label: "Active", detail }
+  if (state === "inactive") return { state, label: "Inactive", detail }
+  return {
+    state: "unknown",
+    label: "Unconfirmed",
+    detail: detail + (uglyEnergyActive ? " · Ugly Energy changes the normal bar maximum." : ""),
+  }
+}
+type LiveData = {
+  fetchedAt: string
+  battleStats: Record<StatKey, number | null> & { total: number | null }
+  perks: Record<string, string[]>
+  factionBonuses: {
+    energyDrinkBonusPercent: number
+    boosterCooldownBonusHours: number
+    companyCooldownReductionPercent: number
+    gymHappyLossReductionPercent: number
+  }
+  battleStatModifiers?: Record<StatKey, { percent: number; modifiers: Array<{ effect: string; value: number; type: string }> }>
+  job: { type?: string; name?: string; position?: string; companyId?: number; companyTypeId?: number; rating?: number; daysInCompany?: number; points?: number } | null
+  jobPoints: { jobs: Record<string, number>; companies: Array<{ company: { id?: number; name?: string }; points: number }> } | null
+  gym: { id: string; name: string; unlockedGyms: Array<{ id: string; name: string; available: boolean }> } | null
+  gyms: GymPreset[]
+  gymModifiers: Record<StatKey, { multiplier: number; baseMultiplier: number; bookBonusPercent: number; bonuses: string[] }>
+  bars: { energy: EnergyBar; happy: EnergyBar }
+  refills: { energy?: boolean; special_count?: number }
+  cooldowns: { booster?: number; drug?: number }
+  pointsAverageCost: number | null
+  items: {
+    xanax: MarketPrice | null
+    energyDrinks: Record<string, MarketPrice | null>
+    fhc: MarketPrice | null
+    eroticDvd: MarketPrice | null
+    yellowEgg: MarketPrice | null
+    poisonMistletoe: MarketPrice | null
+    statEnhancers: Record<StatKey, MarketPrice | null>
+  }
+  marketUpdatedAt: number
+  errors: Record<string, string>
+}
+type TrainRow = { train: number; statBefore: number; happyBefore: number; gain: number; statAfter: number; happyAfter: number; energy: number }
+type SessionResult = { trains: number; energyUsed: number; statGain: number; endingStat: number; endingHappy: number; averageGain: number; rows: TrainRow[] }
+type HistoryLog = { logId: string; timestamp: number; title: string; category?: string; record?: Record<string, unknown> }
+type HistoryData = { collectionEnabled?: boolean; connected?: boolean; totalLogs?: number; logs?: HistoryLog[]; error?: string }
+type GymHistoryDetails = {
+  title: string
+  stat: StatKey | null
+  energy: number | null
+  gain: number | null
+  statBefore: number | null
+  statAfter: number | null
+  happyUsed: number | null
+  gym: number | null
+  trains: number | null
+}
+type GymGainCalibrationSample = {
+  modelVersion: string
+  logId: string
+  timestamp: number
+  stat: StatKey
+  gymId: string
+  dots: number
+  modifier: number
+  startingHappy: number
+  energyUsed: number
+  trains: number
+  happyUsed: number | null
+  actualGain: number
+  expectedGain: number
+  correctionFactor: number
+}
+type GymGainCalibrationProfile = {
+  version: 1
+  samples: Partial<Record<StatKey, GymGainCalibrationSample[]>>
+}
+
+function gymGainCalibrationStorageKey(playerName: string): string {
+  const normalized = playerName.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+  return normalized ? "ncd:gym-gain-calibration:v1:" + normalized : ""
+}
+function readGymGainCalibrationProfile(storageKey: string): GymGainCalibrationProfile {
+  const empty: GymGainCalibrationProfile = { version: 1, samples: {} }
+  if (!storageKey || typeof window === "undefined") return empty
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return empty
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null || (parsed as { version?: unknown }).version !== 1) return empty
+    const source = (parsed as { samples?: unknown }).samples
+    if (typeof source !== "object" || source === null) return empty
+    const samples: Partial<Record<StatKey, GymGainCalibrationSample[]>> = {}
+    for (const stat of ["strength", "defense", "speed", "dexterity"] as StatKey[]) {
+      const entries = (source as Record<string, unknown>)[stat]
+      if (!Array.isArray(entries)) continue
+      samples[stat] = entries.filter((entry): entry is GymGainCalibrationSample => {
+        if (typeof entry !== "object" || entry === null) return false
+        const item = entry as Partial<GymGainCalibrationSample>
+        return item.modelVersion === "gym-gain-v1"
+          && item.stat === stat
+          && typeof item.logId === "string"
+          && typeof item.gymId === "string"
+          && typeof item.correctionFactor === "number"
+          && Number.isFinite(item.correctionFactor)
+          && item.correctionFactor >= 0.9 && item.correctionFactor <= 1.1
+          && typeof item.dots === "number" && Number.isFinite(item.dots)
+          && typeof item.modifier === "number" && Number.isFinite(item.modifier)
+      }).slice(-8)
+    }
+    return { version: 1, samples }
+  } catch {
+    return empty
+  }
+}
+
+const STAT_OPTIONS: Array<{ value: StatKey; label: string }> = [
+  { value: "strength", label: "Strength" },
+  { value: "defense", label: "Defense" },
+  { value: "speed", label: "Speed" },
+  { value: "dexterity", label: "Dexterity" },
+]
+const FALLBACK_GYMS: GymPreset[] = [
+  { id: "premier", name: "Premier Fitness", energyCost: 5, dots: { strength: 2, defense: 2, speed: 2, dexterity: 2 } },
+  { id: "average", name: "Average Joes", energyCost: 5, dots: { strength: 2.4, defense: 2.8, speed: 2.4, dexterity: 2.4 } },
+  { id: "woodys", name: "Woody's Workout", energyCost: 5, dots: { strength: 2.8, defense: 3, speed: 3.2, dexterity: 2.8 } },
+  { id: "global", name: "Global Gym", energyCost: 5, dots: { strength: 4, defense: 4, speed: 4, dexterity: 4 } },
+  { id: "deep-burn", name: "Deep Burn", energyCost: 10, dots: { strength: 6, defense: 6, speed: 6, dexterity: 6 } },
+  { id: "gun-shop", name: "Gun Shop", energyCost: 10, dots: { strength: 6.6, defense: 6.2, speed: 6.4, dexterity: 6.2 } },
+  { id: "force", name: "Force Training", energyCost: 10, dots: { strength: 6.4, defense: 6.4, speed: 6.6, dexterity: 6.8 } },
+  { id: "georges", name: "George's", energyCost: 10, dots: { strength: 7.3, defense: 7.3, speed: 7.3, dexterity: 7.3 } },
+  { id: "balboas", name: "Balboas Gym", energyCost: 25, dots: { strength: null, defense: 7.5, speed: null, dexterity: 7.5 } },
+  { id: "frontline", name: "Frontline Fitness", energyCost: 25, dots: { strength: 7.5, defense: null, speed: 7.5, dexterity: null } },
+  { id: "gym-3000", name: "Gym 3000", energyCost: 50, dots: { strength: 8, defense: null, speed: null, dexterity: null } },
+  { id: "isoyamas", name: "Mr. Isoyama's", energyCost: 50, dots: { strength: null, defense: 8, speed: null, dexterity: null } },
+  { id: "total-rebound", name: "Total Rebound", energyCost: 50, dots: { strength: null, defense: null, speed: 8, dexterity: null } },
+  { id: "elites", name: "Elites", energyCost: 50, dots: { strength: null, defense: null, speed: null, dexterity: 8 } },
+  { id: "ssl", name: "Sports Science Lab", energyCost: 25, dots: { strength: 9, defense: 9, speed: 9, dexterity: 9 } },
+  { id: "fight-club", name: "Fight Club", energyCost: 10, dots: { strength: 10, defense: 10, speed: 10, dexterity: 10 } },
+]
+const ENERGY_DRINKS = [
+  { id: "goose", name: "Goose Juice", energy: 5 },
+  { id: "damp", name: "Damp Valley", energy: 10 },
+  { id: "croco", name: "Crocozade", energy: 15 },
+  { id: "munster", name: "Munster", energy: 20 },
+  { id: "santa", name: "Santa Shooters", energy: 20 },
+  { id: "red-cow", name: "Red Cow", energy: 25 },
+  { id: "rudolph", name: "Rockstar Rudolph", energy: 25 },
+  { id: "taurine", name: "Taurine Elite", energy: 30 },
+  { id: "x-mass", name: "X-MASS", energy: 30 },
+]
+const HAPPY_CAP = 99_999
+const ENERGY_HARD_CAP = 1_000
+const SE_GAIN_CAP = 5_000_000_000_000
+const MAX_STAT_INPUT = Number.MAX_SAFE_INTEGER
+
+function safeNumber(value: unknown, fallback = 0): number {
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN
+  return Number.isFinite(numeric) ? numeric : fallback
+}
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min))
+}
+function fmt(value: number, digits = 0): string {
+  return Number.isFinite(value) ? value.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: 0 }) : "—"
+}
+function money(value: number | null | undefined): string {
+  return value && value > 0 ? "$" + fmt(value) : "Not listed"
+}
+function normalizeBook(value: string): string {
+  const key = value.toLowerCase()
+  if (key.includes("fuelling your way to failure")) return "fuelling"
+  if (key.includes("higher daddy")) return "higher-daddy"
+  if (key.includes("ugly energy")) return "ugly-energy"
+  if (key.includes("self control is for losers")) return "self-control"
+  return ""
+}
+function activeBookChoice(data: LiveData | null): string {
+  const books = data?.perks?.book || []
+  for (const book of books) {
+    const match = normalizeBook(book)
+    if (match) return match
+  }
+  return "none"
+}
+function getNaturalEnergy(bar: EnergyBar, waitHours: number, regenMultiplier: number): number {
+  if (!bar || waitHours <= 0) return 0
+  const current = Math.max(0, safeNumber(bar.current))
+  const maximum = Math.max(0, safeNumber(bar.maximum))
+  if (current >= maximum) return 0
+  const increment = Math.max(1, safeNumber(bar.increment, 5)) * Math.max(0.01, regenMultiplier)
+  const interval = Math.max(1, safeNumber(bar.interval, 600))
+  const untilNext = clamp(safeNumber(bar.tickTime, interval), 0, interval)
+  const waitSeconds = Math.max(0, waitHours * 3600)
+  const ticks = waitSeconds < untilNext ? 0 : 1 + Math.floor((waitSeconds - untilNext) / interval)
+  return Math.min(maximum - current, ticks * increment)
+}
+function applyDailyHappyRegeneration(
+  happyBefore: number,
+  happyLost: number,
+  naturalHappyGain: number,
+  happyBarMaximum: number,
+): number {
+  const afterTraining = Math.max(0, happyBefore - Math.max(0, happyLost))
+  const cap = Math.max(0, happyBarMaximum)
+  // Items can place happiness above the normal bar cap. Natural regeneration
+  // must not pull that elevated value down; it only runs once below the cap.
+  return afterTraining >= cap
+    ? afterTraining
+    : Math.min(cap, afterTraining + Math.max(0, naturalHappyGain))
+}
+
+function estimateGymSession({
+  stat, statKey, happy, energy, dots, energyPerTrain, modifier, happyLossRate,
+}: {
+  stat: number; statKey: StatKey; happy: number; energy: number; dots: number; energyPerTrain: number; modifier: number; happyLossRate: number
+}): SessionResult {
+  const stepEnergy = Math.max(1, Math.floor(energyPerTrain))
+  const trains = Math.min(20_000, Math.max(0, Math.floor(Math.max(0, energy) / stepEnergy)))
+  let currentStat = Math.max(0, stat)
+  let currentHappy = clamp(happy, 0, HAPPY_CAP)
+  let statGain = 0
+  const rows: TrainRow[] = []
+  for (let index = 0; index < trains; index++) {
+    const statBefore = currentStat
+    const happyBefore = currentHappy
+    const gain = estimateEnergyEquivalentGain(statKey, currentStat, currentHappy, stepEnergy, dots, modifier)
+    currentStat += gain
+    statGain += gain
+    currentHappy = Math.max(0, currentHappy - stepEnergy * happyLossRate)
+    rows.push({ train: index + 1, statBefore, happyBefore, gain, statAfter: currentStat, happyAfter: currentHappy, energy: stepEnergy })
+  }
+  const energyUsed = trains * stepEnergy
+  return { trains, energyUsed, statGain, endingStat: currentStat, endingHappy: currentHappy, averageGain: trains ? statGain / trains : 0, rows }
+}
+type NumberFieldProps = {
+  label: string; value: number; onChange: (value: number) => void; min?: number; max?: number
+  step?: number; hint?: string; suffix?: string; testId?: string
+}
+function NumberField({ label, value, onChange, min = 0, max = Number.MAX_SAFE_INTEGER, step = 1, hint, suffix, testId }: NumberFieldProps) {
+  return (
+    <label className="tc-field">
+      <span>{label}</span>
+      <span className="tc-input-wrap">
+        <input data-testid={testId} type="number" min={min} max={max} step={step}
+          value={value === 0 ? "" : value}
+          onChange={event => {
+            const raw = event.target.value
+            onChange(raw === "" ? 0 : clamp(Number(raw), min, max))
+          }} />
+        {suffix && <small>{suffix}</small>}
+      </span>
+      {hint && <small className="tc-hint">{hint}</small>}
+    </label>
+  )
+}
+function TextNumberField({ label, value, fallbackValue, onChange, max = MAX_STAT_INPUT, hint, testId }: {
+  label: string; value: string; fallbackValue: number | null; onChange: (value: string) => void; max?: number; hint?: string; testId?: string
+}) {
+  return (
+    <label className="tc-field">
+      <span>{label}</span>
+      <input data-testid={testId} type="number" min="0" max={max}
+        value={value !== "" ? value : fallbackValue === null ? "" : fallbackValue}
+        placeholder="Use live Torn value"
+        onChange={event => onChange(event.target.value === "" ? "" : String(clamp(Number(event.target.value), 0, max)))} />
+      {hint && <small className="tc-hint">{hint}</small>}
+    </label>
+  )
+}
+function PriceField({ label, value, autoValue, onChange, hint, testId }: {
+  label: string; value: string; autoValue: number | null; onChange: (value: string) => void; hint?: string; testId?: string
+}) {
+  const displayed = value !== "" ? value : autoValue && autoValue > 0 ? String(autoValue) : ""
+  return (
+    <label className="tc-field">
+      <span>{label}</span>
+      <span className="tc-input-wrap">
+        <input data-testid={testId} type="number" min="0" max={MAX_STAT_INPUT} step="1000"
+          value={displayed} placeholder="Live market price unavailable"
+          onChange={event => onChange(event.target.value)} />
+      </span>
+      {hint && <small className="tc-hint">{hint}</small>}
+      {value !== "" && <small className="tc-hint">Manual override. Maximum {fmt(MAX_STAT_INPUT)}. Clear to return to the live Item Market average.</small>}
+    </label>
+  )
+}
+function Metric({ label, value, detail, tone = "violet" }: { label: string; value: string; detail?: string; tone?: string }) {
+  return <article className={"tc-metric tc-metric-" + tone}><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</article>
+}
+function Panel({ title, eyebrow, description, children }: { title: string; eyebrow?: string; description?: string; children: ReactNode }) {
+  return (
+    <section className="tc-panel">
+      {(eyebrow || title || description) && <header className="tc-panel-heading">
+        {eyebrow && <span>{eyebrow}</span>}<h2>{title}</h2>{description && <p>{description}</p>}
+      </header>}
+      {children}
+    </section>
+  )
+}
+function getBar(data: LiveData | null, kind: "energy" | "happy"): EnergyBar {
+  return data?.bars?.[kind] || null
+}
+function getPrice(override: string, market: MarketPrice | null | undefined): number {
+  if (override.trim() !== "") return Math.max(0, safeNumber(override))
+  return Math.max(0, safeNumber(market?.averagePrice))
+}
+function marketPrice(market: MarketPrice | null | undefined): number | null {
+  return market?.averagePrice && market.averagePrice > 0 ? market.averagePrice : null
+}
+function prettyDate(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Date unavailable"
+}
+type TrainingCalculatorProps = { playerName: string; apiBase: string; sessionToken: string; onNavigate: (path: string) => void }
+
+export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken, onNavigate }: TrainingCalculatorProps) {
+  const [activeTab, setActiveTab] = useState<TabKey>("session")
+  const [selectedStat, setSelectedStat] = useState<StatKey>("strength")
+  const [selectedGymId, setSelectedGymId] = useState("")
+  // Each planning surface owns its own inputs. No tab reads another tab's scenario values.
+  const [gymTrainStat, setGymTrainStat] = useState<StatKey>("strength")
+  const [gymTrainGymId, setGymTrainGymId] = useState("")
+  const [gymTrainCount, setGymTrainCount] = useState(10)
+  const [gymTrainMcsEnabled, setGymTrainMcsEnabled] = useState(false)
+  const [gymTrainXanaxPerDay, setGymTrainXanaxPerDay] = useState(0)
+  const [gymTrainFhcPerDay, setGymTrainFhcPerDay] = useState(0)
+  const [gymTrainCanPerDay, setGymTrainCanPerDay] = useState(0)
+  const [gymTrainCanId, setGymTrainCanId] = useState("munster")
+  const [happyJumpStat, setHappyJumpStat] = useState<StatKey>("strength")
+  const [happyJumpGymId, setHappyJumpGymId] = useState("georges")
+  const [happyJumpTrainCount, setHappyJumpTrainCount] = useState(10)
+  const [happyJumpGymModifier, setHappyJumpGymModifier] = useState(1)
+  const [happyJumpStartingHappy, setHappyJumpStartingHappy] = useState(0)
+  const [happyJumpXanaxCount, setHappyJumpXanaxCount] = useState(0)
+  const [happyJumpFhcCount, setHappyJumpFhcCount] = useState(0)
+  const [happyJumpDvdCount, setHappyJumpDvdCount] = useState(0)
+  const [happyJumpDvdHappy, setHappyJumpDvdHappy] = useState(2500)
+  const [happyJumpYellowEggCount, setHappyJumpYellowEggCount] = useState(0)
+  const [happyJumpMistletoeCount, setHappyJumpMistletoeCount] = useState(0)
+  const [happyJumpTargetHappy, setHappyJumpTargetHappy] = useState(0)
+  const [happyJumpOtherHappy, setHappyJumpOtherHappy] = useState(0)
+  const [happyJumpEcstasy, setHappyJumpEcstasy] = useState(false)
+  const [happyJumpPriceOverrides, setHappyJumpPriceOverrides] = useState<Record<string, string>>({})
+  const [projectionStat, setProjectionStat] = useState<StatKey>("strength")
+  const [projectionGymId, setProjectionGymId] = useState("")
+  const [projectionXanaxPerDay, setProjectionXanaxPerDay] = useState(0)
+  const [projectionFhcPerDay, setProjectionFhcPerDay] = useState(0)
+  const [projectionCanPerDay, setProjectionCanPerDay] = useState(0)
+  const [projectionCanId, setProjectionCanId] = useState("munster")
+  const [projectionMcsEnabled, setProjectionMcsEnabled] = useState(false)
+  const [liveData, setLiveData] = useState<LiveData | null>(null)
+  const [history, setHistory] = useState<HistoryData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [apiError, setApiError] = useState("")
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [manualStats, setManualStats] = useState<Record<StatKey, string>>({ strength: "", defense: "", speed: "", dexterity: "" })
+  const [manualHappy, setManualHappy] = useState("")
+  const [manualEnergy, setManualEnergy] = useState("")
+  const [manualModifier, setManualModifier] = useState("")
+  const [manualModifierEnabled, setManualModifierEnabled] = useState(false)
+  const [gymBookChoice, setGymBookChoice] = useState("auto")
+  const [waitHours, setWaitHours] = useState(0)
+  const [xanaxCount, setXanaxCount] = useState(0)
+  const [fhcCount, setFhcCount] = useState(0)
+  const [canId, setCanId] = useState("munster")
+  const [canCount, setCanCount] = useState(0)
+  const [greenEggCount, setGreenEggCount] = useState(0)
+  const [pointRefillIncluded, setPointRefillIncluded] = useState(false)
+  const [otherEnergy, setOtherEnergy] = useState(0)
+  const [bookChoice, setBookChoice] = useState("auto")
+  const [factionVoracity, setFactionVoracity] = useState(false)
+  const [eventDrinkBonus, setEventDrinkBonus] = useState(false)
+  const [dvdCount, setDvdCount] = useState(0)
+  const [manualDvdHappy, setManualDvdHappy] = useState<number | null>(null)
+  const [yellowEggCount, setYellowEggCount] = useState(0)
+  const [mistletoeCount, setMistletoeCount] = useState(0)
+  const [mistletoeTargetHappy, setMistletoeTargetHappy] = useState(0)
+  const [otherHappy, setOtherHappy] = useState(0)
+  const [ecstasy, setEcstasy] = useState(false)
+  const [seQuantity, setSeQuantity] = useState(0)
+  const [seTargetStat, setSeTargetStat] = useState<StatKey>("strength")
+  const [jobPointQuantity, setJobPointQuantity] = useState(0)
+  const [pressPassQuantity, setPressPassQuantity] = useState(0)
+  const [permanentStatBooks, setPermanentStatBooks] = useState<Record<StatKey, boolean>>({
+    strength: false, defense: false, speed: false, dexterity: false,
+  })
+  const [projectionDays, setProjectionDays] = useState(30)
+  const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
+  const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
+  const calibrationStorageKey = gymGainCalibrationStorageKey(playerName)
+  const [calibrationProfile, setCalibrationProfile] = useState<GymGainCalibrationProfile>(
+    () => readGymGainCalibrationProfile(calibrationStorageKey),
+  )
+  const [calibrationLogId, setCalibrationLogId] = useState("")
+  const [calibrationStartingHappy, setCalibrationStartingHappy] = useState("")
+  const [calibrationMessage, setCalibrationMessage] = useState("")
+  useEffect(() => {
+    if (!calibrationStorageKey) return
+    try { window.localStorage.setItem(calibrationStorageKey, JSON.stringify(calibrationProfile)) } catch { /* Browser storage may be unavailable. */ }
+  }, [calibrationStorageKey, calibrationProfile])
+
+  useEffect(() => {
+    const refreshInterval = window.setInterval(() => setRefreshKey(value => value + 1), 5 * 60 * 1000)
+    return () => window.clearInterval(refreshInterval)
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const historyController = new AbortController()
+    const base = apiBase.replace(/\/+$/, "")
+    let syncTimedOut = false
+    const syncTimeout = window.setTimeout(() => {
+      syncTimedOut = true
+      controller.abort()
+    }, 28_000)
+
+    setLoading(true)
+    setApiError("")
+    fetch(base + "/api/me/training-calculator", { headers: { Authorization: "Bearer " + sessionToken }, signal: controller.signal })
+      .then(async response => {
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Could not load live Torn training data.")
+        return payload as LiveData
+      })
+      .then(payload => {
+        if (controller.signal.aborted) return
+        setLiveData(payload)
+        if (payload.gym?.id) {
+          const normalizeGymName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "")
+          const profileGym = payload.gyms?.find(gym => String(gym.id) === String(payload.gym?.id))
+            || FALLBACK_GYMS.find(gym => normalizeGymName(gym.name) === normalizeGymName(payload.gym?.name || ""))
+          setSelectedGymId(current => current || profileGym?.id || payload.gym!.id)
+          setGymTrainGymId(current => current || profileGym?.id || payload.gym!.id)
+          setProjectionGymId(current => current || profileGym?.id || payload.gym!.id)
+        }
+        if (payload.bars?.happy?.current !== undefined) setManualHappy(current => current || "")
+        if (payload.errors?.battleStats && !Object.values(payload.battleStats || {}).some(value => typeof value === "number")) {
+          setApiError("Torn could not return your battle stats. Check that your saved API key includes User → Battlestats.")
+        }
+      })
+      .catch(error => {
+        if (syncTimedOut) {
+          setApiError("Live Torn sync timed out while loading your profile and Item Market data. Manual planning is still available; use Refresh live data to retry.")
+        } else if (!controller.signal.aborted) {
+          setApiError(error instanceof Error ? error.message : "Live Torn data could not be loaded.")
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(syncTimeout)
+        if (!controller.signal.aborted || syncTimedOut) setLoading(false)
+      })
+
+    fetch(base + "/api/me/gym-training/history", { headers: { Authorization: "Bearer " + sessionToken }, signal: historyController.signal })
+      .then(async response => {
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Training history is unavailable.")
+        return payload as HistoryData
+      })
+      .then(payload => { if (!historyController.signal.aborted) setHistory(payload) })
+      .catch(error => { if (!historyController.signal.aborted) setHistory({ error: error instanceof Error ? error.message : "Training history is unavailable." }) })
+      .finally(() => { if (!historyController.signal.aborted) setHistoryLoading(false) })
+    return () => {
+      window.clearTimeout(syncTimeout)
+      controller.abort()
+      historyController.abort()
+    }
+  }, [apiBase, sessionToken, refreshKey])
+
+  const activeBook = bookChoice === "auto" ? activeBookChoice(liveData) : bookChoice
+  const plannedEnergyBooks = new Set<string>(activeBook === "none" ? [] : [activeBook])
+  const hasLiveUglyEnergy = activeBookChoice(liveData) === "ugly-energy"
+  const energyBar = getBar(liveData, "energy")
+  const happyBar = getBar(liveData, "happy")
+  const liveBarMaximum = energyBar ? Math.max(0, safeNumber(energyBar.maximum)) : 0
+  const donatorStatus = evaluateDonatorStatus(energyBar, hasLiveUglyEnergy)
+  const currentEnergyFromApi = energyBar ? safeNumber(energyBar.current) : 0
+  const currentHappyFromApi = happyBar ? safeNumber(happyBar.current) : 0
+  const currentEnergy = manualEnergy.trim() === "" ? currentEnergyFromApi : clamp(safeNumber(manualEnergy), 0, ENERGY_HARD_CAP)
+  const startingHappy = manualHappy.trim() === "" ? currentHappyFromApi : clamp(safeNumber(manualHappy), 0, HAPPY_CAP)
+  const normalizeGymName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "")
+  const activeGym = liveData?.gyms?.find(gym => String(gym.id) === String(liveData.gym?.id))
+    || FALLBACK_GYMS.find(gym => normalizeGymName(gym.name) === normalizeGymName(liveData?.gym?.name || ""))
+    || null
+  const gyms = liveData?.gyms?.length ? liveData.gyms : FALLBACK_GYMS
+  const gymId = selectedGymId || String(activeGym?.id || liveData?.gym?.id || "gun-shop")
+  const selectedGym = gyms.find(gym => String(gym.id) === gymId) || activeGym || FALLBACK_GYMS.find(gym => gym.id === "gun-shop")!
+  const gymTrainResolvedGymId = gymTrainGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
+  const gymTrainGym = gyms.find(gym => String(gym.id) === gymTrainResolvedGymId)
+    || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const gymTrainStatLabel = STAT_OPTIONS.find(option => option.value === gymTrainStat)?.label || "Strength"
+  const gymTrainStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[gymTrainStat]))
+  const gymTrainDots = safeNumber(gymTrainGym.dots[gymTrainStat])
+  const gymTrainModifierProfile = liveData?.gymModifiers?.[gymTrainStat]
+  const gymTrainModifierBonuses = gymTrainModifierProfile?.bonuses ?? []
+  const gymTrainAutoModifier = safeNumber(gymTrainModifierProfile?.multiplier, 1)
+  const gymTrainCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[gymTrainStat] || [], {
+    gymId: gymTrainGym.id, dots: gymTrainDots, modifier: gymTrainAutoModifier,
+  })
+  const gymTrainEffectiveModifier = gymTrainAutoModifier * gymTrainCalibration.factor
+  const projectionResolvedGymId = projectionGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
+  const projectionGym = gyms.find(gym => String(gym.id) === projectionResolvedGymId)
+    || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const projectionStatLabel = STAT_OPTIONS.find(option => option.value === projectionStat)?.label || "Strength"
+  const projectionStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[projectionStat]))
+  const projectionDots = safeNumber(projectionGym.dots[projectionStat])
+  const projectionModifierProfile = liveData?.gymModifiers?.[projectionStat]
+  const projectionAutoModifier = safeNumber(projectionModifierProfile?.multiplier, 1)
+  const projectionCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[projectionStat] || [], {
+    gymId: projectionGym.id, dots: projectionDots, modifier: projectionAutoModifier,
+  })
+  const projectionEffectiveModifier = projectionAutoModifier * projectionCalibration.factor
+  const happyJumpGym = FALLBACK_GYMS.find(gym => gym.id === happyJumpGymId)
+    || FALLBACK_GYMS.find(gym => gym.id === "georges")!
+  const happyJumpStatLabel = STAT_OPTIONS.find(option => option.value === happyJumpStat)?.label || "Strength"
+  const happyJumpStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[happyJumpStat]))
+  const happyJumpDots = safeNumber(happyJumpGym.dots[happyJumpStat])
+  const liveStatValue = liveData?.battleStats?.[selectedStat] ?? null
+  const statOverride = manualStats[selectedStat]
+  const currentStat = statOverride.trim() === "" ? safeNumber(liveStatValue) : Math.max(0, safeNumber(statOverride))
+  const modifierProfile = liveData?.gymModifiers?.[selectedStat]
+  const autoModifier = modifierProfile?.multiplier || 1
+  const baseModifier = modifierProfile?.baseMultiplier ?? autoModifier
+  const plannedGymBookPercent: Record<string, number> = {
+    none: 0, "get-hard": 20, "gym-grunting": selectedStat === "strength" ? 30 : 0,
+    "self-defense": selectedStat === "defense" ? 30 : 0,
+    "speed-script": selectedStat === "speed" ? 30 : 0,
+    "limbo-lovers": selectedStat === "dexterity" ? 30 : 0,
+  }
+  const plannedModifier = gymBookChoice === "auto" ? autoModifier : baseModifier * (1 + (plannedGymBookPercent[gymBookChoice] || 0) / 100)
+  const effectiveModifier = manualModifierEnabled && manualModifier.trim() !== "" ? clamp(safeNumber(manualModifier), 0, 100) : plannedModifier
+  const liveStatSource = statOverride.trim() === "" && liveStatValue !== null ? "Live Torn API" : "Manual scenario"
+  const selectedDots = safeNumber(selectedGym.dots[selectedStat])
+  const activeCalibration = gymBookChoice === "auto" && !manualModifierEnabled
+    ? getGymGainCalibrationSummary(calibrationProfile.samples[selectedStat] || [], {
+        gymId: selectedGym.id, dots: selectedDots, modifier: autoModifier,
+      })
+    : { factor: 1, sampleCount: 0 }
+  const calibratedModifier = effectiveModifier * activeCalibration.factor
+  const activeEnergyDrinkBonus = Math.max(0, safeNumber(liveData?.factionBonuses?.energyDrinkBonusPercent))
+  const activeVoracity = activeEnergyDrinkBonus > 0
+  const energyDrinkBonusPercent = factionVoracity && !activeVoracity ? 50 : activeEnergyDrinkBonus
+  const drink = ENERGY_DRINKS.find(item => item.id === canId) || ENERGY_DRINKS[3]
+  const companyCooldownReduction = clamp(safeNumber(liveData?.factionBonuses?.companyCooldownReductionPercent), 0, 25) / 100
+  const bookCanCooldownFactor = plannedEnergyBooks.has("self-control") ? 0.5 : 1
+  const canCooldownFactor = bookCanCooldownFactor * (1 - companyCooldownReduction)
+  const autoHappyLossReduction = clamp(safeNumber(liveData?.factionBonuses?.gymHappyLossReductionPercent), 0, 100)
+  // Use the midpoint of Torn's 40–60% per-train happy-loss range for an
+  // estimate, then apply any verified company reduction multiplicatively.
+  // The same value is shown in the setup readout and applied sequentially.
+  const happyLossPercent = 50 * (1 - autoHappyLossReduction / 100)
+  const naturalHappyPerDay = happyBar
+    ? Math.max(0, safeNumber(happyBar.increment) * 86400 / Math.max(1, safeNumber(happyBar.interval)))
+    : 0
+  const dailyHappyBarMaximum = happyBar ? Math.max(0, safeNumber(happyBar.maximum, HAPPY_CAP)) : HAPPY_CAP
+  const liveEnergyBook = activeBookChoice(liveData)
+  const projectedNaturalEnergyPerDay = energyBar
+    ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval))
+      * (liveEnergyBook === "higher-daddy" ? 1.2 : 1))
+    : 0
+  const projectedRefillEnergy = hasLiveUglyEnergy
+    ? Math.max(250, liveBarMaximum)
+    : Math.max(0, liveBarMaximum || 150)
+  const projectedCanEnergyMultiplier = (1 + activeEnergyDrinkBonus / 100) * (liveEnergyBook === "fuelling" ? 2 : 1)
+  const gymTrainDailyCan = ENERGY_DRINKS.find(item => item.id === gymTrainCanId) || ENERGY_DRINKS[3]
+  const projectionDailyCan = ENERGY_DRINKS.find(item => item.id === projectionCanId) || ENERGY_DRINKS[3]
+  const gymTrainDailySupply = calculateDailyTrainingSupply({
+    naturalEnergyPerDay: projectedNaturalEnergyPerDay,
+    xanaxPerDay: gymTrainXanaxPerDay,
+    fhcPerDay: gymTrainFhcPerDay,
+    refillEnergyPerFhc: projectedRefillEnergy,
+    cansPerDay: gymTrainCanPerDay,
+    energyPerCan: gymTrainDailyCan.energy,
+    canEnergyMultiplier: projectedCanEnergyMultiplier,
+    mcsEnabled: gymTrainMcsEnabled,
+  })
+  const gymTrainSession = useMemo(() => estimateGymSession({
+    stat: gymTrainStartingStat,
+    statKey: gymTrainStat,
+    happy: currentHappyFromApi,
+    energy: clamp(gymTrainCount, 0, 20000) * gymTrainGym.energyCost,
+    dots: gymTrainDots,
+    energyPerTrain: gymTrainGym.energyCost,
+    modifier: gymTrainEffectiveModifier,
+    happyLossRate: happyLossPercent / 100,
+  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainCount, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
+  const gymTrainOne = useMemo(() => estimateGymSession({
+    stat: gymTrainStartingStat,
+    statKey: gymTrainStat,
+    happy: currentHappyFromApi,
+    energy: gymTrainGym.energyCost,
+    dots: gymTrainDots,
+    energyPerTrain: gymTrainGym.energyCost,
+    modifier: gymTrainEffectiveModifier,
+    happyLossRate: happyLossPercent / 100,
+  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
+  const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
+  const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
+  const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
+  const refillBarMaximum = plannedEnergyBooks.has("ugly-energy") || hasLiveUglyEnergy
+    ? Math.max(250, liveBarMaximum)
+    : liveBarMaximum
+  const regenMultiplier = plannedEnergyBooks.has("higher-daddy") ? 1.2 : 1
+  const naturalEnergyBar = energyBar ? { ...energyBar, current: currentEnergy } : null
+  const naturalEnergy = getNaturalEnergy(naturalEnergyBar, waitHours, regenMultiplier)
+  const energyAfterNatural = currentEnergy + naturalEnergy
+  const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (plannedEnergyBooks.has("fuelling") ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
+  const energyFromCans = canCount * drink.energy * drinkMultiplier
+  const pointRefillAvailable = liveData?.refills?.energy === true
+  const pointRefillCount = pointRefillIncluded && pointRefillAvailable ? 1 : 0
+  const energyFromRefills = pointRefillCount * refillBarMaximum
+  const energyFromFhcs = fhcCount * refillBarMaximum
+  const energyFromXanax = xanaxCount * 250
+  const energyFromGreenEggs = greenEggCount * 500
+  const usableEnergy = energyAfterNatural + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
+  const cooldownUsedHours = canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6
+  const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
+  const currentDrugCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.drug) / 3600)
+  const timeAvailableForDrugs = Math.max(0, waitHours - currentDrugCooldownHours)
+  const maximumXanax = waitHours < currentDrugCooldownHours ? 0
+    : Math.max(0, Math.floor(timeAvailableForDrugs / 6) + (ecstasy ? 0 : 1))
+  const cooldownExceptCans = Math.max(0, boosterBudgetHours - (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6)
+  const maximumCanCount = Math.min(64, Math.max(0, Math.floor(cooldownExceptCans / (2 * canCooldownFactor))))
+  const cooldownExceptFhcs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6))
+  const maximumFhcCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptFhcs / 6)))
+  const cooldownExceptDvds = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + yellowEggCount + seQuantity) * 6))
+  const maximumDvdCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptDvds / 6)))
+  const cooldownExceptYellowEggs = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + seQuantity) * 6))
+  const maximumYellowEggCount = Math.min(8, Math.max(0, Math.floor(cooldownExceptYellowEggs / 6)))
+  const targetHappy = clamp(mistletoeTargetHappy, 0, HAPPY_CAP)
+  const maximumMistletoeCount = targetHappy > 1 ? Math.max(0, Math.ceil(Math.log(1 / targetHappy) / Math.log(0.75))) : 0
+  const cooldownExceptSe = Math.max(0, boosterBudgetHours - (canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount) * 6))
+  const maxSeByCooldown = Math.min(8, Math.max(0, Math.floor(cooldownExceptSe / 6)))
+  const xanaxPrice = getPrice(priceOverrides.xanax || "", liveData?.items?.xanax)
+  const canPrice = getPrice(priceOverrides["can:" + canId] || "", liveData?.items?.energyDrinks?.[canId])
+  const fhcPrice = getPrice(priceOverrides.fhc || "", liveData?.items?.fhc)
+  const dvdPrice = getPrice(priceOverrides.dvd || "", liveData?.items?.eroticDvd)
+  const yellowEggPrice = getPrice(priceOverrides.yellowEgg || "", liveData?.items?.yellowEgg)
+  const mistletoePrice = getPrice(priceOverrides.mistletoe || "", liveData?.items?.poisonMistletoe)
+  const pointPrice = (liveData?.pointsAverageCost || 0) * 25
+  const pointRefillCost = pointRefillCount * pointPrice
+  const energyConsumableCost = xanaxCount * xanaxPrice + canCount * canPrice + fhcCount * fhcPrice + greenEggCount * 0 + pointRefillCost
+  const happyConsumableCost = dvdCount * dvdPrice + yellowEggCount * yellowEggPrice + mistletoeCount * mistletoePrice
+  const totalEnergyPlanCost = energyConsumableCost + happyConsumableCost
+
+  const currentJob = liveData?.job
+  const currentJobName = currentJob?.name || ""
+  const currentJobRating = Math.max(0, safeNumber(currentJob?.rating))
+  const currentJobPoints = Math.max(0, safeNumber(currentJob?.points))
+  const dvdHappy = manualDvdHappy ?? (currentJobName.toLowerCase().includes("adult novelties") && currentJobRating >= 10 ? 5000 : 2500)
+
+  const happyJumpTarget = clamp(happyJumpTargetHappy, 0, HAPPY_CAP)
+  const happyJumpMaximumMistletoeCount = happyJumpTarget > 1
+    ? Math.max(0, Math.ceil(Math.log(1 / happyJumpTarget) / Math.log(0.75)))
+    : 0
+  const happyJumpHappinessBeforeOther = Math.min(HAPPY_CAP,
+    happyJumpStartingHappy + happyJumpXanaxCount * 75 + happyJumpFhcCount * 500
+    + happyJumpDvdCount * happyJumpDvdHappy + happyJumpYellowEggCount * 10000
+    + (happyJumpTarget > 0 ? happyJumpTarget * (1 - Math.pow(0.75, happyJumpMistletoeCount)) : 0))
+  const happyJumpMaximumOtherHappy = Math.max(0, HAPPY_CAP - happyJumpHappinessBeforeOther)
+  const happyJump = useMemo(() => {
+    let value = clamp(happyJumpStartingHappy, 0, HAPPY_CAP)
+    value = Math.min(HAPPY_CAP, value + happyJumpXanaxCount * 75)
+    value = Math.min(HAPPY_CAP, value + happyJumpFhcCount * 500)
+    value = Math.min(HAPPY_CAP, value + happyJumpDvdCount * happyJumpDvdHappy)
+    value = Math.min(HAPPY_CAP, value + happyJumpYellowEggCount * 10000)
+    let target = happyJumpTarget
+    let mistletoeGain = 0
+    for (let index = 0; index < happyJumpMistletoeCount; index++) {
+      const transfer = target * 0.25
+      target -= transfer
+      mistletoeGain += transfer
+      value = Math.min(HAPPY_CAP, value + transfer)
+    }
+    value = Math.min(HAPPY_CAP, value + happyJumpOtherHappy)
+    const beforeEcstasy = value
+    const finalHappy = happyJumpEcstasy ? Math.min(HAPPY_CAP, beforeEcstasy * 2) : beforeEcstasy
+    return { beforeEcstasy, finalHappy, mistletoeGain, targetRemaining: target }
+  }, [happyJumpStartingHappy, happyJumpXanaxCount, happyJumpFhcCount, happyJumpDvdCount, happyJumpDvdHappy,
+    happyJumpYellowEggCount, happyJumpMistletoeCount, happyJumpTarget, happyJumpOtherHappy, happyJumpEcstasy])
+
+  const happyJumpSession = useMemo(() => estimateGymSession({
+    stat: happyJumpStartingStat,
+    statKey: happyJumpStat,
+    happy: happyJump.finalHappy,
+    energy: clamp(happyJumpTrainCount, 0, 20000) * happyJumpGym.energyCost,
+    dots: happyJumpDots,
+    energyPerTrain: happyJumpGym.energyCost,
+    modifier: clamp(happyJumpGymModifier, 0.0001, 100),
+    happyLossRate: 0.5,
+  }), [happyJumpStartingStat, happyJumpStat, happyJump.finalHappy, happyJumpTrainCount, happyJumpGym.energyCost,
+    happyJumpDots, happyJumpGymModifier])
+
+  const session = useMemo(() => estimateGymSession({
+    stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: usableEnergy, dots: selectedDots,
+    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+  }), [currentStat, selectedStat, startingHappy, usableEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
+  const oneTrain = useMemo(() => estimateGymSession({
+    stat: currentStat, statKey: selectedStat, happy: startingHappy, energy: selectedGym.energyCost, dots: selectedDots,
+    energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+  }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
+  const happySession = happyJumpSession
+
+  const jobPointSpecial = (() => {
+    if (currentJob?.type !== "company") return null
+    const name = currentJobName.toLowerCase()
+    if (name.includes("fitness center") && currentJobRating >= 5) return { name: "Roid Rage", stat: "strength" as StatKey, energyEquivalent: 4.5, happinessIndependent: true }
+    if (name.includes("furniture store") && currentJobRating >= 3) return { name: "Heavy Lifting", stat: "strength" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
+    if (name.includes("mining corporation") && currentJobRating >= 5) return { name: "Rock Salt", stat: "defense" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
+    if (name.includes("logistics management") && currentJobRating >= 1) return { name: "Efficiency", stat: "speed" as StatKey, energyEquivalent: 4.5, happinessIndependent: false }
+    return null
+  })()
+  const hasPressPass = currentJob?.type === "company" && currentJobName.toLowerCase().includes("television network") && currentJobRating >= 10
+  const jobPointMax = jobPointSpecial ? Math.max(0, currentJobPoints - pressPassQuantity * 25) : 0
+  const pressPassMax = hasPressPass ? Math.max(0, Math.floor((currentJobPoints - jobPointQuantity) / 25)) : 0
+  useEffect(() => {
+    setXanaxCount(current => Math.min(current, maximumXanax))
+    setCanCount(current => Math.min(current, maximumCanCount))
+    setFhcCount(current => Math.min(current, maximumFhcCount))
+    setGreenEggCount(current => Math.min(current, maximumYellowEggCount))
+    setDvdCount(current => Math.min(current, maximumDvdCount))
+    setYellowEggCount(current => Math.min(current, maximumYellowEggCount))
+    setSeQuantity(current => Math.min(current, maxSeByCooldown))
+    setMistletoeCount(current => Math.min(current, maximumMistletoeCount))
+    setJobPointQuantity(current => Math.min(current, jobPointMax))
+    setPressPassQuantity(current => Math.min(current, pressPassMax))
+  }, [maximumXanax, maximumCanCount, maximumFhcCount, maximumDvdCount, maximumYellowEggCount, maxSeByCooldown, maximumMistletoeCount, jobPointMax, pressPassMax])
+
+  const jobPointStat = jobPointSpecial?.stat || null
+  const jobPointStartingStat = jobPointStat
+    ? (manualStats[jobPointStat].trim() === "" ? safeNumber(liveData?.battleStats?.[jobPointStat]) : Math.max(0, safeNumber(manualStats[jobPointStat])))
+    : 0
+  const jobPointProfile = jobPointStat ? liveData?.gymModifiers?.[jobPointStat] : null
+  const jobPointBookBonus: Record<string, number> = {
+    none: 0, "get-hard": 20, "gym-grunting": jobPointStat === "strength" ? 30 : 0,
+    "self-defense": jobPointStat === "defense" ? 30 : 0,
+    "speed-script": jobPointStat === "speed" ? 30 : 0,
+    "limbo-lovers": jobPointStat === "dexterity" ? 30 : 0,
+  }
+  const jobPointModifier = !jobPointStat ? 1 : gymBookChoice === "auto"
+    ? safeNumber(jobPointProfile?.multiplier, 1)
+    : safeNumber(jobPointProfile?.baseMultiplier, 1) * (1 + (jobPointBookBonus[gymBookChoice] || 0) / 100)
+  const jobPointDots = jobPointStat ? safeNumber(selectedGym.dots[jobPointStat]) : 0
+  const jobPointCalibration = jobPointStat && gymBookChoice === "auto"
+    ? getGymGainCalibrationSummary(calibrationProfile.samples[jobPointStat] || [], {
+        gymId: selectedGym.id, dots: jobPointDots, modifier: jobPointModifier,
+      })
+    : { factor: 1, sampleCount: 0 }
+  const calibratedJobPointModifier = jobPointModifier * jobPointCalibration.factor
+  const jobPointGain = (() => {
+    if (!jobPointSpecial || !jobPointStat) return { gain: 0, endingStat: 0, perPoint: 0 }
+    let stat = jobPointStartingStat
+    let gain = 0
+    for (let index = 0; index < Math.min(jobPointQuantity, jobPointMax); index++) {
+      const modeledHappy = jobPointSpecial.happinessIndependent ? 0 : startingHappy
+      const next = estimateEnergyEquivalentGain(jobPointStat, stat, modeledHappy, jobPointSpecial.energyEquivalent, jobPointDots, calibratedJobPointModifier)
+      stat += next
+      gain += next
+    }
+    return {
+      gain,
+      endingStat: stat,
+      perPoint: estimateEnergyEquivalentGain(jobPointStat, jobPointStartingStat, jobPointSpecial.happinessIndependent ? 0 : startingHappy, jobPointSpecial.energyEquivalent, jobPointDots, calibratedJobPointModifier),
+    }
+  })()
+  const selectedSePrice = getPrice(priceOverrides["se:" + seTargetStat] || "", liveData?.items?.statEnhancers?.[seTargetStat])
+  const seCalculation = useMemo(() => {
+    let value = currentStat
+    let gain = 0
+    const count = Math.min(Math.max(0, seQuantity), maxSeByCooldown)
+    for (let index = 0; index < count; index++) {
+      const increase = Math.min(value * 0.01, SE_GAIN_CAP)
+      value += increase
+      gain += increase
+    }
+    return { count, gain, endingStat: value, cost: count * selectedSePrice, perEnhancer: count > 0 ? gain / count : Math.min(value * 0.01, SE_GAIN_CAP) }
+  }, [currentStat, seQuantity, maxSeByCooldown, selectedSePrice])
+
+  const naturalEnergyPerDay = energyBar
+    ? Math.max(0, safeNumber(energyBar.increment) * 86400 / Math.max(1, safeNumber(energyBar.interval)) * regenMultiplier)
+    : 0
+  const projectionDailySupply = calculateDailyTrainingSupply({
+    naturalEnergyPerDay: projectedNaturalEnergyPerDay,
+    xanaxPerDay: projectionXanaxPerDay,
+    fhcPerDay: projectionFhcPerDay,
+    refillEnergyPerFhc: projectedRefillEnergy,
+    cansPerDay: projectionCanPerDay,
+    energyPerCan: projectionDailyCan.energy,
+    canEnergyMultiplier: projectedCanEnergyMultiplier,
+    mcsEnabled: projectionMcsEnabled,
+  })
+  const longTermProjection = useMemo(() => {
+    let stat = projectionStartingStat
+    let happy = currentHappyFromApi
+    let totalGain = 0
+    let totalEnergy = 0
+    let totalTrains = 0
+    const days = clamp(projectionDays, 1, 3650)
+    for (let day = 0; day < days; day++) {
+      const mcsEnergy = getWeeklyStockEnergyBonus(day, projectionMcsEnabled)
+      const energyForDay = projectionDailySupply.baseEnergyPerDay + mcsEnergy
+      const happyBeforeTraining = Math.min(HAPPY_CAP,
+        happy + projectionXanaxPerDay * 75 + projectionFhcPerDay * 500)
+      const result = estimateGymSession({
+        stat,
+        statKey: projectionStat,
+        happy: happyBeforeTraining,
+        energy: energyForDay,
+        dots: projectionDots,
+        energyPerTrain: projectionGym.energyCost,
+        modifier: projectionEffectiveModifier,
+        happyLossRate: happyLossPercent / 100,
+      })
+      stat = result.endingStat
+      totalTrains += result.trains
+      totalEnergy += energyForDay
+      happy = applyDailyHappyRegeneration(
+        happyBeforeTraining,
+        result.trains * projectionGym.energyCost * happyLossPercent / 100,
+        naturalHappyPerDay,
+        dailyHappyBarMaximum,
+      )
+      totalGain += result.statGain
+    }
+    return { stat, totalGain, energy: totalEnergy, trains: totalTrains, days }
+  }, [projectionStartingStat, currentHappyFromApi, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
+    projectionStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
+    projectionXanaxPerDay, projectionFhcPerDay, naturalHappyPerDay, dailyHappyBarMaximum])
+  const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillAvailable ? refillBarMaximum : 0))
+  const dailyEnergy = dailyEnergyOverride.trim() === "" ? dailyEnergyDefault : clamp(safeNumber(dailyEnergyOverride), 0, 100000)
+  const projection = useMemo(() => {
+    let stat = currentStat
+    let happy = startingHappy
+    let totalGain = 0
+    const days = clamp(projectionDays, 1, 3650)
+    for (let day = 0; day < days; day++) {
+      const result = estimateGymSession({
+        stat, statKey: selectedStat, happy, energy: dailyEnergy, dots: selectedDots,
+        energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
+      })
+      stat = result.endingStat
+      happy = applyDailyHappyRegeneration(
+        happy,
+        result.trains * selectedGym.energyCost * happyLossPercent / 100,
+        naturalHappyPerDay,
+        dailyHappyBarMaximum,
+      )
+      totalGain += result.statGain
+    }
+    return { stat, totalGain, energy: dailyEnergy * days, days }
+  }, [currentStat, selectedStat, startingHappy, projectionDays, dailyEnergy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent, naturalHappyPerDay, dailyHappyBarMaximum])
+
+  const permanentStatBookOptions: Array<{ stat: StatKey; title: string }> = [
+    { stat: "strength", title: "Brawn Over Brains" },
+    { stat: "defense", title: "Keeping Your Face Handsome" },
+    { stat: "speed", title: "Time Is In The Mind" },
+    { stat: "dexterity", title: "A Job For Your Hands" },
+  ]
+  const permanentStatBookProjections = permanentStatBookOptions.map(book => {
+    const liveStat = liveData?.battleStats?.[book.stat] ?? null
+    const override = manualStats[book.stat]
+    const startingStat = override.trim() === "" ? safeNumber(liveStat) : Math.max(0, safeNumber(override))
+    const hasStat = liveStat !== null || override.trim() !== ""
+    const dots = safeNumber(selectedGym.dots[book.stat])
+    const modifierProfile = liveData?.gymModifiers?.[book.stat]
+    const plannedBookBonus: Record<string, number> = {
+      none: 0,
+      "get-hard": 20,
+      "gym-grunting": book.stat === "strength" ? 30 : 0,
+      "self-defense": book.stat === "defense" ? 30 : 0,
+      "speed-script": book.stat === "speed" ? 30 : 0,
+      "limbo-lovers": book.stat === "dexterity" ? 30 : 0,
+    }
+    const modifier = gymBookChoice === "auto"
+      ? safeNumber(modifierProfile?.multiplier, 1)
+      : safeNumber(modifierProfile?.baseMultiplier, 1) * (1 + (plannedBookBonus[gymBookChoice] || 0) / 100)
+    const bookCalibration = gymBookChoice === "auto"
+      ? getGymGainCalibrationSummary(calibrationProfile.samples[book.stat] || [], {
+          gymId: selectedGym.id, dots, modifier,
+        })
+      : { factor: 1, sampleCount: 0 }
+    const calibratedBookModifier = modifier * bookCalibration.factor
+    let statAtCompletion = startingStat
+    let happyAtCompletion = startingHappy
+    if (hasStat && dots > 0) {
+      for (let day = 0; day < 31; day++) {
+        const dayTrain = estimateGymSession({
+          stat: statAtCompletion,
+          statKey: book.stat,
+          happy: happyAtCompletion,
+          energy: dailyEnergy,
+          dots,
+          energyPerTrain: selectedGym.energyCost,
+          modifier: calibratedBookModifier,
+          happyLossRate: happyLossPercent / 100,
+        })
+        statAtCompletion = dayTrain.endingStat
+        happyAtCompletion = applyDailyHappyRegeneration(
+          happyAtCompletion,
+          dayTrain.trains * selectedGym.energyCost * happyLossPercent / 100,
+          naturalHappyPerDay,
+          dailyHappyBarMaximum,
+        )
+      }
+    }
+    const gain = permanentStatBooks[book.stat] && hasStat && dots > 0
+      ? Math.min(statAtCompletion * 0.05, 10_000_000)
+      : 0
+    return { ...book, startingStat, statAtCompletion, gain, endingStat: statAtCompletion + gain, hasStat }
+  })
+  const totalPermanentStatBookGain = permanentStatBookProjections.reduce((total, book) => total + book.gain, 0)
+  const currentStatLabel = STAT_OPTIONS.find(option => option.value === selectedStat)?.label || "Strength"
+  const modifierBonuses = liveData?.gymModifiers?.[selectedStat]?.bonuses || []
+  const currentMarketTimestamp = liveData?.marketUpdatedAt ? new Date(liveData.marketUpdatedAt * 1000).toLocaleString() : ""
+  const logRows = history?.logs || []
+  const historyConnected = history?.connected === true
+  const calibrationCandidates = historyConnected ? logRows.map(log => ({
+    log,
+    details: parseGymHistoryLog(log),
+  })).filter(item => item.details.stat === gymTrainStat
+    && item.details.energy !== null && item.details.trains !== null && item.details.trains > 0
+    && item.details.statBefore !== null && item.details.statAfter !== null && item.details.gain !== null
+    && item.details.gym !== null && String(item.details.gym) === String(gymTrainGym.id)
+    && Math.abs(item.details.energy / item.details.trains - gymTrainGym.energyCost) < 0.0001) : []
+  const selectedCalibrationCandidate = calibrationCandidates.find(item => item.log.logId === calibrationLogId)
+    || calibrationCandidates[0] || null
+  const selectedStatCalibrationSamples = calibrationProfile.samples[gymTrainStat] || []
+  const applyGymCalibration = () => {
+    if (!selectedCalibrationCandidate) {
+      setCalibrationMessage("No complete Torn log matches the Gym Trains stat and gym.")
+      return
+    }
+    if (!calibrationStartingHappy.trim()) {
+      setCalibrationMessage("Enter the happiness value immediately before the selected training session.")
+      return
+    }
+    const result = createGymGainCalibrationSample({
+      logId: selectedCalibrationCandidate.log.logId,
+      timestamp: selectedCalibrationCandidate.log.timestamp,
+      log: selectedCalibrationCandidate.details,
+      startingHappy: safeNumber(calibrationStartingHappy, Number.NaN),
+      gymId: gymTrainGym.id,
+      dots: gymTrainDots,
+      modifier: gymTrainAutoModifier,
+      energyPerTrain: gymTrainGym.energyCost,
+      happyLossRate: happyLossPercent / 100,
+    })
+    if (!result.ok) {
+      setCalibrationMessage(result.error)
+      return
+    }
+    setCalibrationProfile(current => {
+      const prior = current.samples[gymTrainStat] || []
+      const next = [...prior.filter(sample => sample.logId !== result.sample.logId), result.sample].slice(-8)
+      return { version: 1, samples: { ...current.samples, [gymTrainStat]: next } }
+    })
+    setCalibrationMessage(
+      "Saved calibration from Torn log #" + result.sample.logId + ": " + fmt(result.sample.correctionFactor, 6)
+        + "× correction (" + fmt((result.sample.correctionFactor - 1) * 100, 4) + "%)."
+    )
+  }
+  const resetGymCalibration = () => {
+    setCalibrationProfile(current => {
+      const samples = { ...current.samples }
+      delete samples[gymTrainStat]
+      return { version: 1, samples }
+    })
+    setCalibrationMessage("Removed this browser's " + gymTrainStat + " calibration.")
+  }
+  const canRefresh = !loading && Boolean(apiBase && sessionToken)
+  const setPriceOverride = (key: string, value: string) => setPriceOverrides(current => ({ ...current, [key]: value }))
+
+  return (
+    <div className="training-calculator-page">
+      <div className="tc-topbar">
+        <button className="tc-back-link" onClick={() => onNavigate("/")}>← Back to Naughty Family Portal</button>
+        <div className="tc-user"><span className="tc-user-avatar">{playerName.slice(0, 1).toUpperCase()}</span><span>{playerName}</span></div>
+      </div>
+      <header className="tc-hero">
+        <div className="tc-hero-copy">
+          <span className="tc-eyebrow">TORN TRAINING INTELLIGENCE</span>
+          <h1>Train with a <em>plan.</em></h1>
+          <p>Live battle stats, gym and perk modifiers, energy timing, consumable prices and historical training activity in one place. Estimates only. Nothing is used in-game on your behalf.</p>
+        </div>
+        <div className="tc-hero-stats">
+          <span>LIVE TORN CONNECTION</span>
+          <strong>{loading ? "Syncing profile…" : liveData ? "Connected · " + currentStatLabel : "Manual planning mode"}</strong>
+          <small>{liveData?.fetchedAt ? "Updated " + new Date(liveData.fetchedAt).toLocaleTimeString() + " · auto-refresh every 5 min" : apiError || "Connect your Torn key to load live values."}</small>
+          <button className="tc-refresh-button" onClick={() => setRefreshKey(value => value + 1)} disabled={!canRefresh}>↻ Refresh live data</button>
+        </div>
+      </header>
+
+      <section className="tc-profile-strip" aria-label="Live battle stats">
+        {STAT_OPTIONS.map(option => {
+          const amount = liveData?.battleStats?.[option.value]
+          return <button type="button" key={option.value} className={"tc-profile-stat" + (selectedStat === option.value ? " is-selected" : "")}
+            onClick={() => setSelectedStat(option.value)}>
+            <span>{option.label}</span><strong>{amount === null || amount === undefined ? "—" : fmt(amount)}</strong>
+            <small>{liveData ? "Live Torn stat" : "Awaiting API"}</small>
+          </button>
+        })}
+        <div className="tc-profile-stat tc-profile-gym" data-testid="training-donator-status">
+          <span>Donator status · live Energy bar</span>
+          <strong>{donatorStatus.label}</strong>
+          <small>{donatorStatus.detail}{liveData?.gym?.name ? " · Active gym: " + liveData.gym.name : ""}</small>
+        </div>
+      </section>
+      {apiError && <div className="tc-inline-warning" role="status">{apiError} Manual values remain editable while the connection is repaired.</div>}
+
+      <nav className="tc-tabs" aria-label="Training calculator sections">
+        {[
+          ["session", "01", "Gym trains"],
+          ["energy", "02", "Energy supply"],
+          ["happy", "03", "99K Happy Jump"],
+          ["enhancers", "04", "Stat enhancers"],
+          ["projection", "05", "Long-term plan"],
+        ].map(([key, number, label]) => (
+          <button key={key} type="button" data-testid={"training-tab-" + key} className={activeTab === key ? "is-active" : ""}
+            onClick={() => setActiveTab(key as TabKey)}><span>{number}</span>{label}</button>
+        ))}
+      </nav>
+
+      {activeTab === "session" && <main className="tc-layout">
+        <div className="tc-results-column">
+          <Panel title="Gym training forecast" eyebrow="YOUR TRAINING SCENARIO" description="Choose a battle stat, gym and exact number of individual trains. The forecast works even when your live Torn Energy bar is empty.">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={gymTrainStat} onChange={event => setGymTrainStat(event.target.value as StatKey)}>
+                {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select></label>
+              <label className="tc-field"><span>Gym</span><select data-testid="training-gym-select" value={gymTrainResolvedGymId} onChange={event => setGymTrainGymId(event.target.value)}>
+                {gyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}{liveData?.gym?.id === String(gym.id) ? " · Active" : ""}</option>)}
+              </select></label>
+              <NumberField label="Number of individual trains" value={gymTrainCount} onChange={setGymTrainCount} min={0} max={20000}
+                hint="The calculator runs this exact number of trains. It does not require current Energy or an Energy Supply plan." testId="training-train-count" />
+              <div className="tc-readout-field"><span>Live {gymTrainStatLabel} stat</span><strong>{fmt(gymTrainStartingStat, 2)}</strong><small>{liveData?.battleStats?.[gymTrainStat] === null || liveData?.battleStats?.[gymTrainStat] === undefined ? "Battle stat not returned by Torn" : "From live battle stats"}</small></div>
+              <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{gymTrainDots ? fmt(gymTrainDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(gymTrainGym.energyCost)}E per individual train</small></div>
+              <div className="tc-readout-field"><span>Live gym-gain modifier</span><strong data-testid="training-effective-modifier">{fmt(gymTrainEffectiveModifier, 6)}×</strong><small>{gymTrainCalibration.sampleCount ? "Includes " + gymTrainCalibration.sampleCount + " matching player calibration sample(s)" : "Live Torn faction, education and book bonuses"}</small></div>
+              <div className="tc-readout-field"><span>Estimated happy lost per energy</span><strong data-testid="training-happy-loss-per-energy">{fmt(happyLossPercent, 2)}%</strong><small>Midpoint estimate after verified company happy-loss reductions</small></div>
+            </div>
+            {gymTrainModifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {gymTrainModifierBonuses.join(" · ")}</div>}
+          </Panel>
+          <Panel title="Projected daily energy supply" eyebrow="SEPARATE SUSTAINABILITY FORECAST" description="These daily averages are independent of the train count above. Current Energy is deliberately excluded, so zero current Energy does not block predictions.">
+            <div className="tc-form-grid">
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-gym-mcs" checked={gymTrainMcsEnabled} onChange={event => setGymTrainMcsEnabled(event.target.checked)} />
+                <span><strong>MCS stock block benefit</strong><small>100E once per week, equivalent to 14.29E/day on average.</small></span>
+              </label>
+              <NumberField label="Projected Xanax per day" value={gymTrainXanaxPerDay} onChange={setGymTrainXanaxPerDay} min={0} max={20} step={0.1}
+                hint="Each Xanax supplies 250E." testId="training-gym-xanax-per-day" />
+              <NumberField label="Projected FHCs per day" value={gymTrainFhcPerDay} onChange={setGymTrainFhcPerDay} min={0} max={20} step={0.1}
+                hint={"Each FHC restores " + fmt(projectedRefillEnergy) + "E when you train down before using it."} testId="training-gym-fhc-per-day" />
+              <label className="tc-field"><span>Projected energy can</span><select data-testid="training-gym-can-type" value={gymTrainCanId} onChange={event => setGymTrainCanId(event.target.value)}>
+                {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
+              </select></label>
+              <NumberField label="Projected energy cans per day" value={gymTrainCanPerDay} onChange={setGymTrainCanPerDay} min={0} max={64} step={0.1}
+                hint="Includes active Voracity and Fuelling bonuses returned by Torn." testId="training-gym-can-per-day" />
+            </div>
+            <div className="tc-condition-list">
+              <div><span>Natural Energy regeneration</span><strong>{fmt(gymTrainDailySupply.naturalEnergy)}E/day</strong></div>
+              <div><span>Xanax supply</span><strong>{fmt(gymTrainDailySupply.xanaxEnergy)}E/day</strong></div>
+              <div><span>FHC supply</span><strong>{fmt(gymTrainDailySupply.fhcEnergy)}E/day</strong></div>
+              <div><span>Energy cans</span><strong>{fmt(gymTrainDailySupply.canEnergy, 1)}E/day</strong></div>
+              <div><span>MCS weekly benefit</span><strong>{gymTrainMcsEnabled ? "100E / 7 days" : "Not included"}</strong></div>
+            </div>
+            <div className="tc-result-total"><span>Average daily energy supply</span><strong data-testid="training-gym-daily-energy">{fmt(gymTrainDailySupply.averageDailyEnergy, 2)}E</strong></div>
+            <div className="tc-inline-note">At {fmt(gymTrainGym.energyCost)}E per train, this averages about {fmt(gymTrainDailySupply.averageDailyEnergy / Math.max(1, gymTrainGym.energyCost), 2)} trains per day. This supply estimate does not limit the train count you entered above.</div>
+          </Panel>
+        </div>
+        <aside className="tc-results-column">
+          <Panel title="Gym train result" eyebrow="EXACT USER-SELECTED TRAIN COUNT">
+            <div className="tc-metric-grid">
+              <Metric label="Projected stat gain" value={"+" + fmt(gymTrainSession.statGain, 2)} detail={gymTrainSession.trains + " individual trains"} tone="green" />
+              <Metric label="First 1× train" value={"+" + fmt(gymTrainOne.statGain, 2)} detail={fmt(gymTrainGym.energyCost) + "E · " + gymTrainStatLabel} tone="blue" />
+              <Metric label="Energy required" value={fmt(gymTrainSession.energyUsed) + "E"} detail={fmt(gymTrainCount) + " planned trains × " + fmt(gymTrainGym.energyCost) + "E"} />
+              <Metric label="Projected ending stat" value={fmt(gymTrainSession.endingStat, 2)} detail={gymTrainStatLabel} />
+            </div>
+            <div className="tc-result-total"><span>Starting happiness from live Torn bar</span><strong>{fmt(currentHappyFromApi)}</strong></div>
+          </Panel>
+          <Panel title="Individual train breakdown" eyebrow="STEP-BY-STEP GAINS" description="Each row applies the remaining happiness and the stat after the previous train.">
+            {gymTrainSession.rows.length ? <div className="tc-train-table-scroll" role="region" aria-label="Individual gym train stat gains" tabIndex={0}>
+              <table className="tc-train-table"><thead><tr><th>Train</th><th>Happy</th><th>Gain</th><th>Stat after</th></tr></thead>
+                <tbody>{gymTrainSession.rows.map(row => <tr key={row.train}><td>#{row.train}</td><td>{fmt(row.happyBefore)}</td><td>+{fmt(row.gain, 2)}</td><td>{fmt(row.statAfter, 2)}</td></tr>)}</tbody>
+              </table>
+            </div> : <p className="tc-muted">Enter the number of trains you plan to perform to see individual gain estimates.</p>}
+          </Panel>
+        </aside>
+      </main>}
+
+      {activeTab === "energy" && <main className="tc-layout">
+        <div className="tc-results-column">
+          <Panel title="Build your usable energy plan" eyebrow="NATURAL ENERGY + CONSUMABLES" description="Choose the book you will use, then enter the quantities of Xanax, FHCs and energy drinks. Refill items assume you train down before each full-bar refill.">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Book for this training plan</span><select data-testid="training-book-choice" value={bookChoice} onChange={event => setBookChoice(event.target.value)}>
+                <option value="auto">Use active book from API</option><option value="none">No energy book</option>
+                <option value="fuelling">Fuelling Your Way to Failure · 2× drink energy</option>
+                <option value="higher-daddy">Higher Daddy, Higher! · +20% natural energy</option>
+                <option value="ugly-energy">Ugly Energy · 250E bar and refill capacity</option>
+                <option value="self-control">Self Control Is for Losers · ½ energy-drink cooldown</option>
+              </select><small className="tc-hint">Auto detects your single active book from /user/perks. Choose a different book to model a planned scenario.</small></label>
+              <NumberField label="Hours until you train" value={waitHours} onChange={setWaitHours} min={0} max={168} step={0.25}
+                hint="Maximum 168 hours. Natural energy is calculated from the starting energy you set and your live bar tick." suffix="hours" testId="training-energy-wait-hours" />
+              <TextNumberField label="Current energy" value={manualEnergy} fallbackValue={energyBar ? energyBar.current : null}
+                onChange={setManualEnergy} max={ENERGY_HARD_CAP} hint="Live Torn bar value. Maximum energy held at once is 1,000." testId="training-current-energy" />
+              <div className="tc-readout-field"><span>Natural energy by training time</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong><small>{energyBar ? fmt(energyBar.increment) + "E every " + fmt(energyBar.interval / 60, 2) + " minutes" : "Waiting for live bar data"}</small></div>
+              <NumberField label="Xanax per full train cycle" value={xanaxCount} onChange={setXanaxCount} min={0} max={maximumXanax}
+                hint={"Maximum " + maximumXanax + " dose(s) in your " + fmt(waitHours) + "h training window after " + fmt(currentDrugCooldownHours, 1) + "h current drug cooldown"
+                  + (ecstasy ? ", reserving 6h after the final Xanax for Ecstasy." : ".")
+                  + " Each Xanax gives +250E and +75 happy. Overdose risk is not modeled."} testId="training-xanax-count" />
+              <NumberField label="Feathery Hotel Coupons" value={fhcCount} onChange={setFhcCount} min={0} max={maximumFhcCount}
+                hint={"Maximum " + maximumFhcCount + " at the remaining booster-cooldown budget. Each refills the bar to " + fmt(refillBarMaximum) + "E and gives +500 happy."} testId="training-fhc-count" />
+              <label className="tc-field"><span>Energy drink</span><select data-testid="training-can-type" value={canId} onChange={event => setCanId(event.target.value)}>
+                {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
+              </select></label>
+              <NumberField label="Energy drinks" value={canCount} onChange={setCanCount} min={0} max={maximumCanCount}
+                hint={"Maximum " + maximumCanCount + " before using other booster items. Voracity's live energy-drink percentage and Fuelling ×2 apply to base energy. Self Control halves only can cooldown."} testId="training-can-count" />
+              <NumberField label="Green Easter Eggs" value={greenEggCount} onChange={setGreenEggCount} min={0} max={maximumYellowEggCount}
+                hint={"Each gives +500E and adds 6 hours of booster cooldown. Maximum " + maximumYellowEggCount + " at the current cooldown budget."} testId="training-green-egg-count" />
+              <NumberField label="Other energy sources" value={otherEnergy} onChange={setOtherEnergy} min={0} max={100000}
+                hint="Manual addition for energy not listed above. Maximum 100,000E per plan." testId="training-other-energy" />
+              <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded} disabled={!pointRefillAvailable}
+                onChange={event => setPointRefillIncluded(event.target.checked)} />
+                <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
+              </label>
+              <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
+                onChange={event => setFactionVoracity(event.target.checked)} />
+                <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Models the maximum +50% energy-drink branch."}</small></span>
+              </label>
+              <label className="tc-check-field"><input data-testid="training-event-drink-bonus" type="checkbox" checked={eventDrinkBonus} onChange={event => setEventDrinkBonus(event.target.checked)} />
+                <span><strong>Active event drink bonus</strong><small>Enable only when Torn confirms the current event effect. Multiplies base can energy by 2×.</small></span>
+              </label>
+            </div>
+            <div className="tc-inline-note"><strong>Supply order modeled:</strong> natural energy → current bar → point refill / FHC full-bar refills → Xanax and energy drinks. Full-bar refills assume you train down before each refill. Torn's 1,000E limit is the amount you can hold at once, not a limit on total energy spent after sequential refills.</div>
+            {cooldownUsedHours > boosterBudgetHours && <div className="tc-inline-warning" role="alert">
+              This combination uses {fmt(cooldownUsedHours - boosterBudgetHours, 1)} more booster-cooldown hours than your current {fmt(boosterBudgetHours, 1)}h allowance. Reduce one or more selected items before treating the plan as usable.
+            </div>}
+            <div className="tc-form-grid tc-price-grid">
+              <PriceField label="Xanax · live Item Market average" value={priceOverrides.xanax || ""} autoValue={marketPrice(liveData?.items?.xanax)} onChange={value => setPriceOverride("xanax", value)} hint={liveData?.items?.xanax?.name || "Live price not returned"} testId="training-xanax-price" />
+              <PriceField label={drink.name + " · live Item Market average"} value={priceOverrides["can:" + canId] || ""} autoValue={marketPrice(liveData?.items?.energyDrinks?.[canId])} onChange={value => setPriceOverride("can:" + canId, value)} hint={liveData?.items?.energyDrinks?.[canId]?.name || "Live price not returned"} testId="training-can-price" />
+              <PriceField label="Feathery Hotel Coupon · live Item Market average" value={priceOverrides.fhc || ""} autoValue={marketPrice(liveData?.items?.fhc)} onChange={value => setPriceOverride("fhc", value)} hint={liveData?.items?.fhc?.name || "Live price not returned"} testId="training-fhc-price" />
+            </div>
+          </Panel>
+        </div>
+        <aside className="tc-results-column">
+          <Panel title="Usable energy forecast" eyebrow="SEQUENTIAL ENERGY BUDGET" description="Total training energy across the planned refills and consumables.">
+            <div className="tc-energy-total"><strong>{fmt(usableEnergy)}</strong><span>usable energy for this training plan</span></div>
+            <div className="tc-condition-list">
+              <div><span>Current energy + natural regen</span><strong>{fmt(energyAfterNatural)}E</strong></div>
+              <div><span>Daily point refill</span><strong>{fmt(energyFromRefills)}E</strong></div>
+              <div><span>FHC full-bar refills</span><strong>{fmt(energyFromFhcs)}E</strong></div>
+              <div><span>Xanax</span><strong>{fmt(energyFromXanax)}E</strong></div>
+              <div><span>Energy drinks</span><strong>{fmt(energyFromCans, 1)}E</strong></div>
+              <div><span>Green Easter Eggs</span><strong>{fmt(energyFromGreenEggs)}E</strong></div>
+              <div><span>Other energy</span><strong>{fmt(otherEnergy)}E</strong></div>
+            </div>
+            <div className="tc-result-total"><span>Maximum held at once</span><strong>{fmt(ENERGY_HARD_CAP)}E</strong></div>
+            <div className="tc-result-total"><span>Booster cooldown left after plan</span><strong>{fmt(cooldownRemainingHours, 1)}h</strong></div>
+            <div className="tc-cost-total" data-testid="training-energy-cost"><span>Planned supply cost</span><strong>{money(totalEnergyPlanCost)}</strong></div>
+            <div className="tc-inline-note"><strong>Point refill estimate:</strong> {liveData?.pointsAverageCost ? "25 points × " + money(liveData.pointsAverageCost) + " average cost per point = " + money(pointPrice) + "." : "Torn's points_average_cost is not available; refill cost is omitted."}</div>
+            {liveData?.marketUpdatedAt ? <p className="tc-muted">Item Market cache timestamp: {currentMarketTimestamp}. Prices are Torn's market average, not guaranteed purchase quotes.</p> : <p className="tc-muted">Item Market prices appear here when the public Torn key and market selections are available.</p>}
+          </Panel>
+          <Panel title="Energy rules in this plan" eyebrow="AUTOMATIC GAME LIMITS">
+            <div className="tc-condition-list">
+              <div><span>Energy held hard cap</span><strong>1,000E</strong></div>
+              <div><span>Current bar maximum</span><strong>{fmt(refillBarMaximum)}E</strong></div>
+              <div><span>Natural energy in selected wait</span><strong data-testid="training-natural-energy">+{fmt(naturalEnergy)}E</strong></div>
+              <div><span>Cooldown budget remaining</span><strong>{fmt(boosterBudgetHours, 1)}h</strong></div>
+              <div><span>Drug cooldown remaining</span><strong>{fmt(currentDrugCooldownHours, 1)}h</strong></div>
+              <div><span>Maximum Xanax before planned train</span><strong>{fmt(maximumXanax)}</strong></div>
+              <div><span>Energy drink cooldown reduction</span><strong>{fmt(companyCooldownReduction * 100)}% company · {plannedEnergyBooks.has("self-control") ? "50% book" : "No book"}</strong></div>
+            </div>
+            <p className="tc-muted">Energy drinks and stat boosters share the booster cooldown. The planner subtracts existing cooldown and the items selected for this plan.</p>
+          </Panel>
+        </aside>
+      </main>}
+
+      {activeTab === "happy" && <main className="tc-layout">
+        <div className="tc-results-column">
+          <Panel title="99K Happy Jump sequence" eyebrow="PROJECTION INPUTS ONLY" description="Every quantity, starting happiness and training choice is a scenario input. Live data is limited to your battle stats and Item Market prices.">
+            <div className="tc-happy-meter">
+              <div className="tc-happy-meter-top"><span>Projected happiness before training</span><strong>{fmt(happyJump.finalHappy)}</strong></div>
+              <div className="tc-meter-track"><i style={{ width: (happyJump.finalHappy / HAPPY_CAP * 100) + "%" }} /></div>
+              <div className="tc-happy-meter-foot"><span>0 happy</span><span>99,999 maximum</span></div>
+            </div>
+            <div className="tc-form-grid">
+              <NumberField label="Projected starting happiness" value={happyJumpStartingHappy} onChange={setHappyJumpStartingHappy} min={0} max={HAPPY_CAP}
+                hint="Enter the happiness you expect before consuming any items. This does not read your live Happy bar." testId="training-current-happy" />
+              <NumberField label="Projected Xanax doses" value={happyJumpXanaxCount} onChange={setHappyJumpXanaxCount} min={0} max={20}
+                hint="Each projected Xanax adds +75 happiness." testId="training-happy-xanax-count" />
+              <NumberField label="Projected Feathery Hotel Coupons" value={happyJumpFhcCount} onChange={setHappyJumpFhcCount} min={0} max={20}
+                hint="Each projected FHC adds +500 happiness." testId="training-happy-fhc-count" />
+              <NumberField label="Projected Erotic DVDs" value={happyJumpDvdCount} onChange={setHappyJumpDvdCount} min={0} max={20}
+                hint={"Each projected DVD adds " + fmt(happyJumpDvdHappy) + " happiness."} testId="training-dvd-count" />
+              <label className="tc-field"><span>Projected happy per Erotic DVD</span><select data-testid="training-dvd-happy" value={String(happyJumpDvdHappy)} onChange={event => setHappyJumpDvdHappy(Number(event.target.value))}>
+                <option value="2500">2,500 · standard</option><option value="5000">5,000 · 10★ Adult Novelties scenario</option>
+              </select><small className="tc-hint">Manual scenario choice. No current company/job data is read.</small></label>
+              <NumberField label="Projected Yellow Easter Eggs" value={happyJumpYellowEggCount} onChange={setHappyJumpYellowEggCount} min={0} max={20}
+                hint="Each adds +10,000 happiness." testId="training-yellow-egg-count" />
+              <NumberField label="Projected Poison Mistletoe uses" value={happyJumpMistletoeCount} onChange={setHappyJumpMistletoeCount} min={0} max={happyJumpMaximumMistletoeCount}
+                hint={"Each use transfers 25% of the target's remaining projected happiness. Maximum " + happyJumpMaximumMistletoeCount + " uses."} testId="training-mistletoe-count" />
+              <NumberField label="Target's projected starting happiness" value={happyJumpTargetHappy} onChange={setHappyJumpTargetHappy} min={0} max={HAPPY_CAP}
+                hint="Enter a scenario value for the target. No target/player live data is used." testId="training-mistletoe-target" />
+              <NumberField label="Other projected flat happiness" value={happyJumpOtherHappy} onChange={setHappyJumpOtherHappy} min={0} max={happyJumpMaximumOtherHappy}
+                hint={"Optional additional happiness. Maximum " + fmt(happyJumpMaximumOtherHappy) + " before the 99,999 cap."} testId="training-other-happy" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-ecstasy" checked={happyJumpEcstasy} onChange={event => setHappyJumpEcstasy(event.target.checked)} />
+                <span><strong>Project Ecstasy last</strong><small>Doubles accumulated happiness, capped at 99,999. This is a scenario toggle and does not inspect drug cooldown.</small></span>
+              </label>
+            </div>
+            <div className="tc-inline-note"><strong>Projected sequence:</strong> Xanax → FHC → Erotic DVDs → Yellow Easter Eggs → Poison Mistletoe → other happiness → Ecstasy → train. No inventory, bars, job, faction perk or cooldown values are borrowed from another calculator.</div>
+          </Panel>
+          <Panel title="Post-jump training scenario" eyebrow="STAT GAIN PROJECTION">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-happy-stat-select" value={happyJumpStat} onChange={event => setHappyJumpStat(event.target.value as StatKey)}>
+                {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select></label>
+              <label className="tc-field"><span>Gym</span><select data-testid="training-happy-gym-select" value={happyJumpGymId} onChange={event => setHappyJumpGymId(event.target.value)}>
+                {FALLBACK_GYMS.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
+              </select></label>
+              <NumberField label="Projected individual trains" value={happyJumpTrainCount} onChange={setHappyJumpTrainCount} min={0} max={20000}
+                hint="Enter the number of trains you expect to perform after the jump." testId="training-happy-train-count" />
+              <NumberField label="Projected gym-gain modifier" value={happyJumpGymModifier} onChange={setHappyJumpGymModifier} min={0.0001} max={100} step={0.0001}
+                hint="Scenario input only. Enter your expected combined gym/perk multiplier." testId="training-happy-gym-modifier" />
+              <div className="tc-readout-field"><span>Live {happyJumpStatLabel} battle stat</span><strong>{fmt(happyJumpStartingStat, 2)}</strong><small>The only live profile value used by this gain forecast</small></div>
+              <div className="tc-readout-field"><span>Static gym efficiency</span><strong>{fmt(happyJumpDots, 2)} dots</strong><small>{happyJumpGym.name} · {fmt(happyJumpGym.energyCost)}E per train</small></div>
+            </div>
+            <div className="tc-form-grid tc-price-grid">
+              <PriceField label="Xanax · live Item Market average" value={happyJumpPriceOverrides.xanax || ""} autoValue={marketPrice(liveData?.items?.xanax)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, xanax: value }))} hint={liveData?.items?.xanax?.name || "Live market price not returned"} testId="training-happy-xanax-price" />
+              <PriceField label="Feathery Hotel Coupon · live Item Market average" value={happyJumpPriceOverrides.fhc || ""} autoValue={marketPrice(liveData?.items?.fhc)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, fhc: value }))} hint={liveData?.items?.fhc?.name || "Live market price not returned"} testId="training-happy-fhc-price" />
+              <PriceField label="Erotic DVD · live Item Market average" value={happyJumpPriceOverrides.dvd || ""} autoValue={marketPrice(liveData?.items?.eroticDvd)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, dvd: value }))} hint={liveData?.items?.eroticDvd?.name || "Live market price not returned"} testId="training-dvd-price" />
+              <PriceField label="Yellow Easter Egg · live Item Market average" value={happyJumpPriceOverrides.yellowEgg || ""} autoValue={marketPrice(liveData?.items?.yellowEgg)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, yellowEgg: value }))} hint={liveData?.items?.yellowEgg?.name || "If untradeable, no market listing exists."} testId="training-yellow-egg-price" />
+              <PriceField label="Poison Mistletoe · live Item Market average" value={happyJumpPriceOverrides.mistletoe || ""} autoValue={marketPrice(liveData?.items?.poisonMistletoe)} onChange={value => setHappyJumpPriceOverrides(current => ({ ...current, mistletoe: value }))} hint={liveData?.items?.poisonMistletoe?.name || "Live market price not returned"} />
+            </div>
+          </Panel>
+        </div>
+        <aside className="tc-results-column">
+          <Panel title="Happy jump forecast" eyebrow="PRE-TRAIN RESULT">
+            <div className="tc-metric-grid">
+              <Metric label="After all happiness items" value={fmt(happyJump.beforeEcstasy)} detail="Before Ecstasy" tone="blue" />
+              <Metric label="After Ecstasy" value={fmt(happyJump.finalHappy)} detail="Hard cap 99,999" tone="green" />
+              <Metric label="Happiness from mistletoe" value={"+" + fmt(happyJump.mistletoeGain)} detail={"Target left with " + fmt(happyJump.targetRemaining)} />
+              <Metric label="Projected stat gain" value={"+" + fmt(happyJumpSession.statGain, 2)} detail={happyJumpSession.trains + " projected trains · " + happyJumpStatLabel} tone="green" />
+            </div>
+            <div className="tc-result-total"><span>Happy used as the first training input</span><strong>{fmt(happyJump.finalHappy)}</strong></div>
+            <p className="tc-muted">Battle stats and Item Market prices are live. All Happy Jump quantities, starting happiness, gym, train count and multiplier are projection inputs. No other calculator setup is used.</p>
+          </Panel>
+          <Panel title="Projection checklist" eyebrow="SCENARIO SUMMARY">
+            <div className="tc-condition-list">
+              <div><span>Projected Xanax doses</span><strong>{happyJumpXanaxCount} planned</strong></div>
+              <div><span>Projected FHCs</span><strong>{happyJumpFhcCount} planned</strong></div>
+              <div><span>Projected booster/happy items</span><strong>{fmt(happyJumpDvdCount + happyJumpYellowEggCount + happyJumpMistletoeCount)} planned</strong></div>
+              <div><span>Ecstasy included</span><strong>{happyJumpEcstasy ? "Yes" : "No"}</strong></div>
+              <div><span>99,999 happiness cap reached</span><strong>{happyJump.finalHappy >= HAPPY_CAP ? "Yes" : "Not yet"}</strong></div>
+            </div>
+          </Panel>
+        </aside>
+      </main>}
+
+      {activeTab === "enhancers" && <main className="tc-layout">
+        <div className="tc-results-column">
+          <Panel title="Permanent Stat Enhancers" eyebrow="LIVE MARKET + 1% STAT INCREASE" description="Torn's four Stat Enhancers permanently increase one battle stat by 1% each. Every use adds 6 hours of booster cooldown.">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Stat to enhance</span><select value={seTargetStat} onChange={event => setSeTargetStat(event.target.value as StatKey)}>
+                {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select></label>
+              <NumberField label="Number of Stat Enhancers" value={seQuantity} onChange={setSeQuantity} min={0} max={maxSeByCooldown}
+                hint={"Maximum " + maxSeByCooldown + " by your remaining booster-cooldown capacity. The gain from each individual SE is capped at 5 trillion."} testId="training-se-quantity" />
+              <TextNumberField label={STAT_OPTIONS.find(option => option.value === seTargetStat)?.label + " battle stat"} value={manualStats[seTargetStat]} fallbackValue={liveData?.battleStats?.[seTargetStat] ?? null}
+                onChange={value => setManualStats(current => ({ ...current, [seTargetStat]: value }))} hint="Uses the live battle stat unless you override it." testId="training-se-stat-value" />
+              <PriceField label="Selected Stat Enhancer · live Item Market average" value={priceOverrides["se:" + seTargetStat] || ""} autoValue={marketPrice(liveData?.items?.statEnhancers?.[seTargetStat])}
+                onChange={value => setPriceOverride("se:" + seTargetStat, value)} hint={liveData?.items?.statEnhancers?.[seTargetStat]?.name || "Live market price not returned"} testId="training-se-price" />
+            </div>
+            <div className="tc-inline-note">The model applies each 1% increase sequentially, then caps each enhancer's individual gain at 5 trillion. No legacy 50M battle-stat cap is applied.</div>
+          </Panel>
+        </div>
+        <aside className="tc-results-column">
+          <Panel title="Stat enhancer forecast" eyebrow="PERMANENT STAT GAIN">
+            <div className="tc-metric-grid">
+              <Metric label="Projected stat gain" value={"+" + fmt(seCalculation.gain, 2)} detail={seCalculation.count + " Stat Enhancers"} tone="green" />
+              <Metric label="Gain per enhancer" value={"+" + fmt(seCalculation.perEnhancer, 2)} detail="1% of current stat, max 5T per SE" />
+              <Metric label="Total market cost" value={money(seCalculation.cost)} detail={money(selectedSePrice) + " each"} tone="amber" />
+              <Metric label="Booster cooldown added" value={fmt(seCalculation.count * 6)} detail="Hours before Self Control modifiers" />
+            </div>
+            <div className="tc-result-total"><span>Projected ending {STAT_OPTIONS.find(option => option.value === seTargetStat)?.label.toLowerCase()}</span><strong>{fmt(seCalculation.endingStat, 2)}</strong></div>
+            <div className="tc-inline-note"><strong>Item mapping:</strong> Dumbbells → Strength · Boxing Gloves → Defense · Skateboard → Speed · Parachute → Dexterity.</div>
+          </Panel>
+          <Panel title="Permanent stat books" eyebrow="31-DAY COMPLETION BONUS" description="Toggle the books you intend to complete. Their one-time 5% bonus is estimated from each battle stat projected at the end of the 31-day read, capped at 10,000,000 gain per book.">
+            <div className="tc-condition-list">
+              {permanentStatBookProjections.map(book => <div className="tc-stat-book-row" key={book.stat}>
+                <label className="tc-check-field">
+                  <input
+                    type="checkbox"
+                    data-testid={"training-book-" + book.stat}
+                    checked={permanentStatBooks[book.stat]}
+                    disabled={!book.hasStat || safeNumber(selectedGym.dots[book.stat]) <= 0}
+                    onChange={event => setPermanentStatBooks(current => ({ ...current, [book.stat]: event.target.checked }))}
+                  />
+                  <span>
+                    <strong>{STAT_OPTIONS.find(option => option.value === book.stat)?.label}: {book.title}</strong>
+                    <small>{book.hasStat
+                      ? "Today " + fmt(book.startingStat) + " · projected at completion " + fmt(book.statAtCompletion, 2)
+                      : "Live battle stat unavailable. Add a manual stat in Gym Trains first."}</small>
+                  </span>
+                </label>
+                <strong className="tc-stat-book-gain">{book.hasStat ? "+" + fmt(book.gain, 2) : "—"}</strong>
+              </div>)}
+            </div>
+            <div className="tc-result-total"><span>Combined one-time book gain</span><strong>+{fmt(totalPermanentStatBookGain, 2)}</strong></div>
+            <p className="tc-muted">Books are not tradeable and have no Item Market price. This estimate assumes the same daily energy, gym and perk scenario throughout the read, with natural happy regeneration capped at your live bar maximum. Recheck it when the book finishes because actual training may differ.</p>
+          </Panel>
+          <Panel title="Company job-point stat gains" eyebrow="LIVE JOB + JOBPOINTS API" description="Some company specials award permanent battle-stat gains through job points. Current company, rating and saved points are read automatically.">
+            <div className="tc-condition-list">
+              <div><span>Current job / company</span><strong>{currentJobName || "Not returned by Torn API"}</strong></div>
+              <div><span>Company rating / position</span><strong>{currentJob ? fmt(currentJobRating) + "★ · " + (currentJob.position || "Position unavailable") : "Not available"}</strong></div>
+              <div><span>{currentJob?.type === "job" ? "Current starter-job points" : "Current company job points"}</span><strong>{fmt(currentJobPoints)}</strong></div>
+              {jobPointSpecial && <div><span>Available stat special</span><strong>{jobPointSpecial.name} · {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label}</strong></div>}
+              {currentJob?.type === "job" && currentJobName.toLowerCase() === "army" && <div><span>Army stat-training points</span><strong>{fmt(currentJobPoints)} available</strong></div>}
+              {hasPressPass && <div><span>Press Pass</span><strong>{fmt(pressPassMax)} uses available · 25 points each</strong></div>}
+            </div>
+            {currentJob?.type === "job" && currentJobName.toLowerCase() === "army" && <p className="tc-muted">
+              Army exposes separate Strength Gain and Defense Gain job-point specials. Your balance is synced above, but Torn's current API and public training references do not provide a deterministic conversion rate for those awards, so they are not mixed into the gym-gain projection.
+            </p>}
+            {jobPointSpecial ? <div className="tc-form-grid">
+              <NumberField label={jobPointSpecial.name + " job points to spend"} value={jobPointQuantity} onChange={setJobPointQuantity}
+                min={0} max={jobPointMax} hint={"Maximum " + fmt(jobPointMax) + " points available. Each point is approximately 4.5E worth of gains in your selected gym."}
+                testId="training-jobpoint-quantity" />
+              <div className="tc-readout-field"><span>Estimated {STAT_OPTIONS.find(option => option.value === jobPointSpecial.stat)?.label} gain</span><strong>+{fmt(jobPointGain.gain, 2)}</strong>
+                <small>About +{fmt(jobPointGain.perPoint, 2)} per point · {jobPointSpecial.happinessIndependent ? "happiness-independent" : "happiness-sensitive"} estimate</small></div>
+              <div className="tc-readout-field"><span>Projected ending stat</span><strong>{fmt(jobPointGain.endingStat, 2)}</strong><small>{fmt(jobPointSpecial.energyEquivalent, 1)}E-equivalent gain per point</small></div>
+            </div> : <p className="tc-muted">No deterministic gym-equivalent company special is available from the current job. Supported: Fitness Center Roid Rage (5★), Furniture Store Heavy Lifting (3★), Mining Corporation Rock Salt (5★) and Logistics Management Efficiency (1★).</p>}
+            {hasPressPass && <div className="tc-form-grid">
+              <NumberField label="Television Network Press Pass uses" value={pressPassQuantity} onChange={setPressPassQuantity}
+                min={0} max={pressPassMax} hint={"Maximum " + fmt(pressPassMax) + " from the remaining job points. Each pass costs 25 points."}
+                testId="training-press-pass-quantity" />
+              <div className="tc-readout-field"><span>Possible battle-stat reward</span><strong>+0.25% to a random fighting stat</strong><small>Random outcome, excluded from the selected-stat forecast.</small></div>
+            </div>}
+            <p className="tc-muted">Company special values are approximate gym-equivalent estimates, not guaranteed exact server awards. Press Pass outcomes are random and are not added to the deterministic forecast.</p>
+          </Panel>
+        </aside>
+      </main>}
+
+      {activeTab === "projection" && <main className="tc-layout">
+        <div className="tc-results-column">
+          <Panel title="Long-term training plan" eyebrow="INDEPENDENT DAILY SUPPLY PROJECTION" description="Set the sustainable consumable usage you expect each day. This plan has its own gym, stat and energy supply assumptions.">
+            <div className="tc-form-grid">
+              <label className="tc-field"><span>Projection stat</span><select data-testid="training-projection-stat" value={projectionStat} onChange={event => setProjectionStat(event.target.value as StatKey)}>
+                {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select></label>
+              <label className="tc-field"><span>Projection gym</span><select data-testid="training-projection-gym" value={projectionResolvedGymId} onChange={event => setProjectionGymId(event.target.value)}>
+                {gyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
+              </select></label>
+              <NumberField label="Projection days" value={projectionDays} onChange={setProjectionDays} min={1} max={3650}
+                hint="Maximum 3,650 days (10 years)." testId="training-projection-days" />
+              <NumberField label="Projected Xanax per day" value={projectionXanaxPerDay} onChange={setProjectionXanaxPerDay} min={0} max={20} step={0.1}
+                hint="Each dose contributes 250E and +75 happiness." testId="training-projection-xanax-per-day" />
+              <NumberField label="Projected FHCs per day" value={projectionFhcPerDay} onChange={setProjectionFhcPerDay} min={0} max={20} step={0.1}
+                hint={"Each FHC restores " + fmt(projectedRefillEnergy) + "E and adds +500 happiness."} testId="training-projection-fhc-per-day" />
+              <label className="tc-field"><span>Projected energy can</span><select data-testid="training-projection-can-type" value={projectionCanId} onChange={event => setProjectionCanId(event.target.value)}>
+                {ENERGY_DRINKS.map(item => <option key={item.id} value={item.id}>{item.name} · {item.energy}E</option>)}
+              </select></label>
+              <NumberField label="Projected energy cans per day" value={projectionCanPerDay} onChange={setProjectionCanPerDay} min={0} max={64} step={0.1}
+                hint="Includes live Voracity and Fuelling energy bonuses when returned by Torn." testId="training-projection-can-count" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-projection-mcs" checked={projectionMcsEnabled} onChange={event => setProjectionMcsEnabled(event.target.checked)} />
+                <span><strong>MCS stock block benefit</strong><small>One 100E benefit every seven days, not 100E every day.</small></span>
+              </label>
+              <div className="tc-readout-field"><span>Natural Energy regeneration</span><strong>{fmt(projectedNaturalEnergyPerDay)}E/day</strong><small>Uses the live regeneration rate, not current Energy.</small></div>
+              <div className="tc-readout-field"><span>FHC refill amount used</span><strong>{fmt(projectedRefillEnergy)}E each</strong><small>Based on your refill capacity.</small></div>
+              <div className="tc-readout-field"><span>MCS energy</span><strong>{projectionMcsEnabled ? "100E / 7 days" : "Not included"}</strong><small>{projectionMcsEnabled ? "Equivalent to 14.29E/day for average supply comparisons." : "Toggle on to include weekly payouts."}</small></div>
+              <div className="tc-readout-field"><span>Average daily energy supply</span><strong data-testid="training-projection-daily-energy">{fmt(projectionDailySupply.averageDailyEnergy, 2)}E</strong><small>Natural energy + projected daily Xanax/FHC/cans + weekly MCS average.</small></div>
+              <div className="tc-readout-field"><span>Natural happy regeneration</span><strong>+{fmt(naturalHappyPerDay)} / day</strong><small>Daily projected Xanax and FHC happy is also added.</small></div>
+            </div>
+            <div className="tc-inline-note">The forecast adds the MCS 100E payout on projected days 7, 14, 21, 28, etc. The displayed daily average is for comparison only. This planner does not use current Energy or values entered on Gym Trains, Energy Supply or Happy Jump.</div>
+          </Panel>
+        </div>
+        <aside className="tc-results-column">
+          <Panel title="Projected training progress" eyebrow="COMPOUNDED DAILY MODEL">
+            <div className="tc-metric-grid">
+              <Metric label="Projected stat gain" value={"+" + fmt(longTermProjection.totalGain, 2)} detail={longTermProjection.trains + " individual trains over " + longTermProjection.days + " days"} tone="green" />
+              <Metric label="Projected ending stat" value={fmt(longTermProjection.stat, 2)} detail={projectionStatLabel + " · " + projectionGym.name} />
+              <Metric label="Total projected energy" value={fmt(longTermProjection.energy) + "E"} detail={fmt(longTermProjection.energy / Math.max(1, longTermProjection.days), 2) + "E/day average"} tone="blue" />
+              <Metric label="Average daily supply" value={fmt(projectionDailySupply.averageDailyEnergy, 2) + "E"} detail={projectionMcsEnabled ? "Includes 100E MCS every 7 days" : "MCS not included"} />
+            </div>
+          </Panel>
+          <Panel title="Projection assumptions" eyebrow="TRANSPARENT INPUTS">
+            <div className="tc-condition-list">
+              <div><span>Starting battle stat</span><strong>{fmt(projectionStartingStat, 2)}</strong></div>
+              <div><span>Selected gym</span><strong>{projectionGym.name}</strong></div>
+              <div><span>Gym-gain modifier</span><strong>{fmt(projectionEffectiveModifier, 6)}×</strong></div>
+              <div><span>Weekly stock energy</span><strong>{projectionMcsEnabled ? "100E every 7 days" : "Off"}</strong></div>
+            </div>
+          </Panel>
+        </aside>
+      </main>}
+
+      <section className="tc-history-panel">
+        <div className="tc-history-heading"><div><span>YOUR TORN ACTIVITY</span><h2>Gym training history</h2></div><span>{historyLoading ? "Syncing…" : historyConnected ? fmt(history?.totalLogs || logRows.length) + " records collected" : "Not connected"}</span></div>
+        {historyLoading ? <p className="tc-muted">Loading your saved gym-training history…</p> : historyConnected && logRows.length > 0 ? (
+          <div className="tc-log-list">{logRows.slice(0, 6).map(log => {
+            const details = parseGymHistoryLog(log)
+            const statLabel = details.stat ? STAT_OPTIONS.find(option => option.value === details.stat)?.label || details.stat : "Battle stat"
+            return <div className="tc-log-row" key={log.logId}>
+              <div className="tc-log-date"><span>{prettyDate(log.timestamp)}</span><small>Log #{log.logId}</small></div>
+              <div className="tc-log-summary"><strong>{details.title}</strong><small>{statLabel}{details.energy !== null ? " · " + fmt(details.energy) + "E" : ""}{details.trains !== null ? " · " + fmt(details.trains) + (details.trains === 1 ? " train" : " trains") : ""}{details.happyUsed !== null ? " · " + fmt(details.happyUsed) + " happy used" : ""}{details.gym !== null ? " · " + (liveData?.gym && String(liveData.gym.id) === String(details.gym) ? liveData.gym.name : liveData?.gyms?.find(gym => String(gym.id) === String(details.gym))?.name || "Gym #" + fmt(details.gym)) : ""}</small></div>
+              <div className="tc-log-gain"><strong>{details.gain !== null ? "+" + fmt(details.gain, 2) : "Not in log"}</strong><small>Stat delta</small></div>
+              <div className="tc-log-after">
+                <strong>{details.statAfter !== null ? fmt(details.statAfter, 2) : "Not in log"}</strong>
+                <small>After train</small>
+                {details.statBefore !== null && <small>Before {fmt(details.statBefore, 2)}</small>}
+              </div>
+            </div>
+          })}</div>
+        ) : historyConnected ? <p className="tc-muted">Your log collection is connected. No gym-training records have been collected yet.</p> : (
+          <div className="tc-history-empty"><p>{history?.error || (history?.collectionEnabled ? "Your main portal consent is enabled, but Gym Training history still needs its User → Log key connection." : "Gym-training history is private. Enable historical collection and connect a key with User → Log access in Account Settings.")}</p>
+            <button className="tc-secondary-button" onClick={() => onNavigate("/settings")}>Open Account Settings →</button>
+          </div>
+        )}
+        <div className="tc-calibration-panel">
+          <div className="tc-history-heading"><div><span>PLAYER-SPECIFIC MODEL CORRECTION</span><h2>Calibrate against a verified Torn log</h2></div>
+            <span>{gymTrainCalibration.sampleCount ? "Active for this Gym Trains setup" : "No matching calibration"}</span></div>
+          <p className="tc-muted">Choose a stored Torn training log matching the Gym Trains stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
+          <div className="tc-form-grid">
+            <label className="tc-field"><span>Verified Torn training log</span>
+              <select data-testid="training-calibration-log" value={selectedCalibrationCandidate?.log.logId || ""}
+                onChange={event => setCalibrationLogId(event.target.value)} disabled={!calibrationCandidates.length}>
+                {calibrationCandidates.length
+                  ? calibrationCandidates.map(item => <option key={item.log.logId} value={item.log.logId}>
+                      {prettyDate(item.log.timestamp)} · {fmt(item.details.trains || 0)} train(s) · +{fmt(item.details.gain || 0, 2)} · #{item.log.logId}
+                    </option>)
+                  : <option value="">No matching verified log available</option>}
+              </select>
+              <small className="tc-hint">Only complete Torn history records matching {gymTrainStatLabel.toLowerCase()}, {gymTrainGym.name}, and {fmt(gymTrainGym.energyCost)}E per train are eligible.</small>
+            </label>
+            <TextNumberField label="Starting happiness before that log" value={calibrationStartingHappy} fallbackValue={null}
+              onChange={setCalibrationStartingHappy} max={HAPPY_CAP}
+              hint="Required because Torn records happiness used, not the happiness value before the session." testId="training-calibration-happy" />
+            <div className="tc-readout-field"><span>Current calibration</span>
+              <strong>{gymTrainCalibration.sampleCount ? fmt(gymTrainCalibration.factor, 6) + "×" : "Not yet calibrated"}</strong>
+              <small>{gymTrainCalibration.sampleCount + " matching verified log(s) · correction applies only when this Gym Trains stat, gym dots and live perk multiplier match."}</small>
+            </div>
+            <div className="tc-readout-field"><span>Selected stat samples saved in this browser</span>
+              <strong>{selectedStatCalibrationSamples.length}</strong>
+              <small>Up to eight log samples are retained per battle stat; the median correction is used to reduce the effect of individual train variation.</small>
+            </div>
+          </div>
+          <button type="button" className="tc-primary-button" data-testid="training-calibration-apply"
+            onClick={applyGymCalibration}
+            disabled={!selectedCalibrationCandidate || !calibrationStartingHappy.trim()}>
+            Save calibration from selected log
+          </button>
+          {selectedStatCalibrationSamples.length > 0 && <button type="button" className="tc-secondary-button"
+            data-testid="training-calibration-reset" onClick={resetGymCalibration}>Reset {gymTrainStatLabel} calibration</button>}
+          {!historyConnected && <p className="tc-muted">Connect Gym Training history in Account Settings to select verified Torn logs here.</p>}
+          {calibrationMessage && <p className="tc-inline-note" role="status">{calibrationMessage}</p>}
+        </div>
+      </section>
+      {liveData?.errors && Object.keys(liveData.errors).length > 0 && <details className="tc-data-warnings"><summary>Live data fields that could not be refreshed ({Object.keys(liveData.errors).length})</summary>
+        {Object.entries(liveData.errors).map(([key, message]) => <p key={key}><strong>{key}:</strong> {message}</p>)}
+      </details>}
+      <footer className="tc-footer"><span>NAUGHTY FAMILY · TRAINING CALCULATOR · TORN API-POWERED</span><span>Estimates only · never sends training actions to Torn</span></footer>
+    </div>
+  )
+}

@@ -1,100 +1,68 @@
 # Cloudflare deployment
 
-## Projects
+## Projects and release targets
 
-- **Pages project:** `naughty-company-dashboard`
-- **Pages URL:** https://naughty-company-dashboard.pages.dev
-- **API Worker:** https://naughty-company-api.kboone801.workers.dev
+- **Current production API Worker:** `naughtyfamily-api` at https://naughtyfamily-api.kboone801.workers.dev
+- **Current production D1:** `naughty-company-dashboard` (UUID `bbbe128a-c5cc-46ec-b8ef-93860183e795`)
+- **Legacy Pages rollback site:** `naughty-company-dashboard` at https://naughty-company-dashboard.pages.dev
+- **New Pages cutover target:** `naughtyfamily` at https://naughtyfamily.pages.dev
+- **Acceptance Pages:** `naughtyfamily-staging` at https://naughtyfamily-staging.pages.dev
+- **Acceptance API Worker:** `naughtyfamily-api-staging` at https://naughtyfamily-api-staging.kboone801.workers.dev
+- **Acceptance D1:** `naughtyfamily-acceptance-staging` (UUID `02cca699-1232-495f-8a0a-de525058b92a`)
 - **Git repository:** `SharpSplinter/Naughty-Company-Dashboard`
-- **Cloudflare Pages production branch:** `main`
+- **Production branch:** `main`
 
-Pages build settings:
+The legacy Pages project `naughty-company-dashboard` was rebuilt from `main` and published on 2026-11-17 as deployment `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`. Its compiled frontend and saved production Pages build variable now use `https://naughtyfamily-api.kboone801.workers.dev`, replacing the retired `naughty-company-api` hostname. This repairs the static frontend-to-API URL wiring. No login or authenticated API smoke was run, so treat this as a repaired Company Dashboard fallback candidate, not a fully end-to-end-verified portal rollback. The separate `naughtyfamily` project is configured for `main` with automatic production/preview deployments disabled and still has no production deployment. Do not point a staging Worker or acceptance database at production resources.
+
+Pages build settings for the new target:
 
 - Build command: `npm run build`
 - Output directory: `dist`
 - Root directory: repository root
-- Build variable: `VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev`
+- Production build variable: `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`
+
+See [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the release checklist, verified production baseline, backup procedure, migration order, rollback boundaries and explicit no-production-change status.
 
 ## API Worker
 
 The Worker exposes health, authenticated dashboard, company intelligence, automation, and administrator routes. The current health check is `GET /health`. Company IDs must be positive integers. Torn API keys are validated through the Worker; never put a key in a URL, source file, or logs.
 
-The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from the production Pages domain, Pages preview subdomains, and localhost port 3000 for local development.
+The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from `https://naughtyfamily.pages.dev`, the preserved legacy Pages hostname for compatibility, and localhost port 3000 for local development. The production master Full Access key is configured as secret `TORN_API_KEY_SERVICE`; the Worker code must use that exact binding name. `TORN_API_KEY_CUSTOM` remains a fallback for public global-ranking requests, and `TORN_FACTION_API_KEY` remains dedicated to scheduled public faction collection.
 
 ## Security notes
 
 Members authenticate with their own limited-access Torn API key. The Worker validates Naughty Souls faction membership, encrypts saved Torn credentials at rest, and issues random bearer session tokens while storing only SHA-256 hashes in D1. The browser stores the session token locally; raw Torn keys are not stored in browser storage. Dashboard sessions expire after 30 days.
 
-All Torn sign-ins start with standard-user permissions. The primary owner Torn player ID (`351311`) is an explicit allowlist for *requesting* administrator elevation, but the player ID alone never grants administrator access. A successful administrator step-up applies only to the current session for 30 minutes. Every `/api/admin/*` request checks that server-side elevation and its expiry; the frontend is not trusted to authorize administrator work. Elevation can be revoked explicitly and is removed when the session is signed out. Five failed attempts in a 15-minute window trigger a 15-minute lockout for that owner/client-IP attempt key. Raw passwords, usernames, and password hashes are never written to D1 or application logs.
+### Portal administrator authorization
 
-### Configure administrator step-up credentials
+The portal branch uses Torn-identity-backed administrator roles rather than a separate administrator password:
 
-**Do not merge/deploy the feature until both `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are configured on the production Worker.** If either is missing or invalid, administrator elevation fails closed and administrator APIs remain unavailable. Ordinary Torn sign-in continues to use standard-user permissions.
+1. A member signs in with their own Torn API key. The Worker validates the key, confirms the player's identity and Naughty Souls faction membership, and creates a session tied to that verified Torn player ID.
+2. Administrator privilege is a separate active role in the D1 `administrators` registry. Every `/api/admin/*` request checks the authenticated session's player ID against that registry.
+3. The owner bootstrap is restricted to the configured `ADMIN_PLAYER_ID` and uses insert-if-absent semantics. It does not silently re-enable an administrator whose registry row was revoked.
+4. A Torn player ID alone is not an authentication credential. The member's Torn API key proves account control; the verified player ID is the identity to which the administrator role is attached.
 
-**Important deployment behavior:** Cloudflare's `wrangler secret put` command immediately deploys a new version of the currently targeted Worker. It does not deploy the feature branch unless that branch's code has already been deployed. Treat setting these secrets as a production operation and do it during an approved deployment window. See the [Cloudflare Worker secrets documentation](https://developers.cloudflare.com/workers/configuration/secrets/).
+The portal code does not require `ADMIN_USERNAME` or `ADMIN_PASSWORD_HASH`. Do not follow legacy instructions to create or rotate those secrets as a portal cutover step. Changing Worker secrets can immediately publish a new version of the currently targeted Worker.
 
-Run the following from the repository root in a private interactive terminal:
+**Production boundary:** until the portal Worker, its approved D1 migrations and the new `naughtyfamily` Pages frontend are released together, the live Company Dashboard remains on its legacy administrator flow. Staging acceptance of the registry flow does not switch production authorization. Do not attempt an interim production administrator-data or secret change without a separate approved release plan.
 
-1. Verify that Wrangler is authenticated to the intended Cloudflare account with `npx wrangler whoami`. The repository's `wrangler.toml` names the Worker `naughty-company-api`; the commands below target that Worker explicitly.
-2. Choose a unique administrator passphrase of at least 8 characters, containing at least one letter, one digit, and one punctuation/symbol character. Do not use three or more ascending or descending letters/digits in a row (for example `abc`, `cba`, `123`, or `321`). Do not send it in chat or commit it to the repository.
-3. Generate the hash by running:
+## Worker-side D1 rows-read accounting
 
-   ```sh
-   node scripts/generate-admin-password-hash.mjs
-   ```
+Each Worker event now emits one structured `d1_read_accounting` record after its D1 work completes:
 
-   At `Administrator password (input hidden):`, type the passphrase and press Enter. The helper does not echo the passphrase and rejects passwords that fail the composition or sequence rules. It prints one hash line beginning with `pbkdf2-sha256$210000$` and containing a random salt and derived hash. Keep that line available for the next step; do not commit or publish it.
+- HTTP requests: one summary per request, using a normalized route and the Cloudflare request ID when available.
+- Queue consumers: one summary per queue batch, including the message count.
+- Scheduled events: one summary per cron invocation. The meter waits for tracked `ctx.waitUntil()` work, including admin refresh jobs, before it emits the total.
 
-4. Set the separate administrator username:
+The count comes from D1 statement metadata, not account analytics deltas. The wrapper records `meta.rows_read` and `meta.rows_written` for `all()`, `run()`, and every statement result returned by `batch()`. D1's `first()` method returns a row without metadata, so the wrapper executes the equivalent query inside an outer `SELECT * FROM (...) LIMIT 1` through `all()`, preserving first-row behavior while retaining the metadata result. The existing Worker `.first()` call sites are SELECT/CTE queries.
 
-   ```sh
-   npx wrangler secret put ADMIN_USERNAME --name naughty-company-api
-   ```
+The log record includes aggregate rows read/written, statement/method counts, missing metrics, failed statements, unsupported operations, background-task counts, and an `accountingStatus`. It deliberately excludes SQL text, bound values, player IDs and API keys. A record is `incomplete` if a D1 result omits `rows_read`, a statement fails, a batch returns a mismatched result count, a metadata-free `first()` fallback is required, or a code path uses `raw()`/database `exec()` where this wrapper cannot obtain per-statement metadata. The `unmeteredFirstFallbacks` field makes those compatibility fallbacks visible. Treat any `incomplete` record as a stop condition for quota certification; never count it as zero. Logs are emitted as structured objects so Workers Logs can index their fields, not as JSON embedded in a message string.
 
-   At Wrangler's `Enter a secret value:` prompt, type the chosen administrator username and press Enter.
+Both `wrangler.toml` and `wrangler.acceptance.toml` enable Workers Observability with `head_sampling_rate = 1.0` so these events are not intentionally sampled. The records are emitted to Cloudflare Workers Logs, not written back to D1, avoiding recursive reads/writes in the application database. To calculate a run total, sum `rowsRead` only across complete `d1_read_accounting` records for the corresponding time window and include fetch, queue and scheduled events. Account-level D1 analytics remains useful as a cross-check, but must not replace these statement-level totals when it under-reports.
 
-5. Set the generated hash:
+**Retention boundary:** Workers Logs are short-term operational telemetry, not a permanent ledger. On Cloudflare's Free Workers Logs allowance, stored logs have a three-day retention period; other plans have different retention allowances. Export the structured records to an approved durable destination (for example, Workers Logpush or an OpenTelemetry destination) before relying on historical totals beyond the available retention window. No external log destination is configured by this code change.
 
-   ```sh
-   npx wrangler secret put ADMIN_PASSWORD_HASH --name naughty-company-api
-   ```
-
-   At Wrangler's `Enter a secret value:` prompt, paste the **entire one-line output** from the hash helper and press Enter. Paste it into Wrangler's prompt, not into the shell command. The hash contains `$` characters, which shells can interpret when the value is entered as a command argument.
-
-6. Confirm that both names are configured:
-
-   ```sh
-   npx wrangler secret list --name naughty-company-api
-   ```
-
-   This lists secret names/types, not their values. Check that `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are listed; do not print, screenshot, or share secret values.
-
-### Android-only path (no desktop computer)
-
-You can generate the hash locally on an Android phone. Install Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or the [official Termux GitHub releases](https://github.com/termux/termux-app/releases). Avoid unofficial APK download sites, and do not mix Termux installations from different sources.
-
-Open Termux and run these commands one at a time:
-
-```sh
-pkg update
-pkg install git nodejs
-git clone https://github.com/SharpSplinter/Naughty-Company-Dashboard.git
-cd Naughty-Company-Dashboard
-git checkout main
-node scripts/generate-admin-password-hash.mjs
-```
-
-At the hidden prompt, type your new passphrase and press Enter. Copy only the generated `pbkdf2-sha256$...` hash line. Never paste the password or hash into ChatGPT, a message, or a screenshot. The hash is still sensitive because it can be targeted for offline password guessing, so store it only as a Worker Secret. Keep the hash temporarily on your phone and clear it from the clipboard after you have entered it into Cloudflare.
-
-To configure the secrets without a desktop, open the [Cloudflare dashboard](https://dash.cloudflare.com/) in your Android browser. If needed, use the browser menu's **Desktop site** option. Go to **Workers & Pages** > **naughty-company-api** > **Settings** > **Variables and Secrets**. Choose **Add**, select type **Secret**, and add `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`. Add both before clicking **Deploy** once.
-
-**Do not click Deploy until the production configuration change is approved.** Cloudflare deploys a new version of the currently deployed Worker when you save and deploy secret changes; this does not deploy the PR's feature-branch code. See [Cloudflare's official secret setup guide](https://developers.cloudflare.com/workers/configuration/secrets/).
-
-Do not place either value in `wrangler.toml`, a public `vars` entry, a frontend environment variable, a GitHub Actions output, or source control. Do not send the password or hash in chat. If you are not ready for Wrangler to publish a new version of the currently deployed Worker, do not run `secret put` yet.
-
-After the feature is deployed, verify that a normal Torn session is non-admin by default, only the allowlisted owner identity can attempt elevation, correct credentials elevate that session, incorrect credentials are rejected and rate-limited, a standard session receives HTTP 403 from admin APIs, and explicit revocation, sign-out, or expiry removes elevated access.
-
-CORS restrictions are useful browser hygiene but are not a replacement for authentication. The regular sign-out action revokes the current server-side session. An authenticated all-devices action revokes every active session for that player. Removing saved credentials preserves company history.
+The meter is runtime code only. It has not been deployed to either Worker by this change, and no D1, Queue, or production resource was accessed to validate it.
 
 ## Local development
 
@@ -105,4 +73,27 @@ CORS restrictions are useful browser hygiene but are not a replacement for authe
 - `npm run typecheck`
 - `npm test`
 
-Cloudflare Pages production deployments build the repository's `main` branch with `npm run build` and publish `dist/`.
+Production Pages publishing is manual during this migration. Do not publish the portal to the legacy `naughty-company-dashboard` project. After the production Worker migration/deployment and health verification are approved, build with the production API URL and explicitly publish `dist/` to the `naughtyfamily` project. Keep both projects' automatic deployments disabled until the cutover is accepted.
+
+The production Worker workflow is `workflow_dispatch`-only on `main` and targets only `naughtyfamily-api`. It uses the GitHub Environment `production`; configure required reviewers and restrict its deployment branches to `main` before release. The workflow's evidence preflight runs before the first Cloudflare action and requires:
+- an HTTPS external-backup reference, independently verified SHA-256, and backup timestamp less than 24 hours old;
+- a fresh Time Travel bookmark and D1 migration-ledger reference;
+- account-wide D1 rows-read evidence less than 15 minutes old, with an explicit hard stop and deployment reserve that do not exceed the hard stop;
+- successful, manually dispatched isolated restore-rehearsal and stateful-staging runs for the exact candidate commit, with the candidate Git tree matching the `main` release tree;
+- service-key permission evidence and a reviewed Queue configuration reference;
+- explicit release authorization and explicit authorization to reconcile the Queue bindings declared in `wrangler.toml`.
+
+The preflight validates reference formats, age, numeric headroom, exact GitHub workflow paths/run outcomes, and tested commit/tree identity. The separate manual [offline restore rehearsal workflow](https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/portal-rebuild/.github/workflows/restore-production-backup-rehearsal.yml) now downloads and checks the encrypted archive, decrypts it only on an ephemeral runner, and replays migrations 0013–0037 against a local SQLite restore. It does not call Cloudflare or D1. This local replay does not replace the separate stateful D1 staging acceptance. The production Environment reviewer approval is separate. The `production-backup` Environment must have the `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` secrets configured before the restore workflow can run. The preflight does **not** independently verify external D1/Time Travel/service-key/Queue reference contents or inspect Cloudflare quotas. Those must be independently inspected before dispatch; see [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the remaining NO-GO release gates.
+
+
+### Current production D1 backup (2026-11-17)
+
+The latest manual production D1 export is now available as an encrypted GPG AES-256 archive. The backup is tied to Time Travel bookmark `000004d7-00000aa9-00005126-131d7ed09c8a32272620b830a726a489`; encrypted archive SHA-256 is `2df6bb90368ab669668a47d262e477928741afaa95dcdc5ea1988ec31a6b96d5`, and the untouched SQL export SHA-256 is `8034189ebcad7a2e21210b030187d2514eeb451f2bf42387d021977392b7497f`.
+
+The export was replayed locally against SQLite with migrations `0013–0037`: 25 migrations passed, the ledger moved from 16 to 41 entries, all 39 pre-existing application tables and their row counts were preserved, `integrity_check` returned `ok`, and `foreign_key_check` returned zero violations. This was a local SQLite rehearsal, not a D1 import or stateful staging acceptance.
+
+To run the repository's GitHub restore workflow against the archive, set these secrets in the protected GitHub Environment named `production-backup`:
+- `PRODUCTION_D1_BACKUP_URL`: the encrypted archive download URL delivered to the owner.
+- `PRODUCTION_D1_BACKUP_PASSWORD`: the separate GPG passphrase delivered to the owner.
+
+Do not put the passphrase in workflow inputs, logs, repository files, or artifacts. The workflow verifies the encrypted archive checksum, decrypts only on the ephemeral runner, verifies the raw SQL export checksum, replays migrations locally, and retains only the sanitized report. The encrypted download link delivered in chat is a file-transfer link, not the long-term backup location; retain a copy in restricted storage under the owner's control.

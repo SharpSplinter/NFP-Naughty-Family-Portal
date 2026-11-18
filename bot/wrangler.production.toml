@@ -35,5 +35,5 @@ database_id = "46f7536d-f69c-4304-8b44-615901c60b7c"
 
 [[services]]
 binding = "DASHBOARD_API"
-service = "naughty-company-api"
+service = "naughtyfamily-api"
 environment = "production"

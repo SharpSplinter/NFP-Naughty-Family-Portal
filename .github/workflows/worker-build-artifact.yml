@@ -1,6 +1,8 @@
-name: Build Worker deployment artifact
+name: Build and deploy isolated staging Worker from portal-rebuild
 
 on:
+  # Manual only. Dispatch on portal-rebuild to deploy the staging API Worker.
+  # Dispatches on other refs build the artifact only.
   workflow_dispatch:
 
 permissions:
@@ -8,22 +10,29 @@ permissions:
 
 concurrency:
   group: worker-build-artifact-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   bundle-worker:
+    if: github.ref == 'refs/heads/portal-rebuild'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Check out the reviewed portal-rebuild commit
+        uses: actions/checkout@v7
         with:
-          node-version: 20
+          ref: portal-rebuild
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Run offline type and backend regression checks
+        run: |
+          npm run typecheck
+          npm test
       - name: Bundle Worker
         run: npx esbuild src/worker/index.ts --bundle --format=esm --target=es2022 --minify --outfile=worker-dist/index.js
       - name: Upload Worker bundle
@@ -33,7 +42,134 @@ jobs:
           path: worker-dist/index.js
           if-no-files-found: error
           retention-days: 1
-      - name: Emit compressed transfer chunks
+      - name: Deploy staging Worker only with existing bindings preserved and perform one read-only health request
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6c03b978ed9a59adc3f61c715bdad45c
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+          if (!token || !accountId) throw new Error("Cloudflare deployment credentials are missing.");
+
+          const scriptName = "naughtyfamily-api-staging";
+          const apiBase = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`;
+          const headers = { authorization: `Bearer ${token}` };
+          const expectedOrigin = "https://naughtyfamily-staging.pages.dev";
+
+          async function getSettings() {
+            const response = await fetch(`${apiBase}/settings`, { headers });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              throw new Error(`Could not verify staging Worker settings (HTTP ${response.status}).`);
+            }
+            return payload.result;
+          }
+
+          function assertStagingBindings(settings) {
+            const bindings = new Map((settings.bindings ?? []).map(binding => [binding.name, binding]));
+            const db = bindings.get("DB");
+            const kv = bindings.get("NCD_DAILY_READ_CACHE");
+            const queue = bindings.get("GLOBAL_RANKINGS_QUEUE");
+            if (db?.type !== "d1" || db.database_id !== "02cca699-1232-495f-8a0a-de525058b92a") {
+              throw new Error("Refusing deployment: staging D1 binding is not the isolated staging database.");
+            }
+            if (kv?.type !== "kv_namespace" || kv.namespace_id !== "fa61636ea2cf4a39b00e255024d0fc7d") {
+              throw new Error("Refusing deployment: staging KV binding is not the isolated namespace.");
+            }
+            if (queue?.type !== "queue" || queue.queue_name !== "ncd-naughtyfamily-staging-collection") {
+              throw new Error("Refusing deployment: staging Queue binding is not the isolated staging queue.");
+            }
+            for (const name of [
+              "KEY_ENCRYPTION_SECRET",
+              "TORN_API_KEY_CUSTOM",
+              "TORN_API_KEY_FULL_ACCESS",
+              "TORN_API_KEY_SERVICE",
+              "TORN_FACTION_API_KEY",
+            ]) {
+              if (bindings.get(name)?.type !== "secret_text") {
+                throw new Error(`Refusing deployment: existing secret binding ${name} is missing.`);
+              }
+            }
+            if (bindings.get("ALLOWED_ORIGIN")?.text !== expectedOrigin) {
+              throw new Error("Refusing deployment: staging ALLOWED_ORIGIN is not isolated.");
+            }
+            if (bindings.get("NCD_DAILY_CACHE_NAMESPACE")?.text !== "naughtyfamily-acceptance-staging") {
+              throw new Error("Refusing deployment: staging cache namespace is not isolated.");
+            }
+          }
+
+          // Control-plane-only preflight. No D1, KV, or Queue data-plane calls.
+          const before = await getSettings();
+          assertStagingBindings(before);
+
+          const bundle = await readFile("worker-dist/index.js");
+          const metadata = {
+            main_module: "worker.js",
+            compatibility_date: "2026-10-08",
+            compatibility_flags: [],
+            // Retain current bindings by type. Do not submit new binding
+            // declarations or Queue consumer/trigger reconciliation.
+            keep_bindings: ["plain_text", "secret_text", "d1", "queue", "kv_namespace"],
+            observability: {
+              enabled: true,
+              head_sampling_rate: 1,
+              redact_query_string: false,
+              logs: {
+                enabled: true,
+                head_sampling_rate: 1,
+                persist: true,
+                invocation_logs: true,
+              },
+              traces: {
+                enabled: false,
+                head_sampling_rate: 1,
+                persist: true,
+              },
+            },
+            annotations: {
+              "workers/message": `D1 read accounting | portal-rebuild ${process.env.GITHUB_SHA}`,
+            },
+          };
+
+          const form = new FormData();
+          form.set("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+          form.set("worker.js", new Blob([bundle], { type: "application/javascript+module" }), "worker.js");
+
+          const upload = await fetch(apiBase, { method: "PUT", headers, body: form });
+          const uploadPayload = await upload.json().catch(() => null);
+          if (!upload.ok || uploadPayload?.success !== true) {
+            const messages = (uploadPayload?.errors ?? []).map(item => item.message).filter(Boolean).join("; ");
+            throw new Error(`Staging Worker upload failed (HTTP ${upload.status}): ${messages || "Cloudflare did not confirm success"}`);
+          }
+          console.log(`STAGING WORKER UPLOAD -> success; source=${process.env.GITHUB_SHA}; version=${uploadPayload.result?.id ?? "created"}`);
+
+          // Postflight confirms resource IDs and secret binding names survived.
+          const after = await getSettings();
+          assertStagingBindings(after);
+          if (after.observability?.enabled !== true || after.observability?.head_sampling_rate !== 1) {
+            throw new Error("Staging Worker observability is not enabled at 100% sampling.");
+          }
+          console.log("STAGING BINDINGS -> preserved; D1/KV/Queue/secrets unchanged; Workers Logs sampling=100%");
+
+          // Exactly one application request. /health runs only SELECT 1.
+          // Do not retry this request: even a failed health check is one probe.
+          const health = await fetch("https://naughtyfamily-api-staging.kboone801.workers.dev/health", {
+            method: "GET",
+            headers: { accept: "application/json", origin: expectedOrigin },
+            cache: "no-store",
+            signal: AbortSignal.timeout(15000),
+          });
+          const healthBody = await health.json().catch(() => null);
+          console.log(`STAGING HEALTH -> HTTP ${health.status}; ok=${healthBody?.ok}; database=${healthBody?.database}; keyEncryption=${healthBody?.keyEncryption}`);
+          if (!health.ok || healthBody?.ok !== true || healthBody?.database !== "ok" || healthBody?.keyEncryption !== "ok") {
+            throw new Error("The single read-only staging health request did not confirm database and key-encryption readiness.");
+          }
+          NODE
+      - name: Emit compressed transfer chunks for manual recovery
         shell: bash
         run: |
           set -o pipefail

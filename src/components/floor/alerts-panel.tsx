@@ -225,20 +225,26 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not acknowledge this alert.") }
   }
 
-  async function configureDiscordAlerts() {
+  async function generateDiscordLinkCode() {
     setDiscordLinkBusy(true); setError(""); setNotice("")
     try {
-      if (!discordLinked) {
-        const result = await automationFetch<{ code: string; expiresAt: string }>(apiBase, sessionToken, "/api/me/discord-link-code", { method: "POST" })
-        setDiscordCode(result.code)
-        setDiscordCodeExpiresAt(result.expiresAt)
-        setNotice("One-time code generated. In Discord, run /link-code and paste this code. It expires in five minutes. Return here after linking, then enable private alerts.")
-      } else {
-        const enabled = !discordAlertsEnabled
-        await automationFetch<{ linked: boolean; alertsEnabled: boolean }>(apiBase, sessionToken, "/api/me/discord-link", { method: "POST", body: JSON.stringify({ alertsEnabled: enabled }) })
-        setDiscordAlertsEnabled(enabled)
-        setNotice(enabled ? "Private Discord alert DMs are enabled. Company alerts will be sent only to your linked Discord account." : "Private Discord alert DMs are disabled.")
-      }
+      const result = await automationFetch<{ code: string; expiresAt: string }>(apiBase, sessionToken, "/api/me/discord-link-code", { method: "POST" })
+      setDiscordCode(result.code)
+      setDiscordCodeExpiresAt(result.expiresAt)
+      setNotice("One-time code generated. In Discord, run /link-code and paste this code. It expires in five minutes. Submitting it refreshes the bot's saved dashboard session.")
+      await load()
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not generate a Discord link code. Please sign in again and retry.") }
+    finally { setDiscordLinkBusy(false) }
+  }
+
+  async function configureDiscordAlerts() {
+    if (!discordLinked) { await generateDiscordLinkCode(); return }
+    setDiscordLinkBusy(true); setError(""); setNotice("")
+    try {
+      const enabled = !discordAlertsEnabled
+      await automationFetch<{ linked: boolean; alertsEnabled: boolean }>(apiBase, sessionToken, "/api/me/discord-link", { method: "POST", body: JSON.stringify({ alertsEnabled: enabled }) })
+      setDiscordAlertsEnabled(enabled)
+      setNotice(enabled ? "Private Discord alert DMs are enabled. Company alerts will be sent only to your linked Discord account." : "Private Discord alert DMs are disabled.")
       await load()
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update Discord alert settings. Please try again.") }
     finally { setDiscordLinkBusy(false) }
@@ -309,7 +315,7 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
     <section className="panel automation-delivery-settings">
       <div className="panel-heading"><div><h2>Notification delivery & quiet hours</h2><p>In-app alerts are always retained. Browser notifications can respect your local quiet window; optional webhooks send matching alerts to an external HTTPS endpoint.</p></div><span className={webhookConfigured ? "admin-status good" : "admin-status neutral"}>{webhookConfigured ? "Webhook configured" : "In-app only"}</span></div>
       <div className="automation-delivery-grid">
-        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>Private Discord alerts</h3><p>One consolidated daily company summary is delivered by direct message to the Discord account linked to this dashboard. It compares income, profit, star level, next-star income gap, company rank, and stock quantity with the prior reporting day. It is never posted to a shared channel.</p></div><span className={discordAlertsEnabled ? "admin-status good" : "admin-status neutral"}>{discordAlertsEnabled ? "DM alerts enabled" : discordLinked ? "Account linked" : "Not linked"}</span></div><p className="field-hint">You can link from here using a one-time code, or link directly in Discord with /link and your limited-access Torn API key.</p><button type="button" className="primary-button" disabled={discordLinkBusy || demoMode} onClick={() => void configureDiscordAlerts()}>{discordLinkBusy ? "Working…" : !discordLinked ? "Generate one-time link code" : discordAlertsEnabled ? "Disable private Discord alerts" : "Enable private Discord alerts"}</button>{discordCode && !discordLinked && <div className="automation-notice" role="status"><strong>Your one-time Discord link code</strong><p><code>{discordCode}</code></p><p>In Discord, run <strong>/link-code</strong> and paste this code. It expires at {prettyDate(discordCodeExpiresAt)}. After linking, return here and enable private alerts.</p><button type="button" className="text-button" onClick={() => void load()}>Check link status</button></div>}{discordLinked && <p className="field-hint">Discord account linked. {discordAlertsEnabled ? "One consolidated daily company summary will be sent privately by DM." : "Enable private alerts to start receiving DMs."}</p>}
+        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>Private Discord alerts</h3><p>One consolidated daily company summary is delivered by direct message to the Discord account linked to this dashboard. It compares income, profit, star level, next-star income gap, company rank, and stock quantity with the prior reporting day. It is never posted to a shared channel.</p></div><span className={discordAlertsEnabled ? "admin-status good" : "admin-status neutral"}>{discordAlertsEnabled ? "DM alerts enabled" : discordLinked ? "Account linked" : "Not linked"}</span></div><p className="field-hint">You can link from here using a one-time code, or link directly in Discord with /link and your limited-access Torn API key.</p><button type="button" className="primary-button" disabled={discordLinkBusy || demoMode} onClick={() => void configureDiscordAlerts()}>{discordLinkBusy ? "Working…" : !discordLinked ? "Generate one-time link code" : discordAlertsEnabled ? "Disable private Discord alerts" : "Enable private Discord alerts"}</button>{discordLinked && <button type="button" className="text-button" disabled={discordLinkBusy || demoMode} onClick={() => void generateDiscordLinkCode()}>Reconnect Discord</button>}{discordCode && <div className="automation-notice" role="status"><strong>Your one-time Discord link code</strong><p><code>{discordCode}</code></p><p>In Discord, run <strong>/link-code</strong> and paste this code. It expires at {prettyDate(discordCodeExpiresAt)}. Submitting it refreshes the bot's saved dashboard session for this account.</p><button type="button" className="text-button" onClick={() => void load()}>Check connection status</button></div>}{discordLinked && <p className="field-hint">Discord account linked. {discordAlertsEnabled ? "One consolidated daily company summary will be sent privately by DM." : "Enable private alerts to start receiving DMs."}</p>}
           {discordLinked && <section className="discord-poll-monitor" aria-labelledby="discord-poll-monitor-title">
             <div className="discord-poll-monitor-heading">
               <div><h4 id="discord-poll-monitor-title">Private alert delivery health</h4><p>Updated automatically about once a minute. Warnings appear after 3 consecutive poll failures, exhausted retries, stale claims, or 30 minutes without telemetry. After 3 consecutive poll failures, the bot also attempts one private escalation DM for that outage; it resets after a successful poll.</p></div>
