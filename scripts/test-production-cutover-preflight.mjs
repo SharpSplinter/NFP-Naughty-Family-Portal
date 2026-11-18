@@ -111,9 +111,9 @@ const missingQueueApproval = validEnv();
 missingQueueApproval.QUEUE_CONFIGURATION_ACK = "";
 assert.ok(validateProductionCutoverInputs(missingQueueApproval, now).errors.some(x => x.includes("Queue bindings")));
 
-const wrongAcceptanceCommit = validEnv();
-wrongAcceptanceCommit.STAGING_ACCEPTANCE_COMMIT = release;
-assert.ok(validateProductionCutoverInputs(wrongAcceptanceCommit, now).errors.some(x => x.includes("exact candidate commit")));
+const invalidStagingCommit = validEnv();
+invalidStagingCommit.STAGING_ACCEPTANCE_COMMIT = "not-a-full-sha";
+assert.ok(validateProductionCutoverInputs(invalidStagingCommit, now).errors.some(x => x.includes("full SHA deployed and exercised in staging")));
 
 function response(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
