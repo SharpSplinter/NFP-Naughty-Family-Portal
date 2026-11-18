@@ -117,6 +117,10 @@ const invalidStagingCommit = validEnv();
 invalidStagingCommit.STAGING_ACCEPTANCE_COMMIT = "not-a-full-sha";
 assert.ok(validateProductionCutoverInputs(invalidStagingCommit, now).errors.some(x => x.includes("full SHA deployed and exercised in staging")));
 
+const invalidRestoreCommit = validEnv();
+invalidRestoreCommit.RESTORE_REHEARSAL_COMMIT = "not-a-full-sha";
+assert.ok(validateProductionCutoverInputs(invalidRestoreCommit, now).errors.some(x => x.includes("exact commit used by the successful local restore rehearsal")));
+
 function response(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
