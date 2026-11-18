@@ -94,7 +94,6 @@ jobs:
       - name: Replay migrations 0013-0037 and verify restored data locally
         env:
           SQL_FILE: ${{ runner.temp }}/production-d1-restore/production-export.sql
-          SQL_EXPORT_SHA256: ${{ env.SQL_EXPORT_SHA256 }}
         run: |
           python3 scripts/replay-production-backup-migrations.py \
             --sql-file "$SQL_FILE" \
