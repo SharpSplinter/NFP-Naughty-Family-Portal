@@ -3536,20 +3536,20 @@ async function enqueueScheduledHalloweenSnapshots(env: WorkerEnv, scheduledTime:
        SELECT *,
          EXISTS(
            SELECT 1 FROM halloween_live_snapshot_jobs opening
-           WHERE opening.event_year = event_year AND opening.player_id = player_id
-             AND opening.snapshot_kind = 'opening' AND opening.bucket_start = opening_bucket_start
+           WHERE opening.event_year = b.event_year AND opening.player_id = b.player_id
+             AND opening.snapshot_kind = 'opening' AND opening.bucket_start = b.opening_bucket_start
          ) AS opening_job_exists,
          EXISTS(
            SELECT 1 FROM halloween_live_snapshot_jobs periodic
-           WHERE periodic.event_year = event_year AND periodic.player_id = player_id
-             AND periodic.snapshot_kind = 'periodic' AND periodic.bucket_start = periodic_bucket_start
+           WHERE periodic.event_year = b.event_year AND periodic.player_id = b.player_id
+             AND periodic.snapshot_kind = 'periodic' AND periodic.bucket_start = b.periodic_bucket_start
          ) AS periodic_job_exists,
          EXISTS(
            SELECT 1 FROM halloween_live_snapshot_jobs closing
-           WHERE closing.event_year = event_year AND closing.player_id = player_id
-             AND closing.snapshot_kind = 'closing' AND closing.bucket_start = closing_bucket_start
+           WHERE closing.event_year = b.event_year AND closing.player_id = b.player_id
+             AND closing.snapshot_kind = 'closing' AND closing.bucket_start = b.closing_bucket_start
          ) AS closing_job_exists
-       FROM member_buckets
+       FROM member_buckets b
      ),
      scheduled_candidates AS (
        SELECT *,
