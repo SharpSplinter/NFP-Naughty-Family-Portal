@@ -1,9 +1,9 @@
 # Production backup, migration, rollback and cutover review
 
 **Original review date:** 2026-11-03  
-**State refresh:** 2026-11-18 UTC (focused security/correctness review, quota-focused scheduler/read-path fixes, offline regression validation, and current release gates reconciled)
-**Scope:** PR #152, branch `portal-rebuild`  
-**Decision:** **NO-GO for production cutover.** PR #152 remains OPEN/DRAFT, with no independent approving review recorded and no approval to merge or deploy. The focused review's two quota findings have now been addressed in the runtime code and covered by offline regression checks. Stateful D1/Queue staging acceptance has **not** been run or authorized. The production service-key permission is owner-confirmed, not independently probed. Production remains untouched.
+**State refresh:** 2026-11-18 UTC (PR #152 merge, branch-protection restoration, bounded staging evidence reconciliation, and production preflight update)
+**Scope:** PR #152, merged from `portal-rebuild`  
+**Decision:** **NO-GO for production cutover.** PR #152 was squash-merged to `main` as `d83efb5a7f049a8d2df5eb8bbecd4e47630492dc`. The one-time single-maintainer review exception was immediately reverted: one approval, latest-push approval, administrator enforcement, strict required status checks, and conversation resolution are restored. The bounded D1/Queue acceptance actually performed is recorded in [the staging evidence record](audits/2026-11-17-pr152-bounded-staging-acceptance.md); it was not the full `deploy-staging-acceptance.yml` suite. Its Worker runtime SHA was `f25c2980d186124441baf84184e90a3942b25ef4`. The production source has not been deployed. Production remains untouched.
 
 **2026-11-13 baseline update:** PR #155 merged at `f0420232231fa9708cece921a4fd5921eaad8e71`. Its production Worker deployment succeeded, migration `0012_company_ranking_snapshots.sql` was applied, and the existing `naughty-company-dashboard` Pages site was manually deployed from Android. The owner confirmed Trends & Charts displays the correct data. This does **not** deploy the Naughty Family portal branch or authorize its remaining migrations.
 
