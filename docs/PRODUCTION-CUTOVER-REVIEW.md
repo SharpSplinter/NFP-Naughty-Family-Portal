@@ -836,3 +836,49 @@ On **2026-11-17**, the project owner explicitly confirmed that the configured pr
 - Explicit owner approval to merge and to run production D1 migrations / Worker deployment: still required. The separate `naughtyfamily` Pages production publication remains unauthorized.
 
 **Production remains NO-GO.** The stateful acceptance run touched only isolated staging D1/Worker/Pages resources and staging-only Queue configuration. It did not deploy production Worker or Pages, run production D1 migrations, change production secrets, or mutate production Queues. Do not perform a production release until the remaining gates are satisfied and the owner explicitly authorizes it.
+
+
+## 26. 2026-11-18 five-minute Cron schedule resolution
+
+### Decision and account quota
+
+The candidate's five-minute scheduler is retained. It is needed for bounded membership revalidation, Sunday boundary/report retries, and time-sensitive Halloween event-window work. It is not deployed independently: the new Cron expression and its matching `scheduled()` dispatcher must be activated together by the guarded Wrangler production Worker deployment. The live production Worker currently has the older dispatcher, so attaching `*/5 * * * *` to it by a separate Cloudflare schedule mutation would route an unknown cron value through the ordinary automation path and is expressly not the plan.
+
+A fresh read-only inventory of all six account Workers found **3 active Cron triggers**:
+
+| Worker | Current Cron expression |
+|---|---|
+| `naughty-company-bot` | `* * * * *` |
+| `naughtyfamily-api` | `10 0 * * *` |
+| `naughtyfamily-api` | `10 18 * * *` |
+| Other three Workers, including staging | None |
+
+Cloudflare's current Workers Free limit is **5 Cron Triggers per account** ([official limits](https://developers.cloudflare.com/workers/platform/limits/)). Adding the portal's `*/5 * * * *` expression through the production Wrangler configuration will make the account total **4 of 5**, leaving one unused trigger. The staging acceptance Worker intentionally has no Cron trigger; its configuration comment now says this is to prevent unattended D1/Queue work against the acceptance database, not because the account's Cron quota is already exhausted.
+
+### D1 workload throttles
+
+The previous candidate would have scheduled persistent history capture too frequently. The current source now separates the five-minute dispatcher from expensive capture cadence:
+
+- Membership revalidation runs every **30 minutes**, on every sixth scheduler tick, with a maximum batch of **5 candidates** per run.
+- Faction roster history is enqueued **hourly**, on hourly scheduler boundaries only.
+- Member personalstats, faction gym-energy, and faction-wide stats are enqueued every **4 hours**, on four-hour boundaries only.
+- Weekly boundary/report retry and Halloween event-window checks remain on the five-minute dispatcher where their timing requires it. Their idempotent time-bucket/job checks remain in place.
+
+Relative to the prior candidate, the recurring membership sweep is six times less frequent, roster capture is twelve times less frequent, and personalstats/gym-energy/faction stats are sixteen times less frequent. These are cadence reductions, not a guaranteed rows-written forecast; actual D1 usage also depends on active faction size, event windows, and retry conditions. The five-minute scheduler must still be monitored using complete Worker-side D1 accounting records after release. Do not treat this design estimate as a substitute for a fresh account-wide quota/reserve check.
+
+### Verification
+
+The scheduler implementation and cadence contract were verified on code commit `b50097f69e6ef37e4c4ccef2e0ee4260f8a57165`:
+
+- Quality gates, including TypeScript, production build, and the backend regression suite: [run #44208138119](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208138119) — PASS.
+- Additional quality-gate run: [#44208128300](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208128300) — PASS.
+- Local-preview Halloween / Christmas Town / Training Calculator browser audit: [#44208128308](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208128308) — PASS.
+- Discord bot quality gates: [#44208137955](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44208137955) — PASS.
+
+These were offline repository/local-preview checks. They did not run stateful acceptance, access production or staging D1, or send/receive/acknowledge/retry/purge/replay Queue messages. The first quality-gate attempt on the initial throttle commit failed only because a source-contract assertion still expected the previous 15-minute scheduler expression; the cadence assertions were corrected and the later runs passed.
+
+The latest branch also contains a documentation-only update clarifying the staging Cron omission. Because the latest branch SHA therefore differs from the code SHA used by the successful runs, exact-candidate production restore and stateful staging evidence must be refreshed on the final release-candidate SHA before the production preflight.
+
+### Release boundary
+
+**The five-minute Cron discrepancy is resolved in the release candidate's code/configuration and the account has capacity for it. The trigger is not yet active on production.** Do not mutate Cloudflare schedules directly. It will be applied with the matching Worker code via Wrangler in the separately authorized production deployment. Production remains **NO-GO** until fresh account-wide D1 evidence and reserve, exact-candidate restore/staging evidence, PR review, and explicit production deployment authorization are all satisfied. No production resource was changed while resolving this schedule.
