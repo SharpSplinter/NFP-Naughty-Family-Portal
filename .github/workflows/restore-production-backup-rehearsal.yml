@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_commit:
-        description: Exact portal-rebuild commit whose migrations are to be replayed
+        description: Exact portal release commit whose migrations are to be replayed
         required: true
         type: string
       archive_sha256:
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   restore-rehearsal:
-    if: github.ref == 'refs/heads/portal-rebuild' && inputs.candidate_commit == github.sha
+    if: (github.ref == 'refs/heads/portal-rebuild' || github.ref == 'refs/heads/main') && inputs.candidate_commit == github.sha
     environment:
       name: production-backup
     runs-on: ubuntu-latest
