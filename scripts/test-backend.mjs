@@ -457,7 +457,7 @@ try {
     assert.equal(classifyFactionInactivity(1_800_000_000, "not-a-date").classification, "unknown")
   })
 
-  await test("rolling weekly profit requires seven consecutive complete daily-profit records", () => {
+  await test("rolling weekly profit reconstructs complete windows and falls back to reported totals", () => {
     const start = Date.parse("2026-11-06T00:00:00.000Z")
     const complete = Array.from({ length: 8 }, (_, index) => ({ day: new Date(start + index * 86400000).toISOString().slice(0, 10), dailyProfit: (index + 1) * 10, reportedWeeklyProfit: null }))
     const rolling = withRollingWeeklyProfit(complete)
@@ -473,6 +473,12 @@ try {
     assert.equal(missingDay.find(point=>point.day==="2026-11-12")?.weeklyProfit,null)
     const missingProfit=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-09"?{...point,dailyProfit:null}:point))
     assert.equal(missingProfit.find(point=>point.day==="2026-11-12")?.weeklyProfit,null)
+    const reportedFallback=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-13"?{...point,dailyProfit:null,reportedWeeklyProfit:777}:point))
+    assert.equal(reportedFallback[7].weeklyProfit,777)
+    assert.equal(reportedFallback[7].weeklyProfitSource,"reported")
+    assert.equal(reportedFallback[7].weeklyProfitReconciliationDelta,null,"a reported fallback must not imply a completed reconstruction")
+    const zeroReportedFallback=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-13"?{...point,dailyProfit:null,reportedWeeklyProfit:0}:point))
+    assert.equal(zeroReportedFallback[7].weeklyProfit,0,"a reported zero is a valid value, not missing data")
     const reconciled=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-12"?{...point,reportedWeeklyProfit:300}:point))
     assert.equal(reconciled[6].weeklyProfitReconciliationDelta,20)
   })
@@ -2438,9 +2444,11 @@ try {
     assert.match(migrationSource, /ALTER TABLE admin_jobs ADD COLUMN job_payload_json TEXT/)
   })
 
-  await test("stock difference uses saved daily trend records instead of imported chart archive", () => {
+  await test("official stock differences require lock-ins and weekly profit falls back to reported values", () => {
     const uiSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
+    const chartSource = readFileSync(join(root, "src/components/floor/chart-utils.tsx"), "utf8")
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    const companyHistorySource = readFileSync(join(root, "src/worker/company-history.ts"), "utf8")
     assert.match(workerSource, /PARTITION BY date\(fetched_at, '-18 hours'\)/)
     assert.match(workerSource, /fetchedAtMs - 18 \* 60 \* 60 \* 1000/)
     assert.ok(uiSource.includes("/api/me/companies/\u0024{encodeURIComponent(companyId)}/history?days=all"))
@@ -2448,6 +2456,11 @@ try {
     assert.match(uiSource, /const stockDifference = currentOfficialStockSnapshot\?\.stockQuantity != null && previousStockSnapshot\?\.stockQuantity != null/)
     assert.match(uiSource, /missingStockSnapshotDays\.join\(" and "\)/)
     assert.doesNotMatch(uiSource, /const officialStockSnapshots = \(currentChartCompany\?\.history \?\? \[\]\)/)
+    assert.match(uiSource, /reportedWeeklyProfit: numberOrNull\(record\.reportedWeeklyProfit\)/)
+    assert.match(uiSource, /currentOfficialProfitPoint\?\.weeklyProfit[\s\S]*currentOfficialProfitPoint\?\.reportedWeeklyProfit/)
+    assert.match(chartSource, /point\.reportedWeeklyProfit/)
+    assert.match(companyHistorySource, /const weeklyProfit = reconstructedWeeklyProfit \?\? reported/)
+    assert.match(companyHistorySource, /reported !== null \? "reported" : "incomplete"/)
   })
 
   await test("scheduled automation records stale-rule and digest delivery failures for dashboard visibility", () => {
