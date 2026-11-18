@@ -721,6 +721,8 @@ const FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000
 const FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL =
   FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
 const FACTION_ROSTER_COLLECTION_INTERVAL_MS = 60 * 60 * 1000
+const FACTION_ROSTER_COLLECTION_TICK_INTERVAL =
+  FACTION_ROSTER_COLLECTION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
 const FACTION_STATS_COLLECTION_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FACTION_STATS_COLLECTION_TICK_INTERVAL =
   FACTION_STATS_COLLECTION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
@@ -931,8 +933,10 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
   // Dedicated Cloudflare Worker secret. Never substitute a member login key.
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return 0
   let enqueued = 0
-  if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", FACTION_ROSTER_COLLECTION_INTERVAL_MS)) enqueued += 1
   const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
+  if (schedulerBucket % FACTION_ROSTER_COLLECTION_TICK_INTERVAL === 0) {
+    if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", FACTION_ROSTER_COLLECTION_INTERVAL_MS)) enqueued += 1
+  }
   if (schedulerBucket % FACTION_STATS_COLLECTION_TICK_INTERVAL === 0) {
     if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "personalstats", FACTION_STATS_COLLECTION_INTERVAL_MS)) enqueued += 1
     if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "gym_energy", FACTION_STATS_COLLECTION_INTERVAL_MS)) enqueued += 1
