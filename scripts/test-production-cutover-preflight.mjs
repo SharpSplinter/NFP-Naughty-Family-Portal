@@ -26,6 +26,7 @@ assert.match(workflow, /inputs\.queue_configuration_ack/);
 assert.match(workflow, /inputs\.backup_sha256/);
 assert.match(workflow, /inputs\.d1_usage_checked_at/);
 assert.match(workflow, /inputs\.restore_rehearsal_run_url/);
+assert.match(workflow, /inputs\.restore_rehearsal_commit/);
 assert.match(workflow, /inputs\.staging_acceptance_run_url/);
 assert.match(workflow, /inputs\.staging_acceptance_commit/);
 assert.match(workflow, /inputs\.staging_acceptance_evidence_reference/);
@@ -39,6 +40,7 @@ assert.match(workflow, /confirm_target == 'naughtyfamily-api'/);
 const now = new Date("2026-11-17T04:00:00.000Z");
 const candidate = "8e34071abe0f570a171cfe919ddbc16a92b689ab";
 const stagingRuntimeCommit = "f25c2980d186124441baf84184e90a3942b25ef4";
+const restoreCandidate = "6323636917adf7bf14d2c516567645895def69af";
 const release = "451869f0ae3ba7ae37aeca4d15ac34680d74ab6c";
 const treeSha = "a".repeat(40);
 const stagingTreeSha = "b".repeat(40);
@@ -72,7 +74,7 @@ function validEnv() {
     SERVICE_KEY_PERMISSION_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/102",
     QUEUE_CONFIGURATION_REVIEW_REFERENCE: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/103",
     RESTORE_REHEARSAL_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/104",
-    RESTORE_REHEARSAL_COMMIT: candidate,
+    RESTORE_REHEARSAL_COMMIT: restoreCandidate,
     STAGING_ACCEPTANCE_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/105",
     STAGING_ACCEPTANCE_COMMIT: stagingRuntimeCommit,
     STAGING_ACCEPTANCE_EVIDENCE_REFERENCE: stagingEvidenceReference,
@@ -134,7 +136,11 @@ const successfulRun = {
 const fakeFetch = async url => {
   const value = String(url);
   if (value.endsWith("/actions/runs/104")) {
-    return response({ ...successfulRun, path: ".github/workflows/restore-production-backup-rehearsal.yml" });
+    return response({
+      ...successfulRun,
+      head_sha: restoreCandidate,
+      path: ".github/workflows/restore-production-backup-rehearsal.yml",
+    });
   }
   if (value.endsWith("/actions/runs/105")) {
     return response({
@@ -143,14 +149,26 @@ const fakeFetch = async url => {
       path: ".github/workflows/worker-build-artifact.yml",
     });
   }
-  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`) || value.endsWith(`/commits/${stagingRuntimeCommit}`)) {
-    return response({ commit: { tree: { sha: value.endsWith(stagingRuntimeCommit) ? stagingTreeSha : treeSha } } });
+  if (
+    value.endsWith(`/commits/${candidate}`) ||
+    value.endsWith(`/commits/${release}`) ||
+    value.endsWith(`/commits/${stagingRuntimeCommit}`) ||
+    value.endsWith(`/commits/${restoreCandidate}`)
+  ) {
+    const commitTree = value.endsWith(stagingRuntimeCommit)
+      ? stagingTreeSha
+      : value.endsWith(restoreCandidate)
+        ? "c".repeat(40)
+        : treeSha;
+    return response({ commit: { tree: { sha: commitTree } } });
   }
   if (value.endsWith(`/git/trees/${treeSha}?recursive=1`)) {
     return response({
       truncated: false,
       tree: [
         { path: "src/worker/index.ts", type: "blob", sha: "runtime-unchanged" },
+        { path: "migrations/auth/0013_faction_membership_verification.sql", type: "blob", sha: "migration-unchanged" },
+        { path: "scripts/replay-production-backup-migrations.py", type: "blob", sha: "replay-unchanged" },
         { path: ".github/workflows/restore-production-backup-rehearsal.yml", type: "blob", sha: "restore-new" },
       ],
     });
@@ -160,7 +178,18 @@ const fakeFetch = async url => {
       truncated: false,
       tree: [
         { path: "src/worker/index.ts", type: "blob", sha: "runtime-unchanged" },
+        { path: "migrations/auth/0013_faction_membership_verification.sql", type: "blob", sha: "migration-unchanged" },
+        { path: "scripts/replay-production-backup-migrations.py", type: "blob", sha: "replay-unchanged" },
         { path: ".github/workflows/restore-production-backup-rehearsal.yml", type: "blob", sha: "restore-old" },
+      ],
+    });
+  }
+  if (value.endsWith(`/git/trees/${"c".repeat(40)}?recursive=1`)) {
+    return response({
+      truncated: false,
+      tree: [
+        { path: "migrations/auth/0013_faction_membership_verification.sql", type: "blob", sha: "migration-unchanged" },
+        { path: "scripts/replay-production-backup-migrations.py", type: "blob", sha: "replay-unchanged" },
       ],
     });
   }
@@ -174,6 +203,8 @@ const verified = await verifyProductionCutoverEvidence(env, fakeFetch, now);
 assert.equal(verified.candidateCommit, candidate);
 assert.equal(verified.releaseCommit, release);
 assert.equal(verified.treeSha, treeSha);
+assert.equal(verified.restoreRehearsalCommit, restoreCandidate);
+assert.equal(verified.restoreMigrationReplayFilesCompared, 2);
 assert.equal(verified.stagingAcceptanceCommit, stagingRuntimeCommit);
 assert.equal(verified.stagingTreeSha, stagingTreeSha);
 assert.deepEqual(verified.stagingRuntimeEquivalentFiles, [".github/workflows/restore-production-backup-rehearsal.yml"]);
@@ -212,6 +243,23 @@ await assert.rejects(
   /Staging runtime equivalence check failed/
 );
 
+const changedMigrationFetch = async url => {
+  if (String(url).endsWith(`/git/trees/${"c".repeat(40)}?recursive=1`)) {
+    return response({
+      truncated: false,
+      tree: [
+        { path: "migrations/auth/0013_faction_membership_verification.sql", type: "blob", sha: "migration-stale" },
+        { path: "scripts/replay-production-backup-migrations.py", type: "blob", sha: "replay-unchanged" },
+      ],
+    });
+  }
+  return fakeFetch(url);
+};
+await assert.rejects(
+  verifyProductionCutoverEvidence(env, changedMigrationFetch, now),
+  /Restore rehearsal is stale; migration\/replay files changed after it ran/
+);
+
 const incompleteEvidenceFetch = async url => {
   if (String(url).includes("2026-11-17-pr152-bounded-staging-acceptance.md")) {
     return new Response(stagingEvidence.replace("0 D1 rows written", "1 D1 row written"), { status: 200 });
@@ -234,4 +282,4 @@ await assert.rejects(
   /Git tree does not exactly match/
 );
 
-console.log("PASS production cutover preflight: evidence references, backup and usage freshness, D1 reserve, explicit acknowledgements, exact restore commit, bounded staging evidence, allowed runtime-equivalent changes, and matching release tree.");
+console.log("PASS production cutover preflight: evidence references, backup and usage freshness, D1 reserve, explicit acknowledgements, unchanged rehearsed migration/replay tree, bounded staging evidence, allowed runtime-equivalent changes, and matching release tree.");
