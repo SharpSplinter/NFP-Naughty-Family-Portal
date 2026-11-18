@@ -2096,6 +2096,8 @@ try {
     assert.ok(workerSource.includes("const FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000"))
     assert.ok(workerSource.includes("schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0"))
     assert.ok(workerSource.includes("const FACTION_ROSTER_COLLECTION_INTERVAL_MS = 60 * 60 * 1000"))
+    assert.ok(workerSource.includes("const FACTION_ROSTER_COLLECTION_TICK_INTERVAL"))
+    assert.ok(workerSource.includes("schedulerBucket % FACTION_ROSTER_COLLECTION_TICK_INTERVAL === 0"))
     assert.ok(workerSource.includes("const FACTION_STATS_COLLECTION_INTERVAL_MS = 4 * 60 * 60 * 1000"))
     assert.ok(workerSource.includes("schedulerBucket % FACTION_STATS_COLLECTION_TICK_INTERVAL === 0"))
     assert.ok(workerSource.includes('enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", FACTION_ROSTER_COLLECTION_INTERVAL_MS)'))
