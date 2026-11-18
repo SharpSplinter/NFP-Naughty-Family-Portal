@@ -11,6 +11,7 @@ import { InsightsWorkspace } from "./insights-workspace"
 import { AlertsPanel, NotificationSettingsPanel } from "./alerts-panel"
 import { companyTypeIdFromProfile, estimateWeeklyProfit, financialCosts, formatMoney, formatNumber, getObject, pretty, reportedCompanyProfit, resolveDisplayedDailyProfit, stockPriceRows } from "./financial-utils"
 import { AccountSettingsWorkspace, FactionWorkspacePlaceholder, HalloweenWorkspace, PortalHome, PortalSetupWorkspace } from "../portal/workspaces"
+import { WorkspaceHeader, WorkspaceTabs } from "../portal/ui-primitives"
 import { ChristmasTownWorkspace } from "../portal/christmas-town"
 import { TrainingCalculatorWorkspace } from "../portal/training-calculator"
 import "../portal/workspaces.css"
@@ -1077,13 +1078,7 @@ export function FloorApp() {
     if (!isAdmin || demoMode) return <main className="module-page admin-portal-module"><section className="module-placeholder"><div className="portal-eyebrow"><span /> RESTRICTED WORKSPACE</div><h1>Administrator access required</h1><p>This workspace is available only to accounts with an active administrator role.</p><button type="button" className="portal-primary-button" onClick={() => navigateToPath("/")}>Return to portal →</button></section></main>
     return (
       <main className="module-page admin-portal-module">
-        <header className="module-topbar">
-          <a className="portal-brand" href="/" onClick={(event) => { event.preventDefault(); navigateToPath("/") }}>
-            <span className="portal-brand-mark">NF</span>
-            <span><strong>NAUGHTY FAMILY</strong><small>ADMINISTRATION PORTAL</small></span>
-          </a>
-          <button type="button" onClick={() => navigateToPath("/")}>← Return to portal</button>
-        </header>
+        <WorkspaceHeader brandSubtitle="ADMINISTRATION PORTAL" onNavigate={navigateToPath} />
         <section className="module-heading admin-portal-heading">
           <div className="portal-eyebrow"><span /> RESTRICTED ADMIN AREA</div>
           <h1>Administration <em>Portal</em></h1>
@@ -1130,16 +1125,24 @@ export function FloorApp() {
             <div><div className="portal-eyebrow"><span /> COMPANY INTELLIGENCE</div><h1>{activeView === "executive" ? "Executive Overview" : activeView === "health" ? "API Health & Data Freshness" : activeView === "trends" ? "Historical Trends and Comparisons" : activeView === "roster-insights" ? "Roster Insights" : activeView === "performance-insights" ? "Performance & Staffing Insights" : activeView === "layout" ? "Customizable Dashboard Layout" : activeView === "alerts" ? "Automation Center" : activeView === "overview" ? "Company Details" : activeView === "employees" ? "Employees" : activeView === "catalog" ? "Position Catalog" : activeView === "dashboard-members" ? "Dashboard Members" : activeView === "type-rankings" ? "Company Rankings" : activeView === "faction-rankings" ? "Faction Rankings" : activeView === "charts" ? "Trends & Charts" : activeView === "data-transfer" ? "Import / Export" : activeView === "data-sharing" ? "Data Sharing" : "Settings"}</h1><p className="subtitle">{activeView === "executive" ? "A decision-ready summary of performance, operational health, staffing, alerts, and competitive context." : activeView === "health" ? "Worker availability, database connectivity, and company data freshness in one place." : activeView === "trends" ? "Compare income, star rating, and roster size across historical snapshots." : activeView === "performance-insights" ? "Find material performance changes, evidence-based staffing reviews, and track follow-through." : activeView === "roster-insights" ? "Workforce capacity, role mix, employee skills, wages, and tenure for the selected company." : activeView === "layout" ? "Customize the dashboard-wide reading experience and separately arrange Executive Overview widgets." : activeView === "overview" ? "A focused view of company performance, income, and star-level progress." : activeView === "employees" ? "Employee details, role fit, and position projections in one dedicated workspace." : activeView === "catalog" ? "Explore role requirements across the Torn company ecosystem." : activeView === "dashboard-members" ? "Directory of dashboard accounts and their latest saved Torn company details." : activeView === "type-rankings" ? "Compare companies within the same Torn company type, ranked by weekly income." : activeView === "faction-rankings" ? "See all confirmed faction directors, including members who do not use this dashboard." : activeView === "charts" ? "Track daily income, profit, stock levels, and historical company performance." : activeView === "data-transfer" ? "Import legacy company history or export page-by-page JSON backups of your saved dashboard data." : activeView === "data-sharing" ? "Choose exactly which dashboard members can see your trends, financial details, and employee data." : "Manage your Torn API connection and saved company keys."}</p></div>
           </section>
 
-          <nav className="faction-workspace-tabs company-workspace-groups" aria-label="Company dashboard categories">
-            {companyNavigationGroups.map((group) => {
-              const selected = activeCompanyGroup?.key === group.key
-              return <button key={group.key} type="button" className={selected ? "active" : ""} aria-current={selected ? "page" : undefined} onClick={() => setActiveView(group.views[0].view)}>{group.label}</button>
-            })}
-          </nav>
+          <WorkspaceTabs
+            ariaLabel="Company dashboard categories"
+            className="faction-workspace-tabs company-workspace-groups"
+            items={companyNavigationGroups.map(group => ({ key: group.key, label: group.label }))}
+            activeKey={activeCompanyGroup?.key ?? ""}
+            onChange={key => {
+              const group = companyNavigationGroups.find(item => item.key === key)
+              if (group) setActiveView(group.views[0].view)
+            }}
+          />
           {activeCompanyGroup && activeCompanyGroup.views.length > 1 && (
-            <nav className="faction-workspace-tabs company-workspace-views" aria-label={activeCompanyGroup.label + " pages"}>
-              {activeCompanyGroup.views.map((item) => <button key={item.view} type="button" className={activeView === item.view ? "active" : ""} aria-current={activeView === item.view ? "page" : undefined} onClick={() => setActiveView(item.view)}>{item.label}</button>)}
-            </nav>
+            <WorkspaceTabs
+              ariaLabel={activeCompanyGroup.label + " pages"}
+              className="faction-workspace-tabs company-workspace-views"
+              items={activeCompanyGroup.views.map(item => ({ key: item.view, label: item.label }))}
+              activeKey={activeView}
+              onChange={key => setActiveView(key as typeof activeView)}
+            />
           )}
 
           {activeView === "alerts" && !demoMode ? (

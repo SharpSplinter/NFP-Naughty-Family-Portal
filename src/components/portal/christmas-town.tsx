@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { MetricCard, StatusBadge, WorkspaceHeader } from "./ui-primitives"
 import type { ChristmasTownItemMetric, ChristmasTownMetrics } from "../../lib/christmas-town/metrics"
 
 type ChristmasTownWorkspaceProps = {
@@ -128,7 +129,7 @@ function SeasonCollectionStatus({
       {seasons.map(season => (
         <div className="christmas-town-season-row" key={season.year}>
           <strong>{season.year} season</strong>
-          <span className={"christmas-town-state " + season.status.replace(/[^a-z_]/g, "")}>{season.status.replace(/_/g, " ")}</span>
+          <StatusBadge className={"christmas-town-state " + season.status.replace(/[^a-z_]/g, "")}>{season.status.replace(/_/g, " ")}</StatusBadge>
           <small>{season.job ? season.job.logsCollected.toLocaleString() + " logs · " + season.job.pagesCollected.toLocaleString() + " pages" : "Not collected"}</small>
         </div>
       ))}
@@ -327,13 +328,7 @@ export function ChristmasTownWorkspace({
 
   return (
     <main className="module-page christmas-town-module" aria-busy={busy}>
-      <header className="module-topbar">
-        <a className="portal-brand" href="/" onClick={event => { event.preventDefault(); onNavigate("/") }}>
-          <span className="portal-brand-mark">NF</span>
-          <span><strong>NAUGHTY FAMILY</strong><small>EVENT ARCHIVE</small></span>
-        </a>
-        <button type="button" onClick={() => onNavigate("/")}>← Return to portal</button>
-      </header>
+      <WorkspaceHeader brandSubtitle="EVENT ARCHIVE" onNavigate={onNavigate} />
 
       <section className="module-heading christmas-town-heading">
         <div className="portal-eyebrow"><span /> NAUGHTY SOULS · CHRISTMAS TOWN</div>
@@ -398,12 +393,12 @@ export function ChristmasTownWorkspace({
         </section>
       ) : metrics ? (
         <>
-          <section className="christmas-town-summary">
-            <article><small>DAYS</small><strong>{formatCount(metrics.days)}</strong><span>Across recorded activity</span></article>
-            <article><small>ITEMS</small><strong>{formatCount(metrics.totalItems)}</strong><span>{formatCount(metrics.totalPricedItems)} priced · {formatCount(metrics.unpricedItems)} without a quote</span></article>
-            <article className="christmas-town-summary-value"><small>ESTIMATED ITEM VALUE</small><strong>{estimateLabel}</strong><span>Priced reward items only</span></article>
-            <article><small>VALUE / DAY</small><strong>{formatMoney(metrics.estimatedValuePerDay)}</strong><span>Average across recorded days</span></article>
-            <article><small>VALUE / ITEM</small><strong>{formatMoney(metrics.estimatedValuePerItem)}</strong><span>Priceless / unpriced items excluded</span></article>
+          <section className="christmas-town-summary" aria-label="Christmas Town summary metrics">
+            <MetricCard label="DAYS" value={formatCount(metrics.days)} detail="Across recorded activity" />
+            <MetricCard label="ITEMS" value={formatCount(metrics.totalItems)} detail={formatCount(metrics.totalPricedItems) + " priced · " + formatCount(metrics.unpricedItems) + " without a quote"} />
+            <MetricCard className="christmas-town-summary-value" label="ESTIMATED ITEM VALUE" value={estimateLabel} detail="Priced reward items only" />
+            <MetricCard label="VALUE / DAY" value={formatMoney(metrics.estimatedValuePerDay)} detail="Average across recorded days" />
+            <MetricCard label="VALUE / ITEM" value={formatMoney(metrics.estimatedValuePerItem)} detail="Priceless / unpriced items excluded" />
           </section>
           {!allSelectedSeasonsComplete && <p className="christmas-town-coverage-note">PARTIAL HISTORY · The figures below include only currently collected records. Any zeroes in this range remain provisional until all listed Christmas Town seasons show Complete.</p>}
           <p className="christmas-town-provenance">{marketFreshness}. This estimate uses Torn's globally cached item-market average prices, not live player listings. Missing prices are excluded rather than treated as zero.</p>

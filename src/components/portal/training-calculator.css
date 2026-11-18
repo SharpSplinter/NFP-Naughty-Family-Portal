@@ -139,3 +139,6 @@
 @media(max-width:900px){.tc-profile-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.tc-profile-gym{grid-column:span 2}}
 @media(max-width:620px){.tc-profile-strip{gap:6px}.tc-profile-stat{padding:9px}.tc-history-panel{padding:14px}.tc-log-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 10px}.tc-log-date{grid-column:1;grid-row:1}.tc-log-summary{grid-column:1;grid-row:2}.tc-log-gain{grid-column:2;grid-row:1}.tc-log-after{grid-column:2;grid-row:2;text-align:right}.tc-history-heading{align-items:flex-start;flex-direction:column}.tc-history-heading>span{text-align:left}.tc-history-empty{align-items:stretch;flex-direction:column}.tc-history-empty .tc-secondary-button{width:100%}}
 @media(max-width:380px){.tc-profile-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.tc-profile-gym{grid-column:span 2}.tc-profile-stat>strong{font-size:11px}.tc-history-panel{padding:12px}.tc-train-table{font-size:8px}.tc-train-table td{padding:7px 5px}}
+
+/* Shared keyboard-focus treatment for the calculator's custom dark controls. */
+.training-calculator-page :is(button,a,input,select,textarea,[role="tab"],[tabindex="0"]):focus-visible{outline:2px solid #b7adff;outline-offset:3px}

@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react"
+import { WorkspaceTabs } from "./ui-primitives"
 import "./training-calculator.css"
 import { parseGymHistoryLog } from "../../lib/gym-training/history.js"
 import { estimateEnergyEquivalentGain } from "../../lib/gym-training/gains.js"
@@ -1045,18 +1046,20 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       </section>
       {apiError && <div className="tc-inline-warning" role="status">{apiError} Manual values remain editable while the connection is repaired.</div>}
 
-      <nav className="tc-tabs" aria-label="Training calculator sections">
-        {[
-          ["session", "01", "Gym trains"],
-          ["energy", "02", "Energy supply"],
-          ["happy", "03", "99K Happy Jump"],
-          ["enhancers", "04", "Stat enhancers"],
-          ["projection", "05", "Long-term plan"],
-        ].map(([key, number, label]) => (
-          <button key={key} type="button" data-testid={"training-tab-" + key} className={activeTab === key ? "is-active" : ""}
-            onClick={() => setActiveTab(key as TabKey)}><span>{number}</span>{label}</button>
-        ))}
-      </nav>
+      <WorkspaceTabs
+        ariaLabel="Training calculator sections"
+        className="tc-tabs"
+        activeClassName="is-active"
+        items={[
+          { key: "session", testId: "training-tab-session", label: <><span>01</span>Gym trains</> },
+          { key: "energy", testId: "training-tab-energy", label: <><span>02</span>Energy supply</> },
+          { key: "happy", testId: "training-tab-happy", label: <><span>03</span>99K Happy Jump</> },
+          { key: "enhancers", testId: "training-tab-enhancers", label: <><span>04</span>Stat enhancers</> },
+          { key: "projection", testId: "training-tab-projection", label: <><span>05</span>Long-term plan</> },
+        ]}
+        activeKey={activeTab}
+        onChange={key => setActiveTab(key as TabKey)}
+      />
 
       {activeTab === "session" && <main className="tc-layout">
         <div className="tc-results-column">
@@ -1077,7 +1080,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             </div>
             {gymTrainModifierBonuses.length > 0 && <div className="tc-inline-note"><strong>Live perk sources:</strong> {gymTrainModifierBonuses.join(" · ")}</div>}
           </Panel>
-          <Panel title="Projected daily energy supply" eyebrow="SEPARATE SUSTAINABILITY FORECAST" description="These daily averages are independent of the train count above. Current Energy is deliberately excluded, so zero current Energy does not block predictions.">
+          <Panel title="Gym-session daily supply estimate" eyebrow="GYM SCENARIO · SEPARATE DAILY MODEL" description="This recurring daily supply estimate belongs to the Gym Trains scenario. It is independent of the exact train count and separate from the Long-term Plan tab, which has its own stat, gym, duration and supply inputs. Current Energy is deliberately excluded.">
             <div className="tc-form-grid">
               <label className="tc-check-field"><input type="checkbox" data-testid="training-gym-mcs" checked={gymTrainMcsEnabled} onChange={event => setGymTrainMcsEnabled(event.target.checked)} />
                 <span><strong>MCS stock block benefit</strong><small>100E once per week, equivalent to 14.29E/day on average.</small></span>
@@ -1376,7 +1379,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
       {activeTab === "projection" && <main className="tc-layout">
         <div className="tc-results-column">
-          <Panel title="Long-term training plan" eyebrow="INDEPENDENT DAILY SUPPLY PROJECTION" description="Set the sustainable consumable usage you expect each day. This plan has its own gym, stat and energy supply assumptions.">
+          <Panel title="Long-term training plan" eyebrow="INDEPENDENT DAILY SUPPLY PROJECTION" description="Set the sustainable consumable usage you expect each day. This plan has its own gym, stat and energy assumptions and does not reuse the Gym Trains tab's daily supply inputs.">
             <div className="tc-form-grid">
               <label className="tc-field"><span>Projection stat</span><select data-testid="training-projection-stat" value={projectionStat} onChange={event => setProjectionStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
