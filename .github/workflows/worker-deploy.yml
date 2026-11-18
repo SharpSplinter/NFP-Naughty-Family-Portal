@@ -18,7 +18,7 @@ on:
         options:
           - I approve production D1 migrations and Worker deployment
       candidate_commit:
-        description: Exact portal-rebuild commit used by restore rehearsal and stateful staging acceptance
+        description: Exact release commit on main whose source tree is the production Worker candidate
         required: true
         type: string
       backup_reference:
