@@ -2093,6 +2093,8 @@ try {
     assert.doesNotMatch(workerSource, /TORN_FACTION_API_KEY/, "faction collections must use the shared Worker service secret rather than a separate legacy binding")
     assert.match(workerSource, /FACTION_PERFORMANCE_PAGE_SIZE = 5/)
     assert.match(workerSource, /collection_key/)
+    assert.ok(workerSource.includes("const FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000"))
+    assert.ok(workerSource.includes("schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0"))
     assert.ok(workerSource.includes("const FACTION_ROSTER_COLLECTION_INTERVAL_MS = 60 * 60 * 1000"))
     assert.ok(workerSource.includes("const FACTION_STATS_COLLECTION_INTERVAL_MS = 4 * 60 * 60 * 1000"))
     assert.ok(workerSource.includes("schedulerBucket % FACTION_STATS_COLLECTION_TICK_INTERVAL === 0"))
