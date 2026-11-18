@@ -333,6 +333,7 @@ export function FactionWorkspacePlaceholder(props: FactionWorkspaceProps) {
   const [tab, setTab] = useState<"weekly" | "live" | "activity" | "stats" | "directory">("weekly")
   return (
     <div className="faction-workspace-switcher">
+      <WorkspaceHeader brandSubtitle="FACTION WORKSPACE" onNavigate={props.onNavigate} />
       <WorkspaceTabs
         ariaLabel="Faction dashboard sections"
         className="faction-workspace-tabs"
@@ -1100,7 +1101,7 @@ function FactionLiveStatus({ playerName, onNavigate, apiBase, sessionToken }: Fa
           <div className="faction-live-search"><input aria-label="Search faction members" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search member, position, or Torn ID…" /><select aria-label="Filter live member status" value={filter} onChange={event => setFilter(event.target.value as FactionLiveFilter)}><option value="all">All members</option><option value="online">Online</option><option value="idle">Idle</option><option value="offline">Offline</option><option value="inactive24">Inactive 24h+</option><option value="inactive72">Inactive 72h+</option><option value="hospital">Hospital</option><option value="wall">On wall</option><option value="oc">In OC</option><option value="revivable">Key revivable (owner-specific)</option><option value="reviveEveryone">Revive setting: Everyone</option><option value="reviveFriendsFaction">Revive setting: Friends &amp; faction</option><option value="reviveNoOne">Revive setting: No one</option><option value="reviveUnknown">Revive setting: Unknown</option><option value="unknown">Unknown activity</option></select></div>
         </div>
         {busy && !payload ? <p className="historical-key-muted">Loading the latest roster snapshot…</p> : filtered.length ? (
-          <div className="historical-leaderboard faction-live-table-wrap">
+          <DataTableFrame className="historical-leaderboard faction-live-table-wrap" ariaLabel="Faction live member status table">
             <table><thead><tr><th>MEMBER</th><th>ACTIVITY</th><th>LAST ACTION</th><th>INACTIVITY</th><th>STATUS / TIMER</th><th>REVIVE SETTING</th><th>KEY REVIVABLE</th><th>FLAGS</th><th>VOLUNTARY LIVE DATA</th></tr></thead><tbody>
               {filtered.map(member => {
                 const actionMs = liveLastActionMs(member)
@@ -1134,8 +1135,8 @@ function FactionLiveStatus({ playerName, onNavigate, apiBase, sessionToken }: Fa
                 </tr>
               })}
             </tbody></table>
-          </div>
-        ) : <div className="historical-empty"><strong>{allMembers.length ? "No members match that filter." : "No completed faction roster is available."}</strong><span>{allMembers.length ? "Change the activity filter or search term." : "The scheduled roster collector will populate this view when its first full run succeeds."}</span></div>}
+          </DataTableFrame>
+        ) : <EmptyState className="historical-empty" title={allMembers.length ? "No members match that filter." : "No completed faction roster is available."} description={allMembers.length ? "Change the activity filter or search term." : "The scheduled roster collector will populate this view when its first full run succeeds."} />}
       </section>
       <footer className="module-footer"><span>LIVE FACTION MEMBER STATUS</span><span>Signed in as {playerName} · Public faction roster fields only</span></footer>
     </main>
