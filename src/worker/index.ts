@@ -712,6 +712,15 @@ type FactionPerformanceRunRow = {
 }
 
 const FACTION_PERFORMANCE_PAGE_SIZE = 5
+
+// Keep the five-minute scheduler for membership revalidation, weekly-boundary
+// retries, and seasonal event windows. The persistent history collectors are
+// deliberately slower to protect the account-wide D1 row-write budget.
+const FIVE_MINUTE_SCHEDULER_TICK_MS = 5 * 60 * 1000
+const FACTION_ROSTER_COLLECTION_INTERVAL_MS = 60 * 60 * 1000
+const FACTION_STATS_COLLECTION_INTERVAL_MS = 4 * 60 * 60 * 1000
+const FACTION_STATS_COLLECTION_TICK_INTERVAL =
+  FACTION_STATS_COLLECTION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
 const FACTION_PERFORMANCE_QUEUE_KIND = "faction-performance-collection"
 const FACTION_STATS_QUEUE_KIND = "faction-stats-collection"
 
@@ -858,7 +867,7 @@ async function enqueueOneFactionPerformanceRun(
 async function enqueueFactionStatsCollection(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
-  const intervalMs = 15 * 60 * 1000
+  const intervalMs = FACTION_STATS_COLLECTION_INTERVAL_MS
   const bucketStart = Math.floor(scheduledTime / intervalMs) * intervalMs
   const scheduledAt = new Date(bucketStart).toISOString()
   const collectionKey = `${NAUGHTY_SOULS_FACTION_ID}:faction_stats:${bucketStart}`
@@ -919,11 +928,11 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
   // Dedicated Cloudflare Worker secret. Never substitute a member login key.
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return 0
   let enqueued = 0
-  if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", 5 * 60 * 1000)) enqueued += 1
-  const fiveMinuteBucket = Math.floor(scheduledTime / (5 * 60 * 1000))
-  if (fiveMinuteBucket % 3 === 0) {
-    if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "personalstats", 15 * 60 * 1000)) enqueued += 1
-    if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "gym_energy", 15 * 60 * 1000)) enqueued += 1
+  if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "roster", FACTION_ROSTER_COLLECTION_INTERVAL_MS)) enqueued += 1
+  const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
+  if (schedulerBucket % FACTION_STATS_COLLECTION_TICK_INTERVAL === 0) {
+    if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "personalstats", FACTION_STATS_COLLECTION_INTERVAL_MS)) enqueued += 1
+    if (await enqueueOneFactionPerformanceRun(env, scheduledTime, "gym_energy", FACTION_STATS_COLLECTION_INTERVAL_MS)) enqueued += 1
     if (await enqueueFactionStatsCollection(env, scheduledTime)) enqueued += 1
   }
   return enqueued
@@ -6529,8 +6538,10 @@ async function handleAdminRequest(
 }
 
 async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number): Promise<void> {
-  // Membership checks, faction performance collection and Halloween snapshots
-  // are isolated: one source outage must not suppress the other scheduled work.
+  // This dispatcher remains on a five-minute clock for membership checks,
+  // weekly-boundary retries, and seasonal event windows. Heavy roster history
+  // is hourly; personalstats, gym energy, and faction stats are every four hours.
+  // One source outage must not suppress the other scheduled work.
   try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
   try { await enqueueFactionPerformanceCollections(env, scheduledTime) } catch { /* Idempotent schedule buckets retry on a later tick. */ }
   try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* The unique Sunday boundary is retried on a later five-minute tick. */ }
