@@ -2444,9 +2444,11 @@ try {
     assert.match(migrationSource, /ALTER TABLE admin_jobs ADD COLUMN job_payload_json TEXT/)
   })
 
-  await test("stock difference uses saved daily trend records instead of imported chart archive", () => {
+  await test("official stock differences require lock-ins and weekly profit falls back to reported values", () => {
     const uiSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
+    const chartSource = readFileSync(join(root, "src/components/floor/chart-utils.tsx"), "utf8")
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    const companyHistorySource = readFileSync(join(root, "src/worker/company-history.ts"), "utf8")
     assert.match(workerSource, /PARTITION BY date\(fetched_at, '-18 hours'\)/)
     assert.match(workerSource, /fetchedAtMs - 18 \* 60 \* 60 \* 1000/)
     assert.ok(uiSource.includes("/api/me/companies/\u0024{encodeURIComponent(companyId)}/history?days=all"))
@@ -2454,6 +2456,11 @@ try {
     assert.match(uiSource, /const stockDifference = currentOfficialStockSnapshot\?\.stockQuantity != null && previousStockSnapshot\?\.stockQuantity != null/)
     assert.match(uiSource, /missingStockSnapshotDays\.join\(" and "\)/)
     assert.doesNotMatch(uiSource, /const officialStockSnapshots = \(currentChartCompany\?\.history \?\? \[\]\)/)
+    assert.match(uiSource, /reportedWeeklyProfit: numberOrNull\(record\.reportedWeeklyProfit\)/)
+    assert.match(uiSource, /currentOfficialProfitPoint\?\.weeklyProfit[\s\S]*currentOfficialProfitPoint\?\.reportedWeeklyProfit/)
+    assert.match(chartSource, /point\.reportedWeeklyProfit/)
+    assert.match(companyHistorySource, /const weeklyProfit = reconstructedWeeklyProfit \?\? reported/)
+    assert.match(companyHistorySource, /reported !== null \? "reported" : "incomplete"/)
   })
 
   await test("scheduled automation records stale-rule and digest delivery failures for dashboard visibility", () => {
