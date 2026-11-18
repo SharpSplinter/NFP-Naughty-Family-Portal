@@ -673,11 +673,11 @@ export function FloorApp() {
     ?? latestReportedWeeklyProfit
   const weeklyProfitSourceNote = currentOfficialProfitPoint?.weeklyProfitSource === "reconstructed"
     ? "Reconstructed from seven daily income, advertising, wage and stock-order records."
-    : currentOfficialProfitPoint?.weeklyProfitSource === "reported"
+    : currentOfficialProfitPoint?.weeklyProfitSource === "reported" || reportedWeeklyProfit !== null
       ? "Reported weekly profit returned by Torn."
-      : weeklyProfit !== null && estimatedWeeklyProfit !== null
+      : estimatedWeeklyProfit !== null
         ? "Reconstructed from seven complete daily expense records."
-        : weeklyProfit !== null && latestReportedWeeklyProfit !== null
+        : latestReportedWeeklyProfit !== null
           ? "Latest available historical reported weekly profit."
           : "Requires seven complete daily records or a reported weekly-profit value."
   const monthlyProfit = archivedMonthProfit.length
