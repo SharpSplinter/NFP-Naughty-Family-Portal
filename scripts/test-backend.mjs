@@ -457,7 +457,7 @@ try {
     assert.equal(classifyFactionInactivity(1_800_000_000, "not-a-date").classification, "unknown")
   })
 
-  await test("rolling weekly profit requires seven consecutive complete daily-profit records", () => {
+  await test("rolling weekly profit reconstructs complete windows and falls back to reported totals", () => {
     const start = Date.parse("2026-11-06T00:00:00.000Z")
     const complete = Array.from({ length: 8 }, (_, index) => ({ day: new Date(start + index * 86400000).toISOString().slice(0, 10), dailyProfit: (index + 1) * 10, reportedWeeklyProfit: null }))
     const rolling = withRollingWeeklyProfit(complete)
@@ -473,6 +473,12 @@ try {
     assert.equal(missingDay.find(point=>point.day==="2026-11-12")?.weeklyProfit,null)
     const missingProfit=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-09"?{...point,dailyProfit:null}:point))
     assert.equal(missingProfit.find(point=>point.day==="2026-11-12")?.weeklyProfit,null)
+    const reportedFallback=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-13"?{...point,dailyProfit:null,reportedWeeklyProfit:777}:point))
+    assert.equal(reportedFallback[7].weeklyProfit,777)
+    assert.equal(reportedFallback[7].weeklyProfitSource,"reported")
+    assert.equal(reportedFallback[7].weeklyProfitReconciliationDelta,null,"a reported fallback must not imply a completed reconstruction")
+    const zeroReportedFallback=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-13"?{...point,dailyProfit:null,reportedWeeklyProfit:0}:point))
+    assert.equal(zeroReportedFallback[7].weeklyProfit,0,"a reported zero is a valid value, not missing data")
     const reconciled=withRollingWeeklyProfit(complete.map(point=>point.day==="2026-11-12"?{...point,reportedWeeklyProfit:300}:point))
     assert.equal(reconciled[6].weeklyProfitReconciliationDelta,20)
   })
