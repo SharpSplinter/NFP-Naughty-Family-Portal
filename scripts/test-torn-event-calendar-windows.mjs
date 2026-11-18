@@ -28,7 +28,7 @@ const recordedWindowsStart = worker.indexOf("async function loadRecordedHallowee
 const recordedWindowsEnd = worker.indexOf("async function loadHalloweenAllTimeArchive", recordedWindowsStart)
 const recordedWindowsLoader = worker.slice(recordedWindowsStart, recordedWindowsEnd)
 assert.ok(recordedWindowsStart >= 0 && recordedWindowsEnd > recordedWindowsStart)
-assert.doesNotMatch(recordedWindowsLoader, /\\b(?:INSERT|UPDATE|DELETE|REPLACE)\\b|\\.run\\(|\\.batch\\(/i,
+assert.doesNotMatch(recordedWindowsLoader, /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b|\.run\(|\.batch\(/i,
   "Historical event-window reads must not write or seed D1 rows.")
 assert.match(recordedWindowsLoader, /historical_collection_enabled AS historicalCollectionEnabled/)
 assert.match(recordedWindowsLoader, /existingYears\.has\(year\)/,
@@ -50,12 +50,12 @@ const halloweenSchedulerEnd = worker.indexOf("async function markAdminFactionDir
 const halloweenScheduler = worker.slice(halloweenSchedulerStart, halloweenSchedulerEnd)
 assert.equal((halloweenScheduler.match(/db\.prepare\(/g) || []).length, 1,
   "The five-minute Halloween eligibility scan must use one set-based D1 SELECT, not per-member SELECTs.")
-assert.match(halloweenScheduler, /WITH params AS[\\s\\S]*member_windows AS[\\s\\S]*member_buckets AS[\\s\\S]*member_state AS[\\s\\S]*scheduled_candidates AS/,
+assert.match(halloweenScheduler, /WITH params AS[\s\S]*member_windows AS[\s\S]*member_buckets AS[\s\S]*member_state AS[\s\S]*scheduled_candidates AS/,
   "Halloween scheduler eligibility must be computed set-wise in SQL.")
 assert.match(halloweenScheduler, /opening\.event_year = b\.event_year AND opening\.player_id = b\.player_id/)
 assert.match(halloweenScheduler, /periodic\.event_year = b\.event_year AND periodic\.player_id = b\.player_id/)
 assert.match(halloweenScheduler, /closing\.event_year = b\.event_year AND closing\.player_id = b\.player_id/)
-assert.doesNotMatch(halloweenScheduler, /for \\(const member of members\\.results/)
+assert.doesNotMatch(halloweenScheduler, /for \(const member of members\.results/)
 
 const halloweenEnqueueStart = worker.indexOf("async function enqueueHalloweenLiveSnapshot")
 const halloweenEnqueueEnd = worker.indexOf("async function enqueueScheduledHalloweenSnapshots", halloweenEnqueueStart)
