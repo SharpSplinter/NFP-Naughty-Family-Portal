@@ -27,6 +27,9 @@ assert.match(workflow, /inputs\.backup_sha256/);
 assert.match(workflow, /inputs\.d1_usage_checked_at/);
 assert.match(workflow, /inputs\.restore_rehearsal_run_url/);
 assert.match(workflow, /inputs\.staging_acceptance_run_url/);
+assert.match(workflow, /inputs\.staging_acceptance_commit/);
+assert.match(workflow, /inputs\.staging_acceptance_evidence_reference/);
+assert.match(restoreWorkflow, /github\.ref == 'refs\/heads\/main'/, "The local-only restore rehearsal must support exact main release commits.");
 const preflightPosition = workflow.indexOf("node scripts/production-cutover-preflight.mjs");
 const firstCloudflarePosition = workflow.indexOf("uses: cloudflare/wrangler-action@v4");
 assert.ok(preflightPosition >= 0 && firstCloudflarePosition > preflightPosition,
@@ -35,8 +38,20 @@ assert.match(workflow, /confirm_target == 'naughtyfamily-api'/);
 
 const now = new Date("2026-11-17T04:00:00.000Z");
 const candidate = "8e34071abe0f570a171cfe919ddbc16a92b689ab";
+const stagingRuntimeCommit = "f25c2980d186124441baf84184e90a3942b25ef4";
 const release = "451869f0ae3ba7ae37aeca4d15ac34680d74ab6c";
 const treeSha = "a".repeat(40);
+const stagingEvidenceReference = "https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/main/docs/audits/2026-11-17-pr152-bounded-staging-acceptance.md";
+const stagingEvidence = [
+  "# PR #152 bounded staging acceptance",
+  `Runtime source SHA: \`${stagingRuntimeCommit}\``,
+  "268 D1 rows read",
+  "0 D1 rows written",
+  "3 billable Queue operations",
+  "1 synthetic no-op message",
+  "DLQ messages: 0",
+  "No production D1, Worker, Pages, Torn, or Queue resource was accessed.",
+].join("\n");
 
 function validEnv() {
   return {
@@ -58,7 +73,8 @@ function validEnv() {
     RESTORE_REHEARSAL_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/104",
     RESTORE_REHEARSAL_COMMIT: candidate,
     STAGING_ACCEPTANCE_RUN_URL: "https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/105",
-    STAGING_ACCEPTANCE_COMMIT: candidate,
+    STAGING_ACCEPTANCE_COMMIT: stagingRuntimeCommit,
+    STAGING_ACCEPTANCE_EVIDENCE_REFERENCE: stagingEvidenceReference,
     CANDIDATE_COMMIT: candidate,
     GITHUB_REPOSITORY: "SharpSplinter/Naughty-Company-Dashboard",
     GITHUB_REF: "refs/heads/main",
@@ -120,10 +136,25 @@ const fakeFetch = async url => {
     return response({ ...successfulRun, path: ".github/workflows/restore-production-backup-rehearsal.yml" });
   }
   if (value.endsWith("/actions/runs/105")) {
-    return response({ ...successfulRun, path: ".github/workflows/deploy-staging-acceptance.yml" });
+    return response({
+      ...successfulRun,
+      head_sha: stagingRuntimeCommit,
+      path: ".github/workflows/worker-build-artifact.yml",
+    });
   }
-  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`)) {
-    return response({ commit: { tree: { sha: treeSha } } });
+  if (value.endsWith(`/compare/${stagingRuntimeCommit}...${candidate}`)) {
+    return response({
+      status: "ahead",
+      ahead_by: 2,
+      behind_by: 0,
+      files: [{ filename: ".github/workflows/restore-production-backup-rehearsal.yml" }],
+    });
+  }
+  if (value.endsWith(`/commits/${candidate}`) || value.endsWith(`/commits/${release}`) || value.endsWith(`/commits/${stagingRuntimeCommit}`)) {
+    return response({ commit: { tree: { sha: value.endsWith(stagingRuntimeCommit) ? "b".repeat(40) : treeSha } } });
+  }
+  if (value === "https://raw.githubusercontent.com/SharpSplinter/Naughty-Company-Dashboard/main/docs/audits/2026-11-17-pr152-bounded-staging-acceptance.md") {
+    return new Response(stagingEvidence, { status: 200, headers: { "content-type": "text/plain" } });
   }
   return response({ message: "not found" }, 404);
 };
@@ -132,17 +163,52 @@ const verified = await verifyProductionCutoverEvidence(env, fakeFetch, now);
 assert.equal(verified.candidateCommit, candidate);
 assert.equal(verified.releaseCommit, release);
 assert.equal(verified.treeSha, treeSha);
+assert.equal(verified.stagingAcceptanceCommit, stagingRuntimeCommit);
+assert.equal(verified.stagingTreeSha, "b".repeat(40));
+assert.deepEqual(verified.stagingRuntimeEquivalentFiles, [".github/workflows/restore-production-backup-rehearsal.yml"]);
 assert.equal(verified.d1RowsRead, 3500000);
 
 const failedAcceptanceFetch = async url => {
   if (String(url).endsWith("/actions/runs/105")) {
-    return response({ ...successfulRun, conclusion: "failure", path: ".github/workflows/deploy-staging-acceptance.yml" });
+    return response({
+      ...successfulRun,
+      head_sha: stagingRuntimeCommit,
+      conclusion: "failure",
+      path: ".github/workflows/worker-build-artifact.yml",
+    });
   }
   return fakeFetch(url);
 };
 await assert.rejects(
   verifyProductionCutoverEvidence(env, failedAcceptanceFetch, now),
-  /Stateful staging acceptance must be a completed successful/
+  /Staging Worker deployment must be a completed successful/
+);
+
+const changedRuntimeFetch = async url => {
+  if (String(url).includes(`/compare/${stagingRuntimeCommit}...${candidate}`)) {
+    return response({
+      status: "ahead",
+      ahead_by: 3,
+      behind_by: 0,
+      files: [{ filename: "src/worker/index.ts" }],
+    });
+  }
+  return fakeFetch(url);
+};
+await assert.rejects(
+  verifyProductionCutoverEvidence(env, changedRuntimeFetch, now),
+  /Staging runtime equivalence check failed/
+);
+
+const incompleteEvidenceFetch = async url => {
+  if (String(url).includes("2026-11-17-pr152-bounded-staging-acceptance.md")) {
+    return new Response(stagingEvidence.replace("0 D1 rows written", "1 D1 row written"), { status: 200 });
+  }
+  return fakeFetch(url);
+};
+await assert.rejects(
+  verifyProductionCutoverEvidence(env, incompleteEvidenceFetch, now),
+  /Committed bounded staging acceptance evidence is incomplete/
 );
 
 const mismatchedTreeFetch = async url => {
@@ -156,4 +222,4 @@ await assert.rejects(
   /Git tree does not exactly match/
 );
 
-console.log("PASS production cutover preflight: evidence references, backup and usage freshness, D1 reserve, explicit acknowledgements, exact tested commit, successful restore/staging runs, and matching release tree.");
+console.log("PASS production cutover preflight: evidence references, backup and usage freshness, D1 reserve, explicit acknowledgements, exact restore commit, bounded staging evidence, allowed runtime-equivalent changes, and matching release tree.");
