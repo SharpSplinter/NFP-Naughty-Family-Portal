@@ -1,11 +1,25 @@
 # Production backup, migration, rollback and cutover review
 
 **Original review date:** 2026-11-03  
-**State refresh:** 2026-11-17 UTC (production legacy Pages API wiring repair, portal Pages-only staging publication, current PR/base relationship and release blockers refreshed)
+**State refresh:** 2026-11-18 UTC (exact-candidate CI, Pages-only staging publication, local SQLite backup-replay result, focused security/correctness review, and current release gates reconciled)
 **Scope:** PR #152, branch `portal-rebuild`  
-**Decision:** **NO-GO for production cutover at this review.** The production Time Travel current bookmark and live D1/Worker/Pages baseline have been rechecked, and the release workflow/configuration safeguards are present. PR #152 remains OPEN/DRAFT with no submitted GitHub review approvals. The latest Halloween/Revitalize changes have not had a functional staging acceptance run on the current release candidate, production service-key fallback acceptance remains to be confirmed, and explicit approval to merge/deploy has not been given. This review performs no production mutation.
+**Decision:** **NO-GO for production cutover.** PR #152 remains OPEN/DRAFT, with no independent approving review recorded and no approval to merge or deploy. Exact-candidate offline checks, Pages-only staging publication, and the local SQLite backup/migration rehearsal have passed on `082e61136e4f3286f47a63f64b68792753ce11b5`. Stateful D1/Queue staging acceptance has **not** been run on that SHA. The production service-key permission is owner-confirmed, not independently probed. The focused review below also identifies scheduler query amplification that should be addressed or explicitly bounded before any D1-consuming acceptance. No production resource was changed.
 
 **2026-11-13 baseline update:** PR #155 merged at `f0420232231fa9708cece921a4fd5921eaad8e71`. Its production Worker deployment succeeded, migration `0012_company_ranking_snapshots.sql` was applied, and the existing `naughty-company-dashboard` Pages site was manually deployed from Android. The owner confirmed Trends & Charts displays the correct data. This does **not** deploy the Naughty Family portal branch or authorize its remaining migrations.
+
+## Current release-candidate status (authoritative, 2026-11-18 UTC)
+
+This is the controlling status snapshot for the current candidate. Dated sections below retain their historical evidence and decisions; where their status statements conflict with this section, this section takes precedence. Sections 9, 24, and 25 describe older gate snapshots, not the current candidate state.
+
+- **Candidate:** `portal-rebuild` / PR #152, exact HEAD `082e61136e4f3286f47a63f64b68792753ce11b5`. The branch matches the PR head and remains OPEN/DRAFT.
+- **Exact-SHA offline checks:** Quality Gates [#44209534053](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209534053), [#44209526595](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209526595), Seasonal UI / UX browser audit [#44209526499](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209526499), and Discord Bot Quality Gates [#44209534016](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209534016) all passed on this exact SHA.
+- **Staging Pages-only publication:** [#44209816972](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44209816972) passed on this exact SHA and published [the immutable staging Pages deployment](https://a3763cc7.naughtyfamily-staging.pages.dev). It did not deploy/call the staging Worker, read or write D1, apply migrations, or use Queues.
+- **Production backup rehearsal:** [#44210665274](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44210665274) passed on this exact SHA using local SQLite on an ephemeral GitHub runner. It decrypted and replayed the encrypted production export plus migrations `0013`–`0037`; SQLite integrity was `ok`, there were zero foreign-key violations, and the expected existing tables were preserved. This was **not** a Cloudflare D1 restore or staging integration and did not contact Cloudflare, Torn, or Queues.
+- **Stateful staging acceptance:** **NOT RUN on this exact SHA.** The earlier Halloween acceptance [#44203293682](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203293682) tested the older SHA `e20add2b80312f07d32036f677f2ec6ea4b8ff0a`; its pass is historical evidence only and must not be represented as acceptance of `082e611`. The current candidate has not been exercised against staging D1/Queue integration.
+- **Read-only account-wide D1 snapshot:** Cloudflare Insights for 2026-11-18 00:00:00–00:38:57.832 UTC showed 9,116 rows read and 428 rows written across the account. Against the observed Free-plan daily allowances of 5,000,000 rows read and 100,000 rows written, that left 4,990,884 read and 99,572 written at that timestamp. This is a point-in-time snapshot, **not** a forward reserve or permission to spend quota; account analytics have under-reported direct Wrangler reads in prior observations, so any future acceptance must also preserve its local per-operation meter and hard-stop arithmetic.
+- **Production service key:** On 2026-11-17 the owner confirmed that `TORN_API_KEY_SERVICE` is Full Access and has the permissions needed for shared faction roster, user-job, and company-profile requests. This is owner attestation, not a live `/key/info` probe. The secret value was not read or disclosed.
+- **Still required before any production cutover:** exact-candidate stateful acceptance only after an explicit, budgeted decision; final review of the production Queue binding/configuration diff; independent approval of the latest PR push and required conversation resolution; fresh verification of protected Environment/branch controls; a fresh production Time Travel bookmark and backup-access/checksum check immediately before migration; and explicit owner authorization for merge, production migrations/Worker deployment, and the separate `naughtyfamily` Pages production publication.
+- **Quota decision:** Do not dispatch stateful staging acceptance yet. The focused review in Section 27 identifies avoidable five-minute scheduler reads and an event-window N+1 query pattern. Resolve or explicitly contain those risks, define a small suite-specific D1/Queue budget and hard stop, and obtain the user's explicit go-ahead before any stateful acceptance.
 
 ## 1. Acceptance status
 
@@ -42,7 +56,7 @@ The intended PR #152 authorization flow is:
 
 **Operational consequence:** The new Torn-identity/administrator-registry flow cannot provide production admin access until the portal D1 migrations (including `0012_administrator_registry.sql`), the portal Worker, and the `naughtyfamily` Pages frontend are deployed together. Until then, production continues to use the legacy administrator credential step-up, which the owner reports is currently unusable. Staging acceptance of the new role flow is not proof that production has switched over.
 
-Do not attempt to work around production authorization, alter production administrator records, or change production secrets as an interim fix. A full production D1 export backup and isolated data restore rehearsal have completed successfully; the exact backup/checksum and rehearsal results are recorded in Section 6. The current Time Travel bookmark was re-read at 2026-11-14 04:23:12.859 UTC and recorded below. Re-read the current bookmark again immediately before migration if any writes, maintenance-driven bookmark advance, or meaningful delay occurs. The cutover remains paused pending final feature-level staging acceptance, confirmation of the production service-key fallback, explicit release approval, and the operator-ready migration/deployment window. Production remains unchanged.
+Do not attempt to work around production authorization, alter production administrator records, or change production secrets as an interim fix. A full production D1 export backup and isolated restore rehearsal have completed successfully; the exact backup/checksum and rehearsal results are recorded in Section 6 and the exact-candidate local replay is recorded in the current status above. The last recorded Time Travel bookmark was re-read at 2026-11-14 04:23:12.859 UTC; it is historical and must be re-read immediately before any approved migration. The production service-key permission is now owner-confirmed Full Access (2026-11-17), but no live key-info probe was performed. Cutover remains paused pending exact-candidate stateful acceptance if explicitly authorized, Queue binding/config review, independent PR approval, and explicit release approval. Production remains unchanged.
 
 ## 3. Verified production baseline
 
@@ -263,7 +277,7 @@ Prefer forward fixes for schema/application defects. If restoring is unavoidable
 
 Do not run a restore or overwrite production D1 as part of a routine application rollback.
 
-## 9. Remaining production gates
+## 9. Remaining production gates (historical snapshot; superseded by the 2026-11-18 current status above)
 
 - [x] Operator-confirmed real-key permission/consent acceptance for private bars/cooldowns, optional detailed networth, and Halloween historical summaries/logs, as recorded in the PR's validation history. This does not replace the staging functional acceptance still required for the latest Halloween dashboard changes.
 - [x] Admin/non-admin end-to-end acceptance on the isolated staging Worker/D1/Pages environment, including the synthetic administrator and denied non-admin paths. Production authorization has not been switched.
@@ -755,7 +769,7 @@ The old missing-archive blocker is resolved: a current export exists and migrati
 The export did not update production data. No D1 migrations, Worker deployment, Queue provisioning/configuration/message operations, Pages deployment, or secret changes were performed. The only production D1 data operation in this step was the requested export.
 
 
-## 24. 2026-11-17 staging parity and live D1 accounting verification
+## 24. 2026-11-17 staging parity and live D1 accounting verification (historical snapshot; exact-candidate results updated above)
 
 ### Staging release candidate and deployment parity
 
@@ -791,11 +805,11 @@ A read-only Workers Observability query filtered to `naughtyfamily-api-staging` 
 No production D1 migration, production Worker or Pages deployment, production secret mutation, Queue operation, PR merge, or release-state transition was performed for this update. The staging Pages publication itself performed no D1 or Queue operation. Do not convert this review to GO until every required evidence gate is freshly satisfied and the owner explicitly approves release.
 
 
-## 25. 2026-11-17 current-candidate stateful acceptance, quota evidence, and service-key owner confirmation
+## 25. 2026-11-17 prior-candidate stateful acceptance, quota evidence, and service-key owner confirmation (historical; not current-candidate acceptance)
 
 ### Exact-candidate verification
 
-The latest candidate is `e20add2b80312f07d32036f677f2ec6ea4b8ff0a` on `portal-rebuild`.
+The candidate tested by the following 2026-11-17 runs was `e20add2b80312f07d32036f677f2ec6ea4b8ff0a`. It is an older SHA, not the current release candidate `082e61136e4f3286f47a63f64b68792753ce11b5`.
 
 - Offline production-backup migration rehearsal [#44203252030](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203252030) completed successfully against this exact candidate.
 - The single-suite stateful staging acceptance [#44203293682](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203293682) completed successfully against the same exact candidate.
@@ -877,8 +891,34 @@ The scheduler implementation and cadence contract were verified on code commit `
 
 These were offline repository/local-preview checks. They did not run stateful acceptance, access production or staging D1, or send/receive/acknowledge/retry/purge/replay Queue messages. The first quality-gate attempt on the initial throttle commit failed only because a source-contract assertion still expected the previous 15-minute scheduler expression; the cadence assertions were corrected and the later runs passed.
 
-The latest branch also contains a documentation-only update clarifying the staging Cron omission. Because the latest branch SHA therefore differs from the code SHA used by the successful runs, exact-candidate production restore and stateful staging evidence must be refreshed on the final release-candidate SHA before the production preflight.
+The latest branch also contains a documentation-only update clarifying the staging Cron omission. The exact-SHA local SQLite restore rehearsal has since passed on `082e61136e4f3286f47a63f64b68792753ce11b5` in [run #44210665274](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44210665274). Stateful staging D1/Queue acceptance remains outstanding on that exact SHA.
 
 ### Release boundary
 
-**The five-minute Cron discrepancy is resolved in the release candidate's code/configuration and the account has capacity for it. The trigger is not yet active on production.** Do not mutate Cloudflare schedules directly. It will be applied with the matching Worker code via Wrangler in the separately authorized production deployment. Production remains **NO-GO** until fresh account-wide D1 evidence and reserve, exact-candidate restore/staging evidence, PR review, and explicit production deployment authorization are all satisfied. No production resource was changed while resolving this schedule.
+**The five-minute Cron discrepancy is resolved in the release candidate's code/configuration and the trigger is not yet active on production.** Do not mutate Cloudflare schedules directly. It will be applied with the matching Worker code via Wrangler in a separately authorized production deployment. The exact-SHA local SQLite backup/migration rehearsal has now passed, but exact-SHA stateful staging acceptance remains outstanding. Production remains **NO-GO** until quota risks in Section 27 are addressed or explicitly budgeted, any approved stateful staging acceptance completes, fresh production D1 evidence and reserve are established, PR review/approval is complete, and production deployment is explicitly authorized. No production resource was changed while resolving this schedule.
+
+
+## 27. 2026-11-18 focused security/correctness review (candidate `082e61136e4f3286f47a63f64b68792753ce11b5`)
+
+**Method:** Read-only source review of the exact candidate. Scope included session/admin authorization, primary-key encryption and replacement, policy consent, private-data visibility, historical Queue consumers, faction membership cleanup, private-live routes, D1 read caching/accounting, weekly scheduler, and event-window scheduler. No Worker/API calls, D1 queries, migrations, Queue operations, Cloudflare mutations, or production access were performed for this review. This is a focused code review, not a full penetration test or an independent GitHub approval.
+
+### Security and correctness observations
+
+- **Authentication and admin roles:** Bearer tokens are hashed before session lookup. The authenticated player is joined to the active administrator registry; revoked roles do not authenticate as administrators. Disabled accounts are rejected. Faction membership is periodically revalidated, with outage grace bounded to the last successful verification; confirmed departures revoke admin rights, remove sessions and sensitive credentials, and fail closed if cleanup is incomplete. Admin grant requires a recently verified active member; revocation protects the last active administrator.
+- **Credential handling:** Member Torn keys are encrypted with AES-GCM and a fresh 12-byte IV. Key consent is tied to a fingerprint of the saved encrypted envelope, so replacing or deleting the primary key invalidates the prior authorization. Replacement/deletion clears private-live credentials/snapshots, faction capability cache, feature collector registrations, and queued/running collection jobs. Secondary company keys are retained unless they are actually the old primary key.
+- **Consent and visibility:** The portal-wide gate requires current policy/version, explicit primary-key authorization, access-type declaration, and a fingerprint matching the current saved key. The UI explicitly explains that supported history imports start automatically after policy acknowledgement and key authorization; Halloween history/live bars and cooldowns follow the single visibility selection, while Gym Training and Christmas Town history remain private and detailed networth is a separate opt-in. The server normalizes unknown visibility values to `self`.
+- **Private-data enforcement:** Halloween leaderboard rows are filtered by each owner's visibility. Detail routes recheck the same rule. `faction_access` requires the viewer's own saved Torn key to be owner-matched and to return explicit faction capability from `/v2/key/info`; an unavailable or invalid result fails closed. Private-live connection/refresh uses the authenticated member's saved key, checks owner identity on connection, requires central faction visibility, applies an atomic 30-second request throttle, and removes snapshots/connection data when sharing is disabled or explicitly disconnected.
+- **Queued collection correctness:** The reviewed historical collection consumers check terminal job state, central history authorization, disabled-account status, current saved key and faction membership before continuing. Key replacement/deletion cancels active jobs and deletes feature key registrations. Queue retries use bounded delays and terminal states; no broad unbounded historical scan was introduced by the reviewed collector paths.
+- **Data-shape handling:** Private-live parsers keep only recognized finite numeric fields. Faction response parsers deduplicate and validate IDs/metrics, and preserve missing/unexpected-field metadata. Weekly calculations use UTC boundaries and avoid turning missing or decreasing counters into fabricated positive deltas.
+- **D1 caching/accounting:** Daily caching is restricted to an allow-list of immutable, completed daily snapshot tables, rejects dynamic/unknown SQL and empty results, and has bounded local/KV entry sizes. Request accounting wraps D1 operations, tracks missing metrics and unsupported operations, and waits for tracked background tasks before emitting its record.
+
+No Critical or High severity authorization/credential exposure issue was identified in this focused slice. That finding is deliberately limited to the paths reviewed and does not replace an independent review of the entire PR.
+
+### Findings to resolve or budget before stateful staging
+
+1. **Medium — five-minute scheduler query amplification.** `runFiveMinuteScheduledJobs` invokes weekly boundary enqueue and report finalization on every five-minute tick. Once a boundary exists, the enqueue path reads the boundary plus both run statuses each tick; the finalizer also reads the report state each tick. At 288 ticks/day, that is up to four recurring SELECT statements per tick (about 1,152 statement executions/day) before retries or event work; this is a query-count estimate, not a D1 rows-read estimate. During a `live_collection_enabled` Halloween window, `enqueueScheduledHalloweenSnapshots` also iterates every eligible member event slot and issues per-member opening, in-window last-snapshot, and closing lookups. That is an N+1 pattern with no explicit batch/cursor cap. Recommend a set-based eligibility query or bounded cursor/batch and a lower polling cadence for weekly state once timing permits. Add a source-contract test for the cap and cadence.
+2. **Low/Medium — write-on-read historical event-window seeding.** `loadRecordedHalloweenEventWindows` is called from read routes but inserts fallback historical event-window rows with `INSERT OR IGNORE` for each prior year before selecting them. The inserts are idempotent and mostly one-time per missing year, so this is not an unbounded recurring write stream; nevertheless a GET path can perform D1 writes and repeated no-op insert statements. Prefer moving fallback rows to a migration or a deliberate one-time initialization path, leaving the read handler read-only.
+
+### Review decision
+
+**Do not spend D1/Queue quota on stateful staging acceptance yet.** First reduce or explicitly cap the five-minute event-window query fan-out and remove the write-on-read fallback seeding, then define a single-suite acceptance budget with a hard read/write stop, preserve the Wrangler per-operation meter, and explicitly authorize that run. The current candidate's exact-SHA offline CI, browser audit, Pages-only publication, and local SQLite restore rehearsal are useful evidence, but they do not prove its live Worker/D1/Queue behavior. No stateful staging acceptance or production operation was performed for this review.
