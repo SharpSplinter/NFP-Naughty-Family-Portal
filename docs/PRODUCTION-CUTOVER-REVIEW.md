@@ -944,3 +944,51 @@ No Critical or High severity authorization/credential exposure issue was identif
 - No Cloudflare API, staging Worker, staging D1, production resource, migration, Queue operation, secret, or deployment was touched by these fixes or offline validations.
 
 **Acceptance decision:** The code-level query/write risks identified in Section 27 are addressed. This does **not** authorize stateful staging acceptance. Before any such run, re-read account-wide D1 usage, reserve a single-suite budget with a hard stop, retain the direct Wrangler meter, and obtain explicit owner authorization. Production remains **NO-GO**.
+
+
+## 29. 2026-11-18 current-candidate production release evidence refresh
+
+**Current portal release candidate before this documentation-only evidence update:** `10a41079db00a31030a838d1d34136d6847341e1`. The exact-current application tree was deployed to isolated staging through portal branch commit `4d4e8976feb5a86cbdeb44d25bc42b9dcc6d2d7a`; both commits have Git tree `0113fbd91121e7c5edeab15c500c634811478879`. The only differences introduced by this evidence refresh are the two documentation files permitted by the production preflight allow-list.
+
+### Backup and isolated restore
+
+- Encrypted production D1 archive: [Google Drive backup](https://drive.google.com/file/d/1L8wm0oZXraxj47alv7lmB2uWIKOqxLVf/view?usp=drivesdk), `naughty-family-production-2026-11-18.tar.gz.gpg`.
+- Created at: `2026-11-18T02:47:15.545Z`; archive SHA-256 independently checked against its Drive sidecar: `8074ec26d1914db32027bad3cd1130b19242f06514601d796ed35f52f8477894`.
+- Exact-candidate isolated restore rehearsal: [run #44244140186](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44244140186), candidate `10a41079db00a31030a838d1d34136d6847341e1`, completed successfully. The workflow verified archive checksum, decrypted on an ephemeral runner, replayed migrations `0013–0037` in local SQLite and published only a sanitized report. No production D1 restore occurred.
+- Backup reference and checksum are external; neither the encrypted archive nor its passphrase is stored in this repository.
+
+### Fresh production D1 state (read-only)
+
+Checked at `2026-11-18T05:41:40.703Z` UTC:
+
+- Production migration ledger: 42 applied records, ending with `0037_private_data_visibility.sql`; the read-only ledger query read 42 rows and wrote 0.
+- Current Time Travel bookmark returned by Cloudflare: `000004de-0000002c-00005127-bacda3d8f07978a585410b9f356ee753`. Time Travel bookmarks are automatic; this is the current bookmark observed at the stated time, not a manually created snapshot.
+- Account-wide D1 Insights for 2026-11-18 00:00 UTC through the check time: **270,674 rows read** and **49,702 rows written** in aggregate across the three reported databases.
+- Per-database reported read/write values: production company dashboard 233,641 / 49,018; production bot 20,767 / 684; isolated acceptance staging 16,266 / 0.
+- Declared release hard stop: 4,000,000 account-wide D1 rows read. Declared release reserve: 100,000 rows. At this snapshot, observed reads plus reserve were 370,674, leaving 3,629,326 rows below that hard stop. This is a point-in-time usage observation, not a forward guarantee; the workflow must use a new under-15-minute snapshot at dispatch.
+- Evidence endpoints used: [production D1 migration ledger](https://api.cloudflare.com/client/v4/accounts/6c03b978ed9a59adc3f61c715bdad45c/d1/database/bbbe128a-c5cc-46ec-b8ef-93860183e795/query), [current Time Travel bookmark](https://api.cloudflare.com/client/v4/accounts/6c03b978ed9a59adc3f61c715bdad45c/d1/database/bbbe128a-c5cc-46ec-b8ef-93860183e795/time_travel/bookmark), and [account-wide D1 Insights](https://api.cloudflare.com/client/v4/accounts/6c03b978ed9a59adc3f61c715bdad45c/d1/insights/databases).
+
+### Exact-current-source staging and Queue acceptance
+
+- Current-runtime staging Worker deployment: [run #44245138458](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44245138458), exact staging commit `4d4e8976feb5a86cbdeb44d25bc42b9dcc6d2d7a`, same application tree as current main candidate.
+- Bounded D1 acceptance: 268 direct rows read, 0 rows written. The entire set of read-only staging diagnostic statements recorded 15,552 D1 rows read and 0 writes; this remained under the 25,000 read / 2,000 write cumulative bounds.
+- Single synthetic empty-body Queue message: 3 billable operations (write/read/delete), Cloudflare analytics-confirmed; 6 bytes; after consumption main staging queue backlog 0 and staging DLQ backlog 0.
+- Full details are in [the current-runtime bounded acceptance record](audits/2026-11-17-pr152-bounded-staging-acceptance.md).
+- No production Queue write/configuration mutation was performed.
+
+### Production Queue configuration review
+
+Read-only Cloudflare Queue inventory and production Worker settings were compared against `wrangler.toml`. The configured producer, main consumer, retry policy, concurrency and DLQ target matched live production:
+- Main queue `ncd-global-rankings-refresh`, producer and consumer Worker `naughtyfamily-api`, batch size 1, maximum retries 4, maximum concurrency 1, DLQ `ncd-global-rankings-refresh-dlq`.
+- DLQ consumer `naughtyfamily-api`, batch size 1, maximum retries 1, maximum concurrency 1.
+- No Queue binding or consumer reconciliation was required by the observed diff. The configured Queue reconciliation acknowledgement was separately supplied as a workflow input.
+
+### Service-key permissions and protections
+
+- The owner-confirmed service-key evidence in Section 25 remains current as an owner attestation: `TORN_API_KEY_SERVICE` is Full Access for the shared faction roster, user-job and company-profile requests. The secret value was not read or exposed; no independent live `/key/info` probe is claimed.
+- The protected GitHub `production` Environment is configured with a required reviewer. Its review gate remains separate from the preflight and will not be bypassed.
+- Main branch protection was re-read: administrator enforcement, strict required TypeScript/production build/backend check, and conversation resolution remain enabled.
+
+### Current deployment state
+
+At the time of this evidence refresh, the production Worker has **not** been deployed by these evidence reads. Production D1, Queue, Worker settings and Time Travel were inspected read-only only. The guarded `worker-deploy.yml` remains the sole production deployment path; it must re-check under-15-minute account D1 usage, run the exact candidate-tree/migration equivalence preflight, retain the protected `production` Environment review, apply any pending migrations, deploy the Worker, and verify production `/health` and key-encryption readiness. No Pages publication is included in this Worker workflow.
