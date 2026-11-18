@@ -789,3 +789,50 @@ A read-only Workers Observability query filtered to `naughtyfamily-api-staging` 
 7. Explicit owner authorization for merge and production D1 migrations / Worker deployment remains outstanding. The separate `naughtyfamily` Pages production publication is also not authorized.
 
 No production D1 migration, production Worker or Pages deployment, production secret mutation, Queue operation, PR merge, or release-state transition was performed for this update. The staging Pages publication itself performed no D1 or Queue operation. Do not convert this review to GO until every required evidence gate is freshly satisfied and the owner explicitly approves release.
+
+
+## 25. 2026-11-17 current-candidate stateful acceptance, quota evidence, and service-key owner confirmation
+
+### Exact-candidate verification
+
+The latest candidate is `e20add2b80312f07d32036f677f2ec6ea4b8ff0a` on `portal-rebuild`.
+
+- Offline production-backup migration rehearsal [#44203252030](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203252030) completed successfully against this exact candidate.
+- The single-suite stateful staging acceptance [#44203293682](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44203293682) completed successfully against the same exact candidate.
+- The selected suite was `halloween`. Repository quality gates, staging-target isolation, account-wide D1 watchdog initialization, staging API/Pages publication and health checks, fixture seeding, selected feature assertions, post-feature budget check, synthetic fixture cleanup, and final budget check all passed.
+- Staging Queues `ncd-naughtyfamily-staging-collection` and `ncd-naughtyfamily-staging-dlq` already existed; the workflow did not need to create them. Staging migration apply reported no pending migrations.
+- Fixture seed: 443 Wrangler rows read / 247 written. Cleanup: 416 rows read / 96 written. Including identity preflights, the workflow's local direct Wrangler meter recorded 883 rows read, below the 100,000-row per-run budget. All fixture-owned rows were removed; reserved test player IDs remain inactive.
+- The Halloween assertions included current-season and all-time Revitalize proc totals, successful-attack denominators, member comparison and partial-coverage rendering, plus first-party browser checks. The feature suite passed.
+
+### Fresh account-wide D1 usage evidence
+
+Cloudflare D1 account-wide Insights was queried over the UTC day through **2026-11-17T23:56:10Z**:
+
+| Database | Rows read | Rows written |
+|---|---:|---:|
+| `naughty-company-dashboard` | 342,443 | 69,802 |
+| `naughtyfamily-acceptance-staging` | 175,506 | 864 |
+| `naughty-company-bot-production` | 85,674 | 2,876 |
+| **Account total** | **603,623** | **73,542** |
+
+Against the configured 4,000,000-row workflow hard stop, the measured read headroom was 3,396,377 rows. Against the 5,000,000 Free-plan daily read allowance, the measured reserve was 4,396,377 rows. Against the 100,000-row daily write allowance, 26,458 writes remained. These are observed account totals at the stated timestamp, not a forward guarantee. The staging run's local Wrangler meter is the stricter acceptance-run read evidence: 883 direct rows read.
+
+The staging watchdog noted that Cloudflare account-wide analytics under-reported direct Wrangler reads during its observation window. Preserve both the Cloudflare account-wide snapshot and local per-operation Wrangler meter in the evidence bundle; do not treat the account-wide metric as a perfect reconciliation of direct CLI operations.
+
+### Production service-key permission confirmation
+
+The production Worker settings read confirmed that `naughtyfamily-api` has a secret binding named `TORN_API_KEY_SERVICE`. The secret value was not read or disclosed.
+
+On **2026-11-17**, the project owner explicitly confirmed that the configured production `TORN_API_KEY_SERVICE` is a **Full Access** Torn API key and has all required permissions. Record this as **owner-confirmed Full Access permission evidence** for the required shared faction-member roster, user-job, and company-profile requests. This satisfies the owner-attestation gate. It is not represented as an independent Torn key-info endpoint response; no live service-key API probe was performed, and no key value was exposed.
+
+### Updated release gates
+
+- Fresh encrypted production backup and local restore replay: completed; exact-candidate GitHub rehearsal passed.
+- Current-candidate stateful staging acceptance: completed successfully; exact-candidate workflow passed.
+- Fresh account-wide D1 quota and reserved headroom: recorded above; acceptance remained within its 100,000-row run budget.
+- Production `TORN_API_KEY_SERVICE` permissions: owner-confirmed Full Access; no secret transfer or disclosure required.
+- Production Queue binding/configuration diff and explicit Queue-reconciliation acknowledgement: still requires operator review.
+- Protected production Environment reviewer/main-branch requirements and final PR review/approval: still require verification.
+- Explicit owner approval to merge and to run production D1 migrations / Worker deployment: still required. The separate `naughtyfamily` Pages production publication remains unauthorized.
+
+**Production remains NO-GO.** The stateful acceptance run touched only isolated staging D1/Worker/Pages resources and staging-only Queue configuration. It did not deploy production Worker or Pages, run production D1 migrations, change production secrets, or mutate production Queues. Do not perform a production release until the remaining gates are satisfied and the owner explicitly authorizes it.
