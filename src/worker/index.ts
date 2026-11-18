@@ -717,6 +717,9 @@ const FACTION_PERFORMANCE_PAGE_SIZE = 5
 // retries, and seasonal event windows. The persistent history collectors are
 // deliberately slower to protect the account-wide D1 row-write budget.
 const FIVE_MINUTE_SCHEDULER_TICK_MS = 5 * 60 * 1000
+const FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000
+const FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL =
+  FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
 const FACTION_ROSTER_COLLECTION_INTERVAL_MS = 60 * 60 * 1000
 const FACTION_STATS_COLLECTION_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FACTION_STATS_COLLECTION_TICK_INTERVAL =
@@ -6538,11 +6541,14 @@ async function handleAdminRequest(
 }
 
 async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number): Promise<void> {
-  // This dispatcher remains on a five-minute clock for membership checks,
-  // weekly-boundary retries, and seasonal event windows. Heavy roster history
-  // is hourly; personalstats, gym energy, and faction stats are every four hours.
+  // Keep the dispatcher on a five-minute clock for weekly-boundary retries and
+  // seasonal event windows. Membership revalidation is every 30 minutes;
+  // roster history is hourly; stats and gym-energy snapshots are every four hours.
   // One source outage must not suppress the other scheduled work.
-  try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
+  const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
+  if (schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0) {
+    try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
+  }
   try { await enqueueFactionPerformanceCollections(env, scheduledTime) } catch { /* Idempotent schedule buckets retry on a later tick. */ }
   try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* The unique Sunday boundary is retried on a later five-minute tick. */ }
   try { await finalizeFactionWeeklyReport(env, utcSundayStart(scheduledTime) - WEEK_MS) } catch { /* Finalization retries after the ending boundary batches reach a terminal state. */ }
