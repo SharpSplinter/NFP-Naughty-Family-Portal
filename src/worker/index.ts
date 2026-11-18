@@ -717,6 +717,9 @@ const FACTION_PERFORMANCE_PAGE_SIZE = 5
 // retries, and seasonal event windows. The persistent history collectors are
 // deliberately slower to protect the account-wide D1 row-write budget.
 const FIVE_MINUTE_SCHEDULER_TICK_MS = 5 * 60 * 1000
+const FACTION_WEEKLY_RETRY_INTERVAL_MS = 15 * 60 * 1000
+const FACTION_WEEKLY_RETRY_TICK_INTERVAL =
+  FACTION_WEEKLY_RETRY_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
 const FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000
 const FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL =
   FACTION_MEMBERSHIP_REVALIDATION_INTERVAL_MS / FIVE_MINUTE_SCHEDULER_TICK_MS
@@ -2261,23 +2264,38 @@ async function loadHalloweenExchangeMarketValue(
 }
 
 async function loadRecordedHalloweenEventWindows(db: D1Database): Promise<Array<{ eventYear: number; startAt: string; endAt: string }>> {
-  // Keep every historical year selectable. Years without a confirmed nominal
-  // definition use the full October 25–November 1 event envelope; they must not
-  // inherit a guessed personal clock time from a neighboring season.
+  // Keep every historical year selectable without writing from a read route.
+  // Existing disabled event definitions remain disabled; only genuinely
+  // missing prior years receive an in-memory historical_fallback window.
   const currentYear = new Date().getUTCFullYear()
-  for (let year = 2021; year < currentYear; year++) {
-    const now = new Date().toISOString()
-    await db.prepare(
-      "INSERT OR IGNORE INTO halloween_event_windows (event_year, start_at, end_at, historical_collection_enabled, live_collection_enabled, created_at, updated_at, fixed_start_time, requires_time_confirmation, calendar_source) VALUES (?, ?, ?, 1, 0, ?, ?, 0, 0, 'historical_fallback')",
-    ).bind(year, year + "-10-25T00:00:00.000Z", year + "-11-01T23:59:59.000Z", now, now).run()
-  }
   const rows = await db.prepare(
-    `SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt
+    `SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt,
+            historical_collection_enabled AS historicalCollectionEnabled
      FROM halloween_event_windows
-     WHERE historical_collection_enabled = 1
      ORDER BY event_year DESC`
-  ).all<{ eventYear: number; startAt: string; endAt: string }>()
-  return rows.results ?? []
+  ).all<{ eventYear: number; startAt: string; endAt: string; historicalCollectionEnabled: number }>()
+  const existingYears = new Set((rows.results ?? []).map((row) => Number(row.eventYear)))
+  const windows = new Map<number, { eventYear: number; startAt: string; endAt: string }>()
+  for (const row of rows.results ?? []) {
+    if (Number(row.historicalCollectionEnabled) === 1) {
+      windows.set(Number(row.eventYear), {
+        eventYear: Number(row.eventYear),
+        startAt: String(row.startAt),
+        endAt: String(row.endAt),
+      })
+    }
+  }
+  // Migration 0029 seeds the known prior seasons. This fallback preserves the
+  // former loader behavior for any later missing year, but only in memory.
+  for (let year = 2021; year < currentYear; year++) {
+    if (existingYears.has(year)) continue
+    windows.set(year, {
+      eventYear: year,
+      startAt: year + "-10-25T00:00:00.000Z",
+      endAt: year + "-11-01T23:59:59.000Z",
+    })
+  }
+  return Array.from(windows.values()).sort((a, b) => b.eventYear - a.eventYear)
 }
 
 async function loadHalloweenAllTimeArchive(env: WorkerEnv, db: D1Database, signedInPlayerId: string) {
@@ -3440,66 +3458,156 @@ async function runHalloweenLiveSnapshotJob(env: WorkerEnv, jobId: string): Promi
   }
 }
 
-async function enqueueHalloweenLiveSnapshot(env: WorkerEnv, eventYear: number, playerId: string, kind: "opening" | "periodic" | "closing", bucketStart: number): Promise<void> {
-  if (!env.GLOBAL_RANKINGS_QUEUE) return
+async function enqueueHalloweenLiveSnapshot(env: WorkerEnv, eventYear: number, playerId: string, kind: "opening" | "periodic" | "closing", bucketStart: number): Promise<boolean> {
+  if (!env.GLOBAL_RANKINGS_QUEUE) return false
   const db = requireDb(env)
-  const existing = await db.prepare("SELECT job_id AS jobId, status FROM halloween_live_snapshot_jobs WHERE event_year = ? AND player_id = ? AND snapshot_kind = ? AND bucket_start = ?")
-    .bind(eventYear, playerId, kind, bucketStart).first<{ jobId: string; status: string }>()
-  // Each event bucket receives one bounded queue attempt sequence. A terminal
-  // failure is not re-enqueued on every five-minute scheduler tick.
-  if (existing) return
   const now = new Date().toISOString()
   const jobId = crypto.randomUUID()
-  await db.prepare("INSERT INTO halloween_live_snapshot_jobs (job_id, event_year, player_id, snapshot_kind, bucket_start, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)")
-    .bind(jobId, eventYear, playerId, kind, bucketStart, now, now).run()
-  await env.GLOBAL_RANKINGS_QUEUE.send({ kind: "halloween-live-snapshot", jobId })
+  // The schema's unique event/member/kind/bucket key is the idempotency guard.
+  // INSERT OR IGNORE avoids a separate preflight SELECT for every member.
+  const inserted = await db.prepare(
+    "INSERT OR IGNORE INTO halloween_live_snapshot_jobs (job_id, event_year, player_id, snapshot_kind, bucket_start, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
+  ).bind(jobId, eventYear, playerId, kind, bucketStart, now, now).run()
+  if (Number(inserted.meta?.changes ?? 0) !== 1) return false
+  try {
+    await env.GLOBAL_RANKINGS_QUEUE.send({ kind: "halloween-live-snapshot", jobId })
+    return true
+  } catch (error) {
+    // A send failure must not strand an unsent queued row. The next scheduler
+    // pass can then retry the same unique bucket with a new job ID.
+    await db.prepare("DELETE FROM halloween_live_snapshot_jobs WHERE job_id = ? AND status = 'queued'")
+      .bind(jobId).run().catch(() => undefined)
+    throw error
+  }
 }
 
 async function enqueueScheduledHalloweenSnapshots(env: WorkerEnv, scheduledTime: number): Promise<number> {
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE) return 0
   const db = requireDb(env)
-  const nowMs = scheduledTime
-  const nowIso = new Date(nowMs).toISOString()
-  const events = await db.prepare("SELECT event_year AS eventYear, start_at AS startAt, end_at AS endAt FROM halloween_event_windows WHERE live_collection_enabled = 1")
-    .all<{ eventYear: number; startAt: string; endAt: string }>()
+  const candidates = await db.prepare(
+    `WITH params AS (
+       SELECT ? AS now_ms
+     ),
+     member_windows AS (
+       SELECT
+         e.event_year AS event_year,
+         p.player_id AS player_id,
+         p.player_name AS player_name,
+         e.start_at AS event_start_at,
+         e.end_at AS event_end_at,
+         s.start_minute_of_day AS start_minute_of_day,
+         params.now_ms AS now_ms,
+         CAST(strftime('%s', substr(e.start_at, 1, 10) || 'T00:00:00Z') AS INTEGER) * 1000
+           + s.start_minute_of_day * 60000 AS member_start_ms,
+         CAST(strftime('%s', substr(e.end_at, 1, 10) || 'T00:00:00Z') AS INTEGER) * 1000
+           + s.start_minute_of_day * 60000 AS member_end_ms,
+         (SELECT MAX(snap.captured_at)
+          FROM halloween_live_snapshots snap
+          WHERE snap.event_year = e.event_year AND snap.player_id = p.player_id) AS last_captured_at,
+         EXISTS(
+           SELECT 1 FROM halloween_live_snapshot_jobs opening
+           WHERE opening.event_year = e.event_year AND opening.player_id = p.player_id
+             AND opening.snapshot_kind = 'opening' AND opening.status = 'complete'
+         ) AS opening_complete,
+         EXISTS(
+           SELECT 1 FROM halloween_live_snapshot_jobs closing
+           WHERE closing.event_year = e.event_year AND closing.player_id = p.player_id
+             AND closing.snapshot_kind = 'closing' AND closing.status = 'complete'
+         ) AS closing_complete
+       FROM halloween_event_windows e
+       JOIN halloween_member_event_slots s ON s.event_year = e.event_year
+       JOIN players p ON p.player_id = s.player_id
+       LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id
+       CROSS JOIN params
+       WHERE e.live_collection_enabled = 1
+         AND p.faction_id = ?
+         AND st.disabled_at IS NULL
+     ),
+     member_buckets AS (
+       SELECT *,
+         CAST(member_start_ms / 1000 AS INTEGER) AS opening_bucket_start,
+         CAST(member_end_ms / 1000 AS INTEGER) AS closing_bucket_start,
+         CAST((member_start_ms
+           + CAST((now_ms - member_start_ms) / 21600000 AS INTEGER) * 21600000) / 1000 AS INTEGER)
+           AS periodic_bucket_start
+       FROM member_windows
+     ),
+     member_state AS (
+       SELECT *,
+         EXISTS(
+           SELECT 1 FROM halloween_live_snapshot_jobs opening
+           WHERE opening.event_year = event_year AND opening.player_id = player_id
+             AND opening.snapshot_kind = 'opening' AND opening.bucket_start = opening_bucket_start
+         ) AS opening_job_exists,
+         EXISTS(
+           SELECT 1 FROM halloween_live_snapshot_jobs periodic
+           WHERE periodic.event_year = event_year AND periodic.player_id = player_id
+             AND periodic.snapshot_kind = 'periodic' AND periodic.bucket_start = periodic_bucket_start
+         ) AS periodic_job_exists,
+         EXISTS(
+           SELECT 1 FROM halloween_live_snapshot_jobs closing
+           WHERE closing.event_year = event_year AND closing.player_id = player_id
+             AND closing.snapshot_kind = 'closing' AND closing.bucket_start = closing_bucket_start
+         ) AS closing_job_exists
+       FROM member_buckets
+     ),
+     scheduled_candidates AS (
+       SELECT *,
+         CASE
+           WHEN now_ms >= member_start_ms - 300000 AND now_ms <= member_start_ms + 60000
+             AND opening_complete = 0
+             THEN CASE WHEN opening_job_exists = 0 THEN 'opening' END
+           WHEN now_ms >= member_start_ms AND now_ms < member_end_ms
+             AND (last_captured_at IS NULL
+               OR COALESCE(CAST(strftime('%s', last_captured_at) AS INTEGER) * 1000, -1) <= now_ms - 21600000)
+             THEN CASE WHEN periodic_job_exists = 0 THEN 'periodic' END
+           WHEN now_ms >= member_end_ms AND now_ms <= member_end_ms + 300000
+             AND closing_complete = 0
+             THEN CASE WHEN closing_job_exists = 0 THEN 'closing' END
+         END AS snapshot_kind
+       FROM member_state
+     )
+     SELECT event_year AS eventYear, player_id AS playerId, snapshot_kind AS snapshotKind,
+       CASE snapshot_kind
+         WHEN 'opening' THEN opening_bucket_start
+         WHEN 'periodic' THEN periodic_bucket_start
+         WHEN 'closing' THEN closing_bucket_start
+       END AS bucketStart,
+       event_start_at AS eventStartAt, event_end_at AS eventEndAt,
+       start_minute_of_day AS startMinuteOfDay
+     FROM scheduled_candidates
+     WHERE snapshot_kind IS NOT NULL
+     ORDER BY event_year, member_start_ms, player_id`,
+  ).bind(scheduledTime, NAUGHTY_SOULS_FACTION_ID).all<{
+    eventYear: number
+    playerId: string
+    snapshotKind: "opening" | "periodic" | "closing"
+    bucketStart: number
+    eventStartAt: string
+    eventEndAt: string
+    startMinuteOfDay: number
+  }>()
   let queued = 0
-  for (const event of events.results ?? []) {
-    const startMs = Date.parse(event.startAt)
-    const endMs = Date.parse(event.endAt)
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
-    const members = await db.prepare("SELECT p.player_id AS playerId, s.start_minute_of_day AS startMinuteOfDay FROM players p JOIN halloween_member_event_slots s ON s.player_id = p.player_id AND s.event_year = ? LEFT JOIN dashboard_member_status st ON st.player_id = p.player_id WHERE p.faction_id = ? AND st.disabled_at IS NULL")
-      .bind(event.eventYear, NAUGHTY_SOULS_FACTION_ID).all<{ playerId: string; startMinuteOfDay: number }>()
-    for (const member of members.results ?? []) {
-      let personalWindow: HalloweenMemberEventWindow
-      try { personalWindow = buildHalloweenMemberEventWindow(event, Number(member.startMinuteOfDay)) } catch { continue }
-      const memberStartMs = Date.parse(personalWindow.startAt || "")
-      const memberEndMs = Date.parse(personalWindow.endAt || "")
-      if (!Number.isFinite(memberStartMs) || !Number.isFinite(memberEndMs) || memberEndMs <= memberStartMs) continue
-      const openingExists = await db.prepare("SELECT job_id FROM halloween_live_snapshot_jobs WHERE event_year = ? AND player_id = ? AND snapshot_kind = 'opening' AND status = 'complete' LIMIT 1")
-        .bind(event.eventYear, member.playerId).first<{ job_id: string }>()
-      if (!openingExists && nowMs >= memberStartMs - 5 * 60 * 1000 && nowMs <= memberStartMs + 60 * 1000) {
-        await enqueueHalloweenLiveSnapshot(env, event.eventYear, member.playerId, "opening", Math.floor(memberStartMs / 1000))
-        queued++
-        continue
-      }
-      if (nowMs >= memberStartMs && nowMs < memberEndMs) {
-        const last = await db.prepare("SELECT MAX(captured_at) AS capturedAt FROM halloween_live_snapshots WHERE event_year = ? AND player_id = ?")
-          .bind(event.eventYear, member.playerId).first<{ capturedAt: string | null }>()
-        const lastMs = last?.capturedAt ? Date.parse(last.capturedAt) : Number.NEGATIVE_INFINITY
-        if (!Number.isFinite(lastMs) || nowMs - lastMs >= 6 * 60 * 60 * 1000) {
-          const bucket = memberStartMs + Math.floor((nowMs - memberStartMs) / (6 * 60 * 60 * 1000)) * (6 * 60 * 60 * 1000)
-          await enqueueHalloweenLiveSnapshot(env, event.eventYear, member.playerId, "periodic", Math.floor(bucket / 1000))
-          queued++
-          continue
-        }
-      }
-      const closingExists = await db.prepare("SELECT job_id FROM halloween_live_snapshot_jobs WHERE event_year = ? AND player_id = ? AND snapshot_kind = 'closing' AND status = 'complete' LIMIT 1")
-        .bind(event.eventYear, member.playerId).first<{ job_id: string }>()
-      if (!closingExists && nowMs >= memberEndMs && nowMs <= memberEndMs + 5 * 60 * 1000) {
-        await enqueueHalloweenLiveSnapshot(env, event.eventYear, member.playerId, "closing", Math.floor(memberEndMs / 1000))
-        queued++
-      }
+  for (const candidate of candidates.results ?? []) {
+    // Validate the stored personal slot/window at the boundary before queuing.
+    try {
+      buildHalloweenMemberEventWindow({
+        eventYear: Number(candidate.eventYear),
+        startAt: String(candidate.eventStartAt),
+        endAt: String(candidate.eventEndAt),
+      }, Number(candidate.startMinuteOfDay))
+    } catch {
+      continue
     }
+    const bucketStart = Number(candidate.bucketStart)
+    if (!Number.isSafeInteger(bucketStart) || bucketStart <= 0) continue
+    if (await enqueueHalloweenLiveSnapshot(
+      env,
+      Number(candidate.eventYear),
+      String(candidate.playerId),
+      candidate.snapshotKind,
+      bucketStart,
+    )) queued++
   }
   return queued
 }
@@ -6545,17 +6653,21 @@ async function handleAdminRequest(
 }
 
 async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number): Promise<void> {
-  // Keep the dispatcher on a five-minute clock for weekly-boundary retries and
-  // seasonal event windows. Membership revalidation is every 30 minutes;
-  // roster history is hourly; stats and gym-energy snapshots are every four hours.
+  // Keep membership and event-window timing on the five-minute clock.
+  // Weekly boundary/report reconciliation runs every fifteen minutes, including
+  // the exact Sunday 00:00 UTC boundary, to avoid repeating its four SELECTs
+  // on all 288 daily dispatcher ticks. Roster history is hourly; stats and
+  // gym-energy snapshots are every four hours.
   // One source outage must not suppress the other scheduled work.
   const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
   if (schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0) {
     try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
   }
   try { await enqueueFactionPerformanceCollections(env, scheduledTime) } catch { /* Idempotent schedule buckets retry on a later tick. */ }
-  try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* The unique Sunday boundary is retried on a later five-minute tick. */ }
-  try { await finalizeFactionWeeklyReport(env, utcSundayStart(scheduledTime) - WEEK_MS) } catch { /* Finalization retries after the ending boundary batches reach a terminal state. */ }
+  if (schedulerBucket % FACTION_WEEKLY_RETRY_TICK_INTERVAL === 0) {
+    try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* Retry the unique Sunday boundary on the next weekly reconciliation tick. */ }
+    try { await finalizeFactionWeeklyReport(env, utcSundayStart(scheduledTime) - WEEK_MS) } catch { /* Finalization retries on the next weekly reconciliation tick after ending captures become terminal. */ }
+  }
   try { await enqueueScheduledHalloweenSnapshots(env, scheduledTime) } catch { /* Retry the next event sweep. */ }
 }
 
