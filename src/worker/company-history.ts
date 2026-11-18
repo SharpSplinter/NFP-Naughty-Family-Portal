@@ -6,7 +6,7 @@ export type DailyProfitHistoryPoint = {
 
 export type RollingWeeklyProfitPoint = {
   weeklyProfit: number | null
-  weeklyProfitSource: "reconstructed" | "incomplete"
+  weeklyProfitSource: "reconstructed" | "reported" | "incomplete"
   weeklyProfitReconciliationDelta: number | null
 }
 
@@ -37,17 +37,25 @@ export function withRollingWeeklyProfit<T extends DailyProfitHistoryPoint>(
     const complete = window.length === 7 && window.every(
       (entry) => typeof entry.dailyProfit === "number" && Number.isFinite(entry.dailyProfit),
     )
-    const weeklyProfit = complete
+    const reconstructedWeeklyProfit = complete
       ? window.reduce((sum, entry) => sum + Number(entry.dailyProfit), 0)
       : null
     const reported = typeof point.reportedWeeklyProfit === "number" && Number.isFinite(point.reportedWeeklyProfit)
       ? point.reportedWeeklyProfit
       : null
+    // Prefer an exact seven-day reconstruction when possible. If daily coverage
+    // is incomplete, retain Torn's reported weekly total instead of discarding it.
+    const weeklyProfit = reconstructedWeeklyProfit ?? reported
+    const weeklyProfitSource = reconstructedWeeklyProfit !== null
+      ? "reconstructed"
+      : reported !== null ? "reported" : "incomplete"
     return {
       ...point,
       weeklyProfit,
-      weeklyProfitSource: complete ? "reconstructed" : "incomplete",
-      weeklyProfitReconciliationDelta: weeklyProfit !== null && reported !== null ? reported - weeklyProfit : null,
+      weeklyProfitSource,
+      weeklyProfitReconciliationDelta: reconstructedWeeklyProfit !== null && reported !== null
+        ? reported - reconstructedWeeklyProfit
+        : null,
     }
   })
 }

@@ -4,7 +4,11 @@ export type ChartSeries = { label: string; values: { label: string; value: numbe
 export type SnapshotHistoryPoint = { day: string; period: number; capturedAt: number; dailyIncome: number | null; weeklyIncome: number | null; dailyProfit: number | null; weeklyProfit: number | null; rating: number | null; companyRank: number | null; companyRankTotal: number | null; stockQuantity: number | null; stockValue: number | null; averageEmployeeEfficiency: number | null }
 export type SnapshotHistoryCompany = { companyId: string; name: string; typeName: string; typeId: number; history: SnapshotHistoryPoint[] }
 export type SnapshotMetric = "dailyIncome" | "weeklyIncome" | "dailyProfit" | "weeklyProfit" | "stockQuantity" | "stockValue" | "rating" | "companyRank"
-export type OfficialCompanyHistoryPoint = { day: string } & Partial<Record<SnapshotMetric, number | null>>
+export type OfficialCompanyHistoryPoint = {
+  day: string
+  reportedWeeklyProfit?: number | null
+  weeklyProfitSource?: "reconstructed" | "reported" | "incomplete"
+} & Partial<Record<SnapshotMetric, number | null>>
 export function importedHistorySeries(companies: SnapshotHistoryCompany[], metric: SnapshotMetric): ChartSeries[] {
   const days = Array.from(new Set(companies.flatMap((company) => company.history.map((point) => point.day)))).sort()
   return companies.map((company) => ({ label: company.name, values: days.map((day) => {
@@ -68,7 +72,9 @@ export function buildChartSeriesFor(metric: SnapshotMetric, currentChartCompany:
     }
     officialHistory.forEach((point) => {
       if (!Object.prototype.hasOwnProperty.call(point, metric)) return
-      const value = point[metric]
+      const value = metric === "weeklyProfit" && point.weeklyProfit == null
+        ? point.reportedWeeklyProfit
+        : point[metric]
       ownValues.set(point.day, typeof value === "number" && Number.isFinite(value) ? value : null)
     })
     const series: ChartSeries[] = [{ label: model?.company.name || result?.model?.company.name || currentChartCompany?.name || "Selected company", values: Array.from(ownValues, ([label, value]) => ({ label, value })).sort((a, b) => a.label.localeCompare(b.label)) }]

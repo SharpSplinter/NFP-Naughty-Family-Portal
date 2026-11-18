@@ -18,7 +18,7 @@ on:
         options:
           - I approve production D1 migrations and Worker deployment
       candidate_commit:
-        description: Exact portal-rebuild commit used by restore rehearsal and stateful staging acceptance
+        description: Exact release commit on main whose source tree is the production Worker candidate
         required: true
         type: string
       backup_reference:
@@ -66,8 +66,20 @@ on:
         description: Successful isolated production-data restore and migration-replay workflow run URL
         required: true
         type: string
+      restore_rehearsal_commit:
+        description: Exact commit SHA used by that successful restore rehearsal
+        required: true
+        type: string
       staging_acceptance_run_url:
-        description: Successful stateful staging acceptance workflow run URL for this exact candidate
+        description: Successful staging Worker deployment run URL associated with the committed bounded acceptance evidence
+        required: true
+        type: string
+      staging_acceptance_commit:
+        description: Exact commit SHA deployed to staging and exercised by the bounded acceptance
+        required: true
+        type: string
+      staging_acceptance_evidence_reference:
+        description: Link to the committed bounded D1/Queue staging acceptance evidence record
         required: true
         type: string
       service_key_permission_reference:
@@ -136,9 +148,10 @@ jobs:
           D1_HARD_STOP_ROWS: ${{ inputs.d1_hard_stop_rows }}
           D1_RELEASE_RESERVE_ROWS: ${{ inputs.d1_release_reserve_rows }}
           RESTORE_REHEARSAL_RUN_URL: ${{ inputs.restore_rehearsal_run_url }}
-          RESTORE_REHEARSAL_COMMIT: ${{ inputs.candidate_commit }}
+          RESTORE_REHEARSAL_COMMIT: ${{ inputs.restore_rehearsal_commit }}
           STAGING_ACCEPTANCE_RUN_URL: ${{ inputs.staging_acceptance_run_url }}
-          STAGING_ACCEPTANCE_COMMIT: ${{ inputs.candidate_commit }}
+          STAGING_ACCEPTANCE_COMMIT: ${{ inputs.staging_acceptance_commit }}
+          STAGING_ACCEPTANCE_EVIDENCE_REFERENCE: ${{ inputs.staging_acceptance_evidence_reference }}
           SERVICE_KEY_PERMISSION_REFERENCE: ${{ inputs.service_key_permission_reference }}
           QUEUE_CONFIGURATION_REVIEW_REFERENCE: ${{ inputs.queue_configuration_review_reference }}
           QUEUE_CONFIGURATION_ACK: ${{ inputs.queue_configuration_ack }}

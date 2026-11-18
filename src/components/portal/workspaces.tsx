@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { ActionButton, DataTableFrame, EmptyState, WorkspaceHeader, WorkspaceTabs } from "./ui-primitives"
 import { calculateHalloweenBoosterCooldown, calculateHalloweenDashboardBoostersReceived, calculateHalloweenDashboardBoostersUsed, calculateHalloweenEffectiveProcRate, calculateHalloweenRevitalizeProcRate, calculateHalloweenTreatMultiplierEligibleAwards, type HalloweenEventMetrics } from "../../lib/halloween/metrics"
 import type { HalloweenExchangeMarketValue } from "../../lib/halloween/market-value"
 import { filterAndSortWeeklyMembers, type WeeklyLeaderboardDirection, type WeeklyLeaderboardParticipationFilter, type WeeklyLeaderboardSortKey, type WeeklyLeaderboardStatusFilter } from "../../lib/faction-performance/leaderboard"
@@ -114,13 +115,14 @@ type WorkspaceProps = {
 const workspaces = [
   { path: "/faction", icon: "♜", title: "Faction Dashboard", description: "Faction activity, member intelligence, company leadership, and shared performance.", label: "FACTION WORKSPACE" },
   { path: "/company", icon: "▦", title: "Company Dashboard", description: "Company performance, employees, income, rankings, and operational intelligence.", label: "COMPANY OPERATIONS" },
-  { path: "/halloween", icon: "♧", title: "Halloween Dashboard", description: "Current event standings alongside the faction's growing historical event archive.", label: "EVENT INTELLIGENCE" },
-  { path: "/christmas-town", icon: "❄", title: "Christmas Town", description: "Your personal minigame, chest, ornament, currency and market-value history.", label: "EVENT INTELLIGENCE" },
+  { path: "/halloween", icon: "♧", title: "Halloween Dashboard", description: "Current event standings alongside the faction's growing historical event archive.", label: "HALLOWEEN EVENTS" },
+  { path: "/christmas-town", icon: "❄", title: "Christmas Town", description: "Your personal minigame, chest, ornament, currency and market-value history.", label: "CHRISTMAS EVENTS" },
   { path: "/training-calculator", icon: "⌁", title: "Training Calculator", description: "Plan gym gains, 99K happy jumps, energy cans, Xanax, refills and Stat Enhancers.", label: "TRAINING PLANNER" },
   { path: "/settings", icon: "⚙", title: "Account Settings", description: "Your API connections, permissions, account security, and preferences.", label: "YOUR ACCOUNT" },
 ]
 
 export function PortalHome(props: WorkspaceProps) {
+  const visibleModuleCount = workspaces.length + Number(props.isAdmin)
   return (
     <main className="portal-page">
       <header className="portal-topbar">
@@ -143,7 +145,7 @@ export function PortalHome(props: WorkspaceProps) {
       </section>
 
       <section className="portal-workspaces" aria-label="Available workspaces">
-        <div className="portal-section-heading"><div><span>YOUR WORKSPACES</span><h2>Choose where to go</h2></div><small>06 MODULES</small></div>
+        <div className="portal-section-heading"><div><span>YOUR WORKSPACES</span><h2>Choose where to go</h2></div><small>{String(visibleModuleCount).padStart(2, "0")} MODULES</small></div>
         <div className="portal-card-grid">
           {workspaces.map((workspace, index) => (
             <button type="button" key={workspace.path} className={`portal-card portal-card-${workspace.path.slice(1)}`} onClick={() => props.onNavigate(workspace.path)}>
@@ -331,13 +333,20 @@ export function FactionWorkspacePlaceholder(props: FactionWorkspaceProps) {
   const [tab, setTab] = useState<"weekly" | "live" | "activity" | "stats" | "directory">("weekly")
   return (
     <div className="faction-workspace-switcher">
-      <nav className="faction-workspace-tabs" aria-label="Faction dashboard sections">
-        <button type="button" className={tab === "weekly" ? "active" : ""} onClick={() => setTab("weekly")}>Weekly rankings</button>
-        <button type="button" className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}>Live member status</button>
-        <button type="button" className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Faction activity</button>
-        <button type="button" className={tab === "stats" ? "active" : ""} onClick={() => setTab("stats")}>Faction totals</button>
-        <button type="button" className={tab === "directory" ? "active" : ""} onClick={() => setTab("directory")}>Company directory</button>
-      </nav>
+      <WorkspaceHeader brandSubtitle="FACTION WORKSPACE" onNavigate={props.onNavigate} />
+      <WorkspaceTabs
+        ariaLabel="Faction dashboard sections"
+        className="faction-workspace-tabs"
+        items={[
+          { key: "weekly", label: "Weekly rankings" },
+          { key: "live", label: "Live member status" },
+          { key: "activity", label: "Faction activity" },
+          { key: "stats", label: "Faction totals" },
+          { key: "directory", label: "Company directory" },
+        ]}
+        activeKey={tab}
+        onChange={key => setTab(key as typeof tab)}
+      />
       {tab === "weekly" ? <FactionWeeklyRankings {...props} /> : tab === "live" ? <FactionLiveStatus {...props} /> : tab === "activity" ? <FactionActivityFeed {...props} /> : tab === "stats" ? <FactionStatsOverview {...props} /> : <FactionCompanyDirectory {...props} />}
     </div>
   )
@@ -688,11 +697,12 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
             <option value="all">All participation</option><option value="full_week">Full week</option><option value="partial_week">Partial week</option><option value="unknown">Unknown</option>
           </select></label>
           <label className="faction-weekly-anomaly-toggle"><input type="checkbox" checked={anomaliesOnly} onChange={event => setAnomaliesOnly(event.target.checked)} /><span>Only members with counter anomalies</span></label>
-          <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); setParticipationFilter("all"); setAnomaliesOnly(false) }}>Clear filters</button>
+          <ActionButton onClick={() => { setSearch(""); setStatusFilter("all"); setParticipationFilter("all"); setAnomaliesOnly(false) }}>Clear filters</ActionButton>
           <span className="faction-weekly-result-count">{filtered.length} of {payload?.members.length ?? 0} members</span>
         </div>
+        <p className="faction-weekly-filter-help">Data status describes snapshot completeness; participation describes how much of the reporting week is represented; counter anomalies flag values that decreased between samples. Search and filters combine, so a member must match every selected condition. Clear filters restores the full list.</p>
         {busy && !payload ? <p className="historical-key-muted">Loading weekly snapshots…</p> : filtered.length ? (
-          <div className="historical-leaderboard">
+          <DataTableFrame className="historical-leaderboard" ariaLabel="Weekly faction rankings">
             <table><thead><tr>{sortHeader("RANK", "rank")}{sortHeader("MEMBER", "name")}{sortHeader("POSITION", "position")}{sortHeader("SELECTED METRIC", "selectedMetric")}{sortHeader("XANAX", "xantaken")}{sortHeader("LSD", "lsdtaken")}{sortHeader("ALCOHOL", "alcoholused")}{sortHeader("BOOSTERS", "boostersused")}{sortHeader("ENERGY DRINKS", "energydrinkused")}{sortHeader("REFILLS", "refills")}{sortHeader("GYM ENERGY", "gymEnergy")}{sortHeader("STARTING NETWORTH", "startingNetworth")}{sortHeader("CURRENT NETWORTH", "endingNetworth")}{sortHeader("NETWORTH CHANGE", "networth")}{sortHeader("DATA", "completeness")}</tr></thead><tbody>
               {filtered.map(member => <tr key={member.userId}>
                 <td>{member.rank === null ? "—" : "#" + member.rank}</td>
@@ -718,8 +728,8 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
                 </td>
               </tr>)}
             </tbody></table>
-          </div>
-        ) : <div className="historical-empty"><strong>{payload?.members.length ? "No members match that search." : "Weekly baseline is being prepared."}</strong><span>{payload?.members.length ? "Try another name or Torn ID." : "The five-minute scheduler creates a dedicated Sunday snapshot. Until the baseline and a later sample are available, weekly values remain unknown."}</span></div>}
+          </DataTableFrame>
+        ) : <EmptyState className="historical-empty" title={payload?.members.length ? "No members match these filters." : "Weekly baseline is being prepared."} description={payload?.members.length ? "Adjust your search or one or more filters, or clear filters to see the full list." : "The weekly rankings need a Sunday baseline and a later sample before members can be ranked. Values remain unknown until both samples are available."} />}
       </section>
       {selectedMember && (() => {
         const member = selectedMember.member
@@ -1091,7 +1101,7 @@ function FactionLiveStatus({ playerName, onNavigate, apiBase, sessionToken }: Fa
           <div className="faction-live-search"><input aria-label="Search faction members" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search member, position, or Torn ID…" /><select aria-label="Filter live member status" value={filter} onChange={event => setFilter(event.target.value as FactionLiveFilter)}><option value="all">All members</option><option value="online">Online</option><option value="idle">Idle</option><option value="offline">Offline</option><option value="inactive24">Inactive 24h+</option><option value="inactive72">Inactive 72h+</option><option value="hospital">Hospital</option><option value="wall">On wall</option><option value="oc">In OC</option><option value="revivable">Key revivable (owner-specific)</option><option value="reviveEveryone">Revive setting: Everyone</option><option value="reviveFriendsFaction">Revive setting: Friends &amp; faction</option><option value="reviveNoOne">Revive setting: No one</option><option value="reviveUnknown">Revive setting: Unknown</option><option value="unknown">Unknown activity</option></select></div>
         </div>
         {busy && !payload ? <p className="historical-key-muted">Loading the latest roster snapshot…</p> : filtered.length ? (
-          <div className="historical-leaderboard faction-live-table-wrap">
+          <DataTableFrame className="historical-leaderboard faction-live-table-wrap" ariaLabel="Faction live member status table">
             <table><thead><tr><th>MEMBER</th><th>ACTIVITY</th><th>LAST ACTION</th><th>INACTIVITY</th><th>STATUS / TIMER</th><th>REVIVE SETTING</th><th>KEY REVIVABLE</th><th>FLAGS</th><th>VOLUNTARY LIVE DATA</th></tr></thead><tbody>
               {filtered.map(member => {
                 const actionMs = liveLastActionMs(member)
@@ -1125,8 +1135,8 @@ function FactionLiveStatus({ playerName, onNavigate, apiBase, sessionToken }: Fa
                 </tr>
               })}
             </tbody></table>
-          </div>
-        ) : <div className="historical-empty"><strong>{allMembers.length ? "No members match that filter." : "No completed faction roster is available."}</strong><span>{allMembers.length ? "Change the activity filter or search term." : "The scheduled roster collector will populate this view when its first full run succeeds."}</span></div>}
+          </DataTableFrame>
+        ) : <EmptyState className="historical-empty" title={allMembers.length ? "No members match that filter." : "No completed faction roster is available."} description={allMembers.length ? "Change the activity filter or search term." : "The scheduled roster collector will populate this view when its first full run succeeds."} />}
       </section>
       <footer className="module-footer"><span>LIVE FACTION MEMBER STATUS</span><span>Signed in as {playerName} · Public faction roster fields only</span></footer>
     </main>
@@ -1899,7 +1909,7 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
 
   return (
     <main className="module-page halloween-module">
-      <header className="module-topbar"><a className="portal-brand" href="/" onClick={(event) => { event.preventDefault(); onNavigate("/") }}><span className="portal-brand-mark">NF</span><span><strong>NAUGHTY FAMILY</strong><small>HALLOWEEN INTELLIGENCE</small></span></a><button type="button" onClick={() => onNavigate("/")}>← Return to portal</button></header>
+      <WorkspaceHeader brandSubtitle="HALLOWEEN INTELLIGENCE" onNavigate={onNavigate} />
       <section className="module-heading"><div className="portal-eyebrow"><span /> SHARED FACTION EVENT DATA</div><h1>Halloween <em>Dashboard</em></h1><p>One faction leaderboard and event archive, built from members' own authorized Torn data.</p></section>
       <section className="season-year-filter halloween-year-filter" aria-label="Halloween event year selection">
         <div><small>EVENT SCOPE</small><strong>{tab === "live" ? "Current event · " + eventYear : historicalYear === "all" ? "All recorded years" : "Event year " + historicalYear}</strong><span>{availableEventYearsBusy ? "Loading recorded years…" : availableEventYears.length + " archived years available"}</span></div>
@@ -1911,10 +1921,16 @@ export function HalloweenWorkspace({ playerName, onNavigate, apiBase, sessionTok
           </select>
         </label>
       </section>
-      <nav className="halloween-tabs" aria-label="Halloween dashboard sections">
-        <button type="button" className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}><span>◉</span> Live / Current Year</button>
-        <button type="button" className={tab === "historical" ? "active" : ""} onClick={() => setTab("historical")}><span>◷</span> Historical</button>
-      </nav>
+      <WorkspaceTabs
+        ariaLabel="Halloween dashboard sections"
+        className="halloween-tabs"
+        items={[
+          { key: "live", label: <><span>◉</span> Live / Current Year</> },
+          { key: "historical", label: <><span>◷</span> Historical</> },
+        ]}
+        activeKey={tab}
+        onChange={key => setTab(key as typeof tab)}
+      />
       {(tab === "live" || (tab === "historical" && historicalCollectionYear !== null)) && (
               <section className="halloween-personal-window" aria-labelledby="halloween-personal-window-title">
                 <div className="halloween-personal-window-copy">
@@ -2558,9 +2574,9 @@ export function AccountSettingsWorkspace(props: AccountSettingsProps) {
           </form>
           <form className="settings-inline-form" onSubmit={addSecondaryCompanyKey}>
             <label htmlFor="settings-secondary-company-key">Add a secondary company API key</label>
-            <input id="settings-secondary-company-key" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => setSecondaryCompanyKey(event.target.value)} placeholder="Paste a key for another company you own" disabled={companyBusy} />
+            <input id="settings-secondary-company-key" type="password" autoComplete="off" spellCheck={false} value={secondaryCompanyKey} onChange={event => setSecondaryCompanyKey(event.target.value)} placeholder="Paste a key for another company you own" disabled={companyBusy} aria-describedby="settings-secondary-company-key-hint" />
             <button type="submit" disabled={companyBusy || !secondaryCompanyKey.trim()}>{companyBusy ? "Validating…" : "Validate & add secondary key"}</button>
-            <span className="settings-form-hint">Use one secondary key per additional company. The key must belong to Torn ID {props.playerId} and return that company's profile.</span>
+            <span className="settings-form-hint" id="settings-secondary-company-key-hint">Use a Torn Custom Access or Full Access key created under your own Torn account. It must resolve to Torn ID {props.playerId} and return the company you own. Grant only the Company scopes this workspace needs; the portal validates ownership before saving the encrypted key.</span>
           </form>
           <div className="settings-company-list">
             {connectedCompanies.length ? connectedCompanies.map(company => (
