@@ -194,13 +194,12 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
   const apiRoot = `https://api.github.com/repos/${REPOSITORY}`;
   const stagingAcceptanceCommit = String(env.STAGING_ACCEPTANCE_COMMIT);
   const stagingEvidenceRawUrl = `https://raw.githubusercontent.com/${REPOSITORY}/main/${STAGING_ACCEPTANCE_EVIDENCE_PATH}`;
-  const [restoreRun, stagingDeploymentRun, candidateCommit, releaseCommit, stagingCommit, runtimeDiff, stagingEvidence] = await Promise.all([
+  const [restoreRun, stagingDeploymentRun, candidateCommit, releaseCommit, stagingCommit, stagingEvidence] = await Promise.all([
     githubJson(`${apiRoot}/actions/runs/${parsed.restoreRunId}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/actions/runs/${parsed.stagingRunId}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${parsed.candidateCommit}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${env.GITHUB_SHA}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${stagingAcceptanceCommit}`, env.GITHUB_TOKEN, fetchImpl),
-    githubJson(`${apiRoot}/compare/${stagingAcceptanceCommit}...${parsed.candidateCommit}`, env.GITHUB_TOKEN, fetchImpl),
     githubText(stagingEvidenceRawUrl, env.GITHUB_TOKEN, fetchImpl),
   ]);
 
@@ -221,18 +220,6 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
     throw new Error(`Committed bounded staging acceptance evidence is incomplete: ${missingEvidence.join("; ")}.`);
   }
 
-  const changedRuntimeFiles = (runtimeDiff.files ?? []).map(file => file.filename);
-  const disallowedRuntimeChanges = changedRuntimeFiles.filter(file => !ALLOWED_STAGING_RUNTIME_EQUIVALENCE_FILES.has(file));
-  if (
-    !["ahead", "identical"].includes(runtimeDiff.status) ||
-    (runtimeDiff.behind_by ?? 0) !== 0 ||
-    disallowedRuntimeChanges.length > 0
-  ) {
-    throw new Error(
-      `Staging runtime equivalence check failed; candidate contains changes outside the approved release-workflow/evidence allow-list: ${disallowedRuntimeChanges.join(", ") || runtimeDiff.status}.`
-    );
-  }
-
   const candidateTree = candidateCommit.commit?.tree?.sha;
   const releaseTree = releaseCommit.commit?.tree?.sha;
   if (!candidateTree || !releaseTree || candidateTree !== releaseTree) {
@@ -240,6 +227,31 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
   }
   const stagingTree = stagingCommit.commit?.tree?.sha;
   if (!stagingTree) throw new Error("The staging deployment commit could not be verified.");
+
+  const [candidateTreeData, stagingTreeData] = await Promise.all([
+    githubJson(`${apiRoot}/git/trees/${candidateTree}?recursive=1`, env.GITHUB_TOKEN, fetchImpl),
+    githubJson(`${apiRoot}/git/trees/${stagingTree}?recursive=1`, env.GITHUB_TOKEN, fetchImpl),
+  ]);
+  if (candidateTreeData.truncated || stagingTreeData.truncated) {
+    throw new Error("Git tree comparison was truncated; staging runtime equivalence cannot be proven safely.");
+  }
+  const toBlobMap = tree => new Map(
+    (tree.tree ?? [])
+      .filter(entry => entry.type === "blob")
+      .map(entry => [entry.path, entry.sha])
+  );
+  const candidateFiles = toBlobMap(candidateTreeData);
+  const stagingFiles = toBlobMap(stagingTreeData);
+  const allPaths = new Set([...candidateFiles.keys(), ...stagingFiles.keys()]);
+  const changedRuntimeFiles = [...allPaths]
+    .filter(file => candidateFiles.get(file) !== stagingFiles.get(file))
+    .sort();
+  const disallowedRuntimeChanges = changedRuntimeFiles.filter(file => !ALLOWED_STAGING_RUNTIME_EQUIVALENCE_FILES.has(file));
+  if (disallowedRuntimeChanges.length > 0) {
+    throw new Error(
+      `Staging runtime equivalence check failed; candidate contains changes outside the approved release-workflow/evidence allow-list: ${disallowedRuntimeChanges.join(", ")}.`
+    );
+  }
 
   return {
     candidateCommit: parsed.candidateCommit,
