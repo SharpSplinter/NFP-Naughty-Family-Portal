@@ -130,19 +130,19 @@ def replay_backup(
                 + ", ".join(missing_prior[:12])
             )
 
-        if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
-            raise RuntimeError(
-                "Expected the production backup to contain "
-                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
-                f"found {len(applied)} entries."
-            )
-
         pending = [path for path in candidate_files if path.name not in applied]
         pending_numbers = [int(path.name.split("_", 1)[0]) for path in pending]
         if pending_numbers != EXPECTED_PENDING_MIGRATION_NUMBERS:
             raise RuntimeError(
                 "Expected only migration 0038 to be pending for this production backup; "
                 f"found {pending_numbers}."
+            )
+
+        if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
+            raise RuntimeError(
+                "Expected the production backup to contain "
+                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
+                f"found {len(applied)} entries."
             )
 
         before_counts = application_table_counts(connection)
