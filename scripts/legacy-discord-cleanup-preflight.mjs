@@ -192,8 +192,10 @@ async function main() {
   if (!healthResponse.ok || health?.ok !== true || health?.database !== "ok" || health?.keyEncryption !== "ok") {
     throw new Error("The live production API Worker health check failed.");
   }
-  if (!botHealthResponse.ok || botHealth?.ok !== true || botHealth?.privateDailySummary !== true) {
-    throw new Error("The live production Discord bot is not the expected private daily-summary Worker.");
+  if (!botHealthResponse.ok || botHealth?.ok !== true || botHealth?.service !== "naughty-company-bot" ||
+      botHealth?.database !== true || botHealth?.encryption !== true || botHealth?.discordConfigured !== true ||
+      botHealth?.dashboardBinding !== true || botHealth?.privateDailySummary !== true) {
+    throw new Error("The live production Discord bot is not healthy as the configured private daily-summary Worker.");
   }
 
   const dashboardLedgerNames = new Set(dashboardLedger.map((row) => String(row.name)));
@@ -229,6 +231,7 @@ async function main() {
     "- Fresh account-wide D1 Insights and deployment reserve: passed",
     "",
     `Production API Worker version: ${activeVersion}`,
+    `Production bot Worker version: ${activeBotVersion}`,
     `Dashboard D1 bookmark: ${dashboardBookmark.bookmark}`,
     `Bot D1 bookmark: ${botBookmark.bookmark}`,
     `D1 rows read: input ${rowsReadInput}; live Insights ${liveRowsRead}; hard stop ${hardStop}; reserve ${reserve}`,
