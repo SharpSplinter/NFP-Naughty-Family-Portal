@@ -4453,13 +4453,10 @@ try {
     assert.match(workspaceSource, /ownerPlayerId/)
   })
 
-  await test("Discord poll monitoring runtime DDL contains complete CREATE TABLE statements", () => {
+  await test("retired Discord poll monitoring tables are never created or touched at runtime", () => {
     const source = readFileSync(join(root, "src/worker/index.ts"), "utf8")
-    const statements = [...source.matchAll(/await db\.prepare\(`(CREATE TABLE IF NOT EXISTS discord_alert_poll_(?:health|history) \([\s\S]*?)`\)\.run\(\)/g)]
-    assert.equal(statements.length, 2, "both monitoring tables must be created idempotently at runtime")
-    for (const [, sql] of statements) {
-      assert.match(sql.trim(), /\)\s*$/, "each runtime table definition must close its SQL column list")
-    }
+    assert.doesNotMatch(source, /CREATE TABLE IF NOT EXISTS discord_alert_poll_(?:health|history)/)
+    assert.doesNotMatch(source, /(?:INSERT INTO|DELETE FROM|SELECT .* FROM) discord_alert_poll_(?:health|history)/i)
   })
 
   await test("automation schema bootstrap is cached per D1 binding and failed initialization can retry", () => {
