@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_MIGRATION_NUMBERS = list(range(13, 38))
+EXPECTED_MIGRATION_NUMBERS = list(range(13, 39))
 
 
 def sha256_file(path: Path) -> str:
@@ -112,7 +112,7 @@ def replay_backup(
                 number = int(path.name.split("_", 1)[0])
             except ValueError:
                 continue
-            if 13 <= number <= 37:
+            if 13 <= number <= 38:
                 candidate_files.append(path)
 
         numbers = [int(path.name.split("_", 1)[0]) for path in candidate_files]

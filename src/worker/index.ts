@@ -34,6 +34,7 @@ import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company
 import { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible, type FactionDirectorRankingInput, type RankingCompanyInput } from "./ranking-snapshots"
 import { withDailySnapshotReadCache, type DailyReadCacheKV } from "./daily-read-cache"
 import { D1RequestReadMeter, type D1Database } from "./d1-read-accounting"
+import { loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, reserveHalloweenRequestSlot, readGlobalRankingSnapshotMetadata, writeGlobalRankingSnapshotMetadata, type SessionAccessMetadata } from "./d1-optimizations"
 import { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isSnapshotStale, normalizeWebhookUrl, normalizeAlertThreshold, normalizeCooldownHours } from "../lib/automation/rules"
 
 type QueueProducer = { send(message: unknown, options?: { delaySeconds?: number }): Promise<unknown> }
@@ -296,13 +297,11 @@ async function authenticateUncached(request: Request, env: WorkerEnv): Promise<S
   const token = request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim()
   if (!token || !env.DB) return null
   const hash = await sha256(token)
-  const session = await requireDb(env).prepare(
-    "SELECT p.player_id, p.player_name, p.faction_id, p.faction_verified_at, p.membership_check_attempted_at, p.membership_check_status, CASE WHEN a.player_id IS NULL THEN 0 ELSE 1 END AS is_admin FROM sessions s JOIN players p ON p.player_id = s.player_id LEFT JOIN administrators a ON a.player_id = p.player_id AND a.revoked_at IS NULL WHERE s.token_hash = ? AND s.expires_at > ?"
-  ).bind(hash, Math.floor(Date.now() / 1000)).first<Session>()
-  if (!session) return null
+  const session = await loadSessionAccess<Session & SessionAccessMetadata>(
+    requireDb(env), hash, Math.floor(Date.now() / 1000),
+  )
+  if (!session || sessionAccessIsDenied(session)) return null
   const normalizedSession = { ...session, is_admin: Number(session.is_admin ?? 0) }
-  const status = await requireDb(env).prepare("SELECT disabled_at FROM dashboard_member_status WHERE player_id = ?").bind(session.player_id).first<{ disabled_at: string | null }>()
-  if (status?.disabled_at) return null
 
   // D1 rows on the migrated schema always include faction fields. Undefined
   // is tolerated only by lightweight legacy test doubles.
@@ -387,8 +386,6 @@ async function authenticateUncached(request: Request, env: WorkerEnv): Promise<S
     }
   }
 
-  const maintenanceMode = await readAdminBoolean(env, "maintenanceMode", false)
-  if (maintenanceMode && normalizedSession.is_admin !== 1) return null
   return normalizedSession
 }
 async function validateTornKey(apiKey: string): Promise<{ id: string; name: string; factionId: string; factionName: string }> {
@@ -1883,6 +1880,12 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
     const snapshots = buildGlobalCompanyRankSnapshots(companies as RankingCompanyInput[], metadata)
     const tuples = snapshots.map((row) => [row.reportingDay, String(row.companyId), row.companyName, row.companyType, row.companyTypeId === null ? null : Number(row.companyTypeId), row.globalRank, row.typeRank, row.starRating, row.weeklyIncome, row.dailyIncome, row.averageDailyIncome, row.directorName, row.sourceFetchedAt, row.capturedAt, row.source])
     await db.prepare("INSERT OR IGNORE INTO global_company_rank_snapshots (reporting_day, company_id, company_name, company_type, company_type_id, global_rank, type_rank, star_rating, weekly_income, daily_income, average_daily_income, director_name, source_fetched_at, captured_at, source) SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]'), json_extract(value, '$[6]'), json_extract(value, '$[7]'), json_extract(value, '$[8]'), json_extract(value, '$[9]'), json_extract(value, '$[10]'), json_extract(value, '$[11]'), json_extract(value, '$[12]'), json_extract(value, '$[13]'), json_extract(value, '$[14]') FROM json_each(?)").bind(asJson(tuples)).run()
+    await writeGlobalRankingSnapshotMetadata(db, {
+      reportingDay,
+      sourceFetchedAt: run.snapshot_fetched_at,
+      companyCount: snapshots.length,
+      updatedAt: new Date().toISOString(),
+    })
   }
   await db.prepare("CREATE TABLE IF NOT EXISTS global_rankings_cache (cache_id INTEGER PRIMARY KEY CHECK (cache_id = 1), companies_json TEXT NOT NULL, fetched_at TEXT NOT NULL)").run()
   await db.prepare("INSERT INTO global_rankings_cache (cache_id, companies_json, fetched_at) VALUES (1, ?, ?) ON CONFLICT(cache_id) DO UPDATE SET companies_json = excluded.companies_json, fetched_at = excluded.fetched_at")
@@ -2499,15 +2502,7 @@ async function loadHalloweenAllTimeArchive(env: WorkerEnv, db: D1Database, signe
 }
 
 async function throttleHalloweenRequest(env: WorkerEnv, playerId: string): Promise<void> {
-  const db = requireDb(env)
-  const row = await db.prepare("SELECT last_request_at FROM halloween_api_throttles WHERE player_id = ?")
-    .bind(playerId).first<{ last_request_at: number }>()
-  const now = Date.now()
-  const waitMs = Math.max(0, 800 - (now - Number(row?.last_request_at ?? 0)))
-  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs))
-  const startedAt = Date.now()
-  await db.prepare("INSERT INTO halloween_api_throttles (player_id, last_request_at) VALUES (?, ?) ON CONFLICT(player_id) DO UPDATE SET last_request_at = excluded.last_request_at")
-    .bind(playerId, startedAt).run()
+  await reserveHalloweenRequestSlot(requireDb(env), playerId)
 }
 
 async function getHalloweenHistoricalCollectionKey(env: WorkerEnv, playerId: string): Promise<string | null> {
@@ -5440,10 +5435,8 @@ async function handleAutomationRequest(request: Request, env: WorkerEnv, origin:
     return jsonResponse({ code, expiresAt, expiresInSeconds: 300 }, 200, origin)
   }
   if (preferencesPath && request.method === "GET") {
-    const now = new Date().toISOString()
-    await db.prepare("INSERT OR IGNORE INTO automation_preferences (owner_player_id, updated_at) VALUES (?, ?)").bind(session.player_id, now).run()
-    const preferences = await db.prepare("SELECT browser_notifications_enabled AS browserNotificationsEnabled, quiet_hours_enabled AS quietHoursEnabled, quiet_hours_start AS quietHoursStart, quiet_hours_end AS quietHoursEnd, timezone, minimum_severity AS minimumSeverity, digest_mode AS digestMode, updated_at AS updatedAt FROM automation_preferences WHERE owner_player_id = ?").bind(session.player_id).first<Record<string, unknown>>()
-    return jsonResponse({ preferences: preferences ?? { browserNotificationsEnabled: 0, quietHoursEnabled: 0, quietHoursStart: "22:00", quietHoursEnd: "08:00", timezone: "UTC", minimumSeverity: "info", digestMode: "instant" } }, 200, origin)
+    const preferences = await readAutomationPreferences(db, session.player_id)
+    return jsonResponse({ preferences }, 200, origin)
   }
   if (webhookPath && request.method === "GET") {
     const row = await db.prepare("SELECT enabled, created_at AS createdAt, updated_at AS updatedAt, last_delivered_at AS lastDeliveredAt, last_error AS lastError FROM automation_webhooks WHERE owner_player_id = ?").bind(session.player_id).first<Record<string, unknown>>()
@@ -9215,7 +9208,7 @@ export default {
         let rankingSource = "Daily cached Torn API v2 /company/{typeId}/companies lists"
         let generatedAt = cached?.fetchedAt ?? ""
         if (cached) { try { const parsed = JSON.parse(cached.companiesJson) as unknown; if (Array.isArray(parsed)) snapshotCompanies = parsed.filter(isRecord) } catch { /* Use persisted daily ranking rows below. */ } }
-        const latest = await db.prepare("SELECT reporting_day AS reportingDay, MAX(source_fetched_at) AS sourceFetchedAt, COUNT(*) AS companyCount FROM global_company_rank_snapshots WHERE reporting_day = (SELECT MAX(reporting_day) FROM global_company_rank_snapshots) GROUP BY reporting_day").first<{ reportingDay: string | null; sourceFetchedAt: string | null; companyCount: number }>()
+        const latest = await readGlobalRankingSnapshotMetadata(db)
         const cacheAt = cached?.fetchedAt ? Date.parse(cached.fetchedAt) : 0
         const snapshotAt = latest?.sourceFetchedAt ? Date.parse(latest.sourceFetchedAt) : 0
         const usePersisted = Boolean(latest?.reportingDay) && (!snapshotCompanies.length || !Number.isFinite(cacheAt) || cacheAt < snapshotAt || snapshotCompanies.length < Number(latest?.companyCount ?? 0))

@@ -29,6 +29,7 @@ const sourceFiles = [
   "src/worker/ranking-snapshots.ts",
   "src/worker/daily-read-cache.ts",
   "src/worker/d1-read-accounting.ts",
+  "src/worker/d1-optimizations.ts",
   "src/components/floor/ranking-utils.ts",
   "src/components/floor/financial-utils.ts",
 ].map((file) => resolve(root, file))
@@ -96,6 +97,7 @@ try {
   const worker = require(join(temp, "worker/index.js")).default
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
+  const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot, readGlobalRankingSnapshotMetadata, writeGlobalRankingSnapshotMetadata } = require(join(temp, "worker/d1-optimizations.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
@@ -4998,6 +5000,179 @@ try {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  await test("D1 optimization combines authentication security lookups without weakening access rules", async () => {
+    let preparedSql = ""
+    let bindings = []
+    let calls = 0
+    const database = {
+      prepare(sql) {
+        preparedSql = sql
+        return {
+          bind(...values) { bindings = values; return this },
+          async first() {
+            calls += 1
+            return {
+              player_id: "member-1",
+              player_name: "Member",
+              is_admin: 0,
+              disabled_at: null,
+              maintenance_mode_json: "true",
+            }
+          },
+        }
+      },
+    }
+    const row = await loadSessionAccess(database, "hashed-session", 1_800_000_000)
+    assert.equal(calls, 1, "session, disabled status, administrator role, and maintenance mode use one D1 lookup")
+    assert.deepEqual(bindings, ["hashed-session", 1_800_000_000])
+    assert.match(preparedSql, /LEFT JOIN dashboard_member_status/)
+    assert.match(preparedSql, /LEFT JOIN admin_settings maintenance/)
+    assert.match(preparedSql, /LEFT JOIN administrators/)
+    assert.equal(sessionAccessIsDenied(row), true, "maintenance mode blocks non-administrators")
+    assert.equal(sessionAccessIsDenied({ ...row, is_admin: 1 }), false, "an active administrator can still access maintenance mode")
+    assert.equal(sessionAccessIsDenied({ ...row, is_admin: 1, disabled_at: "2026-11-18T00:00:00Z" }), true,
+      "disabled-member status takes precedence over administrator privileges")
+    assert.equal(sessionAccessIsDenied({ ...row, maintenance_mode_json: "false" }), false)
+    assert.equal(sessionAccessIsDenied({ ...row, maintenance_mode_json: "malformed" }), false,
+      "malformed optional settings fail to the existing maintenance-off default")
+    assert.equal(sessionAccessIsDenied(null), true)
+  })
+
+  await test("automation preference GET returns defaults without creating or mutating a row", async () => {
+    let calls = []
+    const missingDatabase = {
+      prepare(sql) {
+        calls.push({ sql, method: "prepare" })
+        return {
+          bind(value) { calls.push({ value, method: "bind" }); return this },
+          async first() { calls.push({ method: "first" }); return null },
+          async run() { calls.push({ method: "run" }); return { meta: { changes: 1 } } },
+        }
+      },
+    }
+    const defaults = await readAutomationPreferences(missingDatabase, "member-2")
+    assert.deepEqual(defaults, DEFAULT_AUTOMATION_PREFERENCES)
+    assert.deepEqual(calls.map(item => item.method), ["prepare", "bind", "first"])
+    assert.match(calls[0].sql, /^SELECT[\s\S]*FROM automation_preferences/)
+    assert.doesNotMatch(calls[0].sql, /INSERT|UPDATE|DELETE/i)
+
+    const saved = { browserNotificationsEnabled: 1, quietHoursEnabled: 1, timezone: "America/New_York" }
+    const savedDatabase = {
+      prepare(sql) {
+        assert.match(sql, /^SELECT/)
+        return { bind() { return this }, async first() { return saved } }
+      },
+    }
+    assert.deepEqual(await readAutomationPreferences(savedDatabase, "member-2"), saved,
+      "saved preferences must be returned unchanged")
+  })
+
+  await test("Halloween throttle atomically reserves distinct slots under concurrent requests", async () => {
+    const lastReserved = new Map()
+    const waits = []
+    let operations = 0
+    const database = {
+      prepare(sql) {
+        assert.match(sql, /INSERT INTO halloween_api_throttles/)
+        assert.match(sql, /ON CONFLICT\(player_id\) DO UPDATE/)
+        assert.match(sql, /MAX\(halloween_api_throttles\.last_request_at \+ 800, excluded\.last_request_at\)/)
+        assert.match(sql, /RETURNING last_request_at/)
+        let values = []
+        return {
+          bind(...args) { values = args; return this },
+          async all() {
+            operations += 1
+            const [playerId, nowMs] = values
+            const previous = lastReserved.get(playerId)
+            const reservedAt = previous === undefined ? nowMs : Math.max(previous + 800, nowMs)
+            lastReserved.set(playerId, reservedAt)
+            return { results: [{ last_request_at: reservedAt }] }
+          },
+        }
+      },
+    }
+    const reservations = await Promise.all(Array.from({ length: 5 }, () =>
+      reserveHalloweenRequestSlot(database, "same-player", 10_000, async ms => { waits.push(ms) })))
+    assert.equal(operations, 5, "each request performs one atomic D1 statement")
+    assert.deepEqual(reservations.map(item => item.reservedAt).sort((a, b) => a - b),
+      [10_000, 10_800, 11_600, 12_400, 13_200])
+    assert.deepEqual(reservations.map(item => item.waitMs).sort((a, b) => a - b),
+      [0, 800, 1_600, 2_400, 3_200])
+    const other = await reserveHalloweenRequestSlot(database, "other-player", 10_000, async () => {})
+    assert.deepEqual(other, { reservedAt: 10_000, waitMs: 0 }, "throttle slots remain isolated by player")
+  })
+
+  await test("global ranking endpoint reads singleton metadata and completed capture updates it", async () => {
+    let stored = null
+    let readCount = 0
+    let writeCount = 0
+    const database = {
+      prepare(sql) {
+        if (sql.includes("SELECT") && sql.includes("global_company_rank_snapshot_meta")) {
+          assert.match(sql, /WHERE singleton_id = 1/)
+          assert.doesNotMatch(sql, /MAX\(|COUNT\(|global_company_rank_snapshots/,
+            "ordinary dashboard requests must never aggregate the historical ranking table")
+          return { async first() { readCount += 1; return stored } }
+        }
+        if (sql.includes("INSERT INTO global_company_rank_snapshot_meta")) {
+          return {
+            bind(...values) { this.values = values; return this },
+            async run() {
+              writeCount += 1
+              const [reportingDay, sourceFetchedAt, companyCount, updatedAt] = this.values
+              stored = { reportingDay, sourceFetchedAt, companyCount, updatedAt }
+              return { success: true }
+            },
+          }
+        }
+        throw new Error("Unexpected SQL in ranking metadata test: " + sql)
+      },
+    }
+    assert.equal(await readGlobalRankingSnapshotMetadata(database), null)
+    const metadata = {
+      reportingDay: "2026-11-18",
+      sourceFetchedAt: "2026-11-19T18:10:00.000Z",
+      companyCount: 15_362,
+      updatedAt: "2026-11-19T18:10:01.000Z",
+    }
+    await writeGlobalRankingSnapshotMetadata(database, metadata)
+    assert.deepEqual(await readGlobalRankingSnapshotMetadata(database), metadata)
+    assert.equal(readCount, 2)
+    assert.equal(writeCount, 1)
+  })
+
+  await test("D1 optimization helpers are wired into the production Worker request and publication paths", () => {
+    const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    const authStart = workerSource.indexOf("async function authenticateUncached")
+    const authEnd = workerSource.indexOf("async function validateTornKey", authStart)
+    const authBody = workerSource.slice(authStart, authEnd)
+    assert.match(authBody, /loadSessionAccess/)
+    assert.match(authBody, /sessionAccessIsDenied/)
+    assert.doesNotMatch(authBody, /SELECT disabled_at FROM dashboard_member_status/)
+    assert.doesNotMatch(authBody, /readAdminBoolean\(env, "maintenanceMode"/)
+
+    const throttleStart = workerSource.indexOf("async function throttleHalloweenRequest")
+    const throttleEnd = workerSource.indexOf("async function getHalloweenHistoricalCollectionKey", throttleStart)
+    assert.match(workerSource.slice(throttleStart, throttleEnd), /reserveHalloweenRequestSlot/)
+    assert.doesNotMatch(workerSource.slice(throttleStart, throttleEnd), /SELECT last_request_at/)
+
+    const preferencesStart = workerSource.indexOf('if (preferencesPath && request.method === "GET")')
+    const preferencesEnd = workerSource.indexOf('if (webhookPath && request.method === "GET")', preferencesStart)
+    const preferencesBody = workerSource.slice(preferencesStart, preferencesEnd)
+    assert.match(preferencesBody, /readAutomationPreferences/)
+    assert.doesNotMatch(preferencesBody, /INSERT OR IGNORE INTO automation_preferences/)
+
+    const rankingsStart = workerSource.indexOf('if (url.pathname === "/api/rankings" && request.method === "GET")')
+    const rankingsEnd = workerSource.indexOf("const rows = await requireDb(env).prepare", rankingsStart)
+    const rankingsBody = workerSource.slice(rankingsStart, rankingsEnd)
+    assert.match(rankingsBody, /readGlobalRankingSnapshotMetadata/)
+    assert.doesNotMatch(rankingsBody, /MAX\(source_fetched_at\)|COUNT\(\*\).*global_company_rank_snapshots/)
+
+    const finalizeStart = workerSource.indexOf("async function finalizeGlobalRankingRefresh")
+    const finalizeEnd = workerSource.indexOf("async function processGlobalRankingQueueMessage", finalizeStart)
+    assert.match(workerSource.slice(finalizeStart, finalizeEnd), /writeGlobalRankingSnapshotMetadata/)
   })
 
   await test("daily report cache follows the 18:00 UTC reporting boundary and fails closed for live tables", () => {
