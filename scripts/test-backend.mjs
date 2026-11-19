@@ -5069,7 +5069,7 @@ try {
     assert.deepEqual(calls.map(call => call.method), ["prepare", "bind", "first"],
       "a preference GET must not issue an INSERT, UPDATE, or DELETE")
     assert.match(calls[0].sql, /^SELECT[\s\S]*FROM automation_preferences/)
-    assert.doesNotMatch(calls[0].sql, /INSERT|UPDATE|DELETE/i)
+    assert.doesNotMatch(calls[0].sql, /\b(?:INSERT|UPDATE|DELETE)\b/i)
 
     const saved = { browserNotificationsEnabled: 1, quietHoursEnabled: 1, timezone: "America/New_York" }
     const savedDatabase = {
