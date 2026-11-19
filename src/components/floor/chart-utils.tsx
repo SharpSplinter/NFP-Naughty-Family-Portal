@@ -25,6 +25,28 @@ export function filterChartSeriesByRange(series: ChartSeries[], rangeDays: Chart
   }))
 }
 
+export function buildIntegerAxis(values: number[], maxTicks = 5): { min: number; max: number; ticks: number[] } | null {
+  const finite = values.filter((value) => Number.isFinite(value))
+  if (!finite.length) return null
+
+  let min = Math.floor(Math.min(...finite))
+  let max = Math.ceil(Math.max(...finite))
+  if (min === max) {
+    min -= 1
+    max += 1
+  }
+
+  const rawStep = (max - min) / Math.max(1, maxTicks - 1)
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const normalizedStep = rawStep / magnitude
+  const niceFactor = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 2.5 ? 2.5 : normalizedStep <= 5 ? 5 : 10
+  const step = Math.max(1, Math.ceil(niceFactor * magnitude))
+  const ticks: number[] = []
+  for (let tick = min; tick <= max; tick += step) ticks.push(tick)
+  if (ticks[ticks.length - 1] !== max) ticks.push(max)
+  return { min, max, ticks }
+}
+
 export function chartDateTickIndices(days: string[], rangeDays: ChartRange): number[] {
   if (rangeDays !== "all" && Number(rangeDays) <= 30) return days.map((_, index) => index)
   const seenWeeks = new Set<string>()
@@ -63,6 +85,7 @@ export function LineChart({
   rangeDays = "30",
   xAxisLabel = "Day",
   yAxisLabel,
+  integerYAxis = false,
 }: {
   title: string
   series: ChartSeries[]
@@ -71,6 +94,7 @@ export function LineChart({
   rangeDays?: ChartRange
   xAxisLabel?: string
   yAxisLabel?: string
+  integerYAxis?: boolean
 }) {
   const [selectedPoint, setSelectedPoint] = useState<{ series: string; label: string; value: number; x: number; y: number } | null>(null)
   useEffect(() => setSelectedPoint(null), [rangeDays])
@@ -82,9 +106,14 @@ export function LineChart({
 
   const width = 900, height = 320, left = 112, right = 28, top = 28, bottom = 76
   const axisY = height - bottom
-  const min = Math.min(...values), max = Math.max(...values), range = max - min || 1
+  const min = Math.min(...values), max = Math.max(...values)
+  const integerScale = integerYAxis ? buildIntegerAxis(values) : null
+  const axisMin = integerScale?.min ?? min
+  const axisMax = integerScale?.max ?? max
+  const range = axisMax - axisMin || 1
   const x = (index: number) => left + index * (width - left - right) / Math.max(1, days.length - 1)
-  const y = (value: number) => top + (invertY ? value - min : max - value) * (axisY - top) / range
+  const y = (value: number) => top + (invertY ? value - axisMin : axisMax - value) * (axisY - top) / range
+  const yTicks = integerScale?.ticks ?? Array.from({ length: 5 }, (_, index) => invertY ? min + index / 4 * (max - min) : max - index / 4 * (max - min))
   const valueLabel = (value: number) => money
     ? formatMoney(value)
     : value.toLocaleString(undefined, { maximumFractionDigits: 1 })
@@ -95,11 +124,9 @@ export function LineChart({
   const xTickLabel = (day: string) => {
     const date = new Date(`${day}T00:00:00Z`)
     if (Number.isNaN(date.getTime())) return day
-    if (weeklyTicks) {
-      date.setUTCDate(date.getUTCDate() - date.getUTCDay())
-      return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
-    }
-    return String(date.getUTCDate())
+    if (weeklyTicks) date.setUTCDate(date.getUTCDate() - date.getUTCDay())
+    const month = date.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).replace(".", "").slice(0, 3)
+    return `${month} ${date.getUTCDate()}`
   }
 
   return <section className="panel chart-panel">
@@ -109,10 +136,8 @@ export function LineChart({
     </div>
     <div className="chart-scroll">
       <svg className="line-chart" viewBox={`0 0 ${width} ${height}`} role="group" aria-label={title}>
-        {Array.from({ length: 5 }, (_, index) => {
-          const ratio = index / 4
-          const yy = top + ratio * (axisY - top)
-          const tickValue = invertY ? min + ratio * range : max - ratio * range
+        {yTicks.map((tickValue, index) => {
+          const yy = y(tickValue)
           return <g key={index}>
             <line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-grid" />
             <line x1={left - 5} x2={left} y1={yy} y2={yy} className="chart-axis-tick" />

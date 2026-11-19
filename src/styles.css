@@ -990,3 +990,6 @@ th.numeric-cell {
 .chart-date-tick{font-size:10px}
 .line-chart{min-width:760px;max-height:none}
 @media(max-width:600px){.chart-range-toolbar{align-items:stretch;flex-direction:column}.chart-range-select select{width:100%}}
+
+/* Month + day labels need a compact footprint on daily one-month timelines. */
+.chart-date-tick{font-size:8px}

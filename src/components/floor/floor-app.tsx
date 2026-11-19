@@ -1202,8 +1202,8 @@ export function FloorApp() {
                   <LineChart title="Daily company profit" money series={chartSeriesFor("dailyProfit")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Daily profit" />
                   <LineChart title="Weekly company profit" money series={chartSeriesFor("weeklyProfit")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Weekly profit" />
                   <LineChart title="Daily stock quantity" series={chartSeriesFor("stockQuantity")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Stock quantity" />
-                  <LineChart title="Star-rating history" series={chartSeriesFor("rating")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Star rating (stars)" />
-                  <LineChart title="Global company ranking · same company type" invertY series={chartSeriesFor("companyRank")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Company rank (lower is better)" />
+                  <LineChart title="Star-rating history" integerYAxis series={chartSeriesFor("rating")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Star rating (stars)" />
+                  <LineChart title="Global company ranking · same company type" integerYAxis invertY series={chartSeriesFor("companyRank")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Company rank (lower is better)" />
                 </>}
               </section>
               <div className="ranking-footnote"><strong>Data coverage</strong><p>Historical and live values are joined by reporting date, with live values taking precedence when both sources contain the same day. Missing days are left blank, never interpolated. Weekly profit uses the latest recorded reported weekly-profit total when available; month-to-date totals use recorded daily snapshots and can be partial if a day is missing.</p></div>
