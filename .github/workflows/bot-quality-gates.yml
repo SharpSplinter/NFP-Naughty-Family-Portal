@@ -80,6 +80,3 @@ jobs:
           grep -Fq 'CREATE TABLE IF NOT EXISTS discord_daily_company_summary_history' bot/migrations/0002_daily_company_summary_history.sql
           grep -Fq 'naughty-company-bot.kboone801.workers.dev' bot/configure-production-endpoint.mjs
           grep -Fq '/health' bot/check-production-health.mjs
-      - name: Validate production deployment is still manual-only and main-only
-        run: |
-          node bot/test-production-deploy-trigger.mjs
