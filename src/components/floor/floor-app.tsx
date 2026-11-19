@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import positionsData from "../../lib/company/positions.json"
 import { runEngine } from "../../lib/company/engine"
 import type { CompanyDashboardModel, CompanyPositionCatalog } from "../../lib/company/types"
-import { buildChartSeriesFor, LineChart } from "./chart-utils"
-import type { ChartSeries, OfficialCompanyHistoryPoint, SnapshotHistoryCompany, SnapshotMetric } from "./chart-utils"
+import { buildChartSeriesFor, ChartRangeSelect, LineChart } from "./chart-utils"
+import type { ChartRange, ChartSeries, OfficialCompanyHistoryPoint, SnapshotHistoryCompany, SnapshotMetric } from "./chart-utils"
 import { createDemoData } from "./demo-data"
 import { placement } from "./ranking-utils"
 import { AdminPanel } from "./admin-panel"
@@ -152,6 +152,7 @@ export function FloorApp() {
   const [weeklyStarCountsCapturedAt, setWeeklyStarCountsCapturedAt] = useState("")
   const [factionSyncPending, setFactionSyncPending] = useState(0)
   const [selectedComparePlayerId, setSelectedComparePlayerId] = useState("")
+  const [chartRange, setChartRange] = useState<ChartRange>("30")
   const [compareData, setCompareData] = useState<CompareData | null>(null)
   const [ownCompareData, setOwnCompareData] = useState<CompareData | null>(null)
   const [compareError, setCompareError] = useState("")
@@ -1189,19 +1190,20 @@ export function FloorApp() {
                 {selectedComparePlayerId && compareData && (() => { const peer = sharedCompanies.find((company) => company.playerId === selectedComparePlayerId && company.shareFinancialData); return peer ? <div className="shared-financial-summary"><article><small>COMPANY</small><strong>{peer.companyName}</strong><span>{peer.directorName} · {peer.companyType}</span></article><article><small>ADVERTISING BUDGET</small><strong>{peer.adBudget == null ? "Not returned" : formatMoney(peer.adBudget)}</strong></article><article className="shared-stock-summary"><small>SHARED STOCK</small>{peer.stock?.length ? peer.stock.map((item, index) => <span key={`${item.name || "stock"}-${index}`}>{item.name || "Stock item"}: {item.quantity == null ? "Qty n/a" : formatNumber(item.quantity)} · {item.unitPrice == null ? "Price n/a" : formatMoney(item.unitPrice)}</span>) : <span>No stock pricing available in the latest saved snapshot.</span>}</article></div> : <p className="sharing-privacy-note">Private stock and advertising data has not been shared with you by this director. Public income charts remain available.</p> })()}
               </section>
               <section className="panel imported-history-panel">
+                <div className="chart-range-toolbar"><ChartRangeSelect label="Chart date range" value={chartRange} onChange={setChartRange} /><span>All charts use the same reporting window · daily ticks for 1 month, weekly ticks for longer ranges.</span></div>
                 <div className="panel-heading"><div><h2>Imported snapshot summary & live charts</h2><p>The summary card uses one dated record from the imported backup only. The charts below combine imported and newer live readings by reporting date; no other company is shown unless you select a director above.</p></div><span className="count-chip">{currentChartCompany?.history.length ?? 0} imported records</span></div>
                 {snapshotSourceCreatedAt && <p className="snapshot-source-note">Imported backup created {new Date(snapshotSourceCreatedAt).toLocaleString("en-GB", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}. Dates are UTC.</p>}
                 {snapshotHistoryError && <div className="error-banner" role="alert">{snapshotHistoryError}</div>}
                 {snapshotHistoryLoading ? <div className="empty-state">Loading company history…</div> : <>
                   {currentChartCompany && importedSummaryPoint && <div className="snapshot-summary-grid"><article className="snapshot-summary-card"><div className="snapshot-company-heading"><div><strong>{currentChartCompany.name}</strong><span>Company #{currentChartCompany.companyId} · {currentChartCompany.typeName} · imported snapshot</span></div><span className="star-rating">{importedSummaryPoint.rating == null ? "—" : `${importedSummaryPoint.rating} ★`}</span></div><div className="snapshot-metric-grid"><span><small>DAILY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyIncome ?? null)}</strong></span><span><small>WEEKLY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyIncome ?? null)}</strong></span><span><small>DAILY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyProfit ?? null)}</strong></span><span><small>WEEKLY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyProfit ?? null)}</strong></span><span><small>COMPANY RANK · IMPORTED</small><strong>{importedSummaryPoint.companyRank == null ? "—" : `#${importedSummaryPoint.companyRank}${importedSummaryPoint.companyRankTotal == null ? "" : ` / ${importedSummaryPoint.companyRankTotal}`}`}</strong></span><span><small>STOCK QUANTITY · IMPORTED</small><strong>{importedSummaryPoint.stockQuantity == null ? "—" : formatNumber(importedSummaryPoint.stockQuantity)}</strong></span></div><p className="snapshot-date-range">Imported period {currentChartCompany.history[0]?.day || "—"} to {currentChartCompany.history.at(-1)?.day || "—"} · all summary values are as of {importedSummaryPoint.day} UTC · {currentChartCompany.history.length} imported daily records</p></article></div>}
                   {!currentChartCompany && <div className="empty-state">No imported archive matches the currently selected company. Live company readings will still appear below when available.</div>}
-                  <LineChart title="Daily company income" money series={chartSeriesFor("dailyIncome")} />
-                  <LineChart title="Weekly company income" money series={chartSeriesFor("weeklyIncome")} />
-                  <LineChart title="Daily company profit" money series={chartSeriesFor("dailyProfit")} />
-                  <LineChart title="Weekly company profit" money series={chartSeriesFor("weeklyProfit")} />
-                  <LineChart title="Daily stock quantity" series={chartSeriesFor("stockQuantity")} />
-                  <LineChart title="Star-rating history" invertY series={chartSeriesFor("rating")} />
-                  <LineChart title="Global company ranking · same company type" invertY series={chartSeriesFor("companyRank")} />
+                  <LineChart title="Daily company income" money series={chartSeriesFor("dailyIncome")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Daily income" />
+                  <LineChart title="Weekly company income" money series={chartSeriesFor("weeklyIncome")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Weekly income" />
+                  <LineChart title="Daily company profit" money series={chartSeriesFor("dailyProfit")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Daily profit" />
+                  <LineChart title="Weekly company profit" money series={chartSeriesFor("weeklyProfit")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Weekly profit" />
+                  <LineChart title="Daily stock quantity" series={chartSeriesFor("stockQuantity")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Stock quantity" />
+                  <LineChart title="Star-rating history" series={chartSeriesFor("rating")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Star rating (stars)" />
+                  <LineChart title="Global company ranking · same company type" invertY series={chartSeriesFor("companyRank")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Company rank (lower is better)" />
                 </>}
               </section>
               <div className="ranking-footnote"><strong>Data coverage</strong><p>Historical and live values are joined by reporting date, with live values taking precedence when both sources contain the same day. Missing days are left blank, never interpolated. Weekly profit uses the latest recorded reported weekly-profit total when available; month-to-date totals use recorded daily snapshots and can be partial if a day is missing.</p></div>
