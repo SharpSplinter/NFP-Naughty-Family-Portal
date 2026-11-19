@@ -1,0 +1,158 @@
+name: Cleanup retired Discord D1 tables
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: Confirm both production D1 cleanup targets
+        required: true
+        type: choice
+        options:
+          - naughtyfamily-api-and-naughty-company-bot-production-d1
+      release_authorization:
+        description: Explicitly authorize removal of retired Discord tables
+        required: true
+        type: choice
+        options:
+          - I approve removal of retired Discord telemetry and alert tables after production Worker verification
+      candidate_commit:
+        description: Exact cleanup commit on main
+        required: true
+        type: string
+      expected_api_version:
+        description: Exact production API Worker version to verify before cleanup
+        required: true
+        type: string
+      backup_reference:
+        description: HTTPS reference to the encrypted dashboard D1 backup
+        required: true
+        type: string
+      backup_sha256:
+        description: SHA-256 checksum of the encrypted dashboard D1 backup
+        required: true
+        type: string
+      backup_created_at:
+        description: Dashboard backup creation time in ISO-8601 UTC
+        required: true
+        type: string
+      bot_backup_reference:
+        description: HTTPS reference to the private bot D1 SQL export in Google Drive
+        required: true
+        type: string
+      bot_backup_created_at:
+        description: Bot D1 export creation time in ISO-8601 UTC
+        required: true
+        type: string
+      time_travel_bookmark_reference:
+        description: HTTPS reference to Cloudflare D1 Time Travel bookmark API
+        required: true
+        type: string
+      d1_usage_reference:
+        description: HTTPS reference to current account-wide D1 Insights
+        required: true
+        type: string
+      d1_usage_checked_at:
+        description: D1 Insights check time in ISO-8601 UTC, less than 15 minutes old
+        required: true
+        type: string
+      d1_rows_read:
+        description: Account-wide D1 rows read from the fresh usage check
+        required: true
+        type: string
+      d1_hard_stop_rows:
+        description: Account-wide daily D1 read hard stop
+        required: true
+        type: string
+      d1_release_reserve_rows:
+        description: D1 reads reserved for the cleanup window
+        required: true
+        default: "100000"
+        type: string
+      restore_rehearsal_run_url:
+        description: Exact-candidate successful local SQLite restore rehearsal
+        required: true
+        type: string
+      restore_rehearsal_commit:
+        description: Commit SHA used by the successful restore rehearsal
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naughty-company-retired-discord-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_target == 'naughtyfamily-api-and-naughty-company-bot-production-d1'
+    environment:
+      name: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact cleanup candidate
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run repository and cleanup regression tests
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Verify live Worker, backups, restore rehearsal and fresh D1 reserve before changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONFIRM_TARGET: ${{ inputs.confirm_target }}
+          RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          EXPECTED_API_VERSION: ${{ inputs.expected_api_version }}
+          BACKUP_REFERENCE: ${{ inputs.backup_reference }}
+          BACKUP_SHA256: ${{ inputs.backup_sha256 }}
+          BACKUP_CREATED_AT: ${{ inputs.backup_created_at }}
+          BOT_BACKUP_REFERENCE: ${{ inputs.bot_backup_reference }}
+          BOT_BACKUP_CREATED_AT: ${{ inputs.bot_backup_created_at }}
+          TIME_TRAVEL_BOOKMARK_REFERENCE: ${{ inputs.time_travel_bookmark_reference }}
+          D1_USAGE_REFERENCE: ${{ inputs.d1_usage_reference }}
+          D1_USAGE_CHECKED_AT: ${{ inputs.d1_usage_checked_at }}
+          D1_ROWS_READ: ${{ inputs.d1_rows_read }}
+          D1_HARD_STOP_ROWS: ${{ inputs.d1_hard_stop_rows }}
+          D1_RELEASE_RESERVE_ROWS: ${{ inputs.d1_release_reserve_rows }}
+          RESTORE_REHEARSAL_RUN_URL: ${{ inputs.restore_rehearsal_run_url }}
+          RESTORE_REHEARSAL_COMMIT: ${{ inputs.restore_rehearsal_commit }}
+        run: node scripts/legacy-discord-cleanup-preflight.mjs
+
+      - name: Remove retired Discord poll telemetry from dashboard D1
+        uses: cloudflare/wrangler-action@v4
+        with:
+          wranglerVersion: "4.156.2"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 6c03b978ed9a59adc3f61c715bdad45c
+          command: d1 migrations apply naughty-company-dashboard --remote --config wrangler.toml
+
+      - name: Remove retired alert and poll state from bot D1
+        uses: cloudflare/wrangler-action@v4
+        with:
+          wranglerVersion: "4.156.2"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 6c03b978ed9a59adc3f61c715bdad45c
+          command: d1 execute naughty-company-bot-production --remote --file bot/migrations/0003_retire_legacy_alert_tables.sql --config bot/wrangler.production.toml
+
+      - name: Verify both production D1 schemas and Worker health
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/verify-legacy-discord-cleanup.mjs
