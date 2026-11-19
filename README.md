@@ -32,17 +32,16 @@ The Discord bot's four account commands are globally registered for user-install
 
 ## Cloudflare Pages
 
-The production cutover target is the `naughtyfamily` Pages project at `https://naughtyfamily.pages.dev`. It is configured for this repository and `main`, but automatic production/preview deployments are disabled and it has not yet received a production deployment.
+The live portal is the `naughtyfamily` Pages project at `https://naughtyfamily.pages.dev`, deployed from `main` and backed by the production API Worker at `https://naughtyfamily-api.kboone801.workers.dev`.
 
 - Build command: `npm run build`
-- Build output directory: `dist`
+- Build output directory: `dist/`
 - Root directory: repository root
-- Production build variable: `VITE_API_BASE_URL=https://naughty-company-api.kboone801.workers.dev`
+- Production build variable: `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`
 - Production branch: `main`
-- Automatic production deployments: disabled
-- Preview deployments: disabled
+- Production and preview deployments: manual only
 
-The existing `naughty-company-dashboard.pages.dev` project is preserved as a static prior deployment, but its compiled bundle still targets the retired Worker hostname and is not yet a verified end-to-end rollback. The intended production portal is `naughtyfamily.pages.dev` backed by `naughtyfamily-api.kboone801.workers.dev`. Acceptance uses the separate `naughtyfamily-staging.pages.dev` project and isolated `naughtyfamily-api-staging` Worker/D1. See [the production cutover review](docs/PRODUCTION-CUTOVER-REVIEW.md) before any production operation.
+The Cloudflare account is maintained as a production-only dashboard stack. Acceptance/staging Workers, Pages projects, D1 databases, Queues and their test-only supporting resources have been retired. The unused legacy Pages projects were also removed; `naughtyfamily.pages.dev` is the sole dashboard portal.
 
 ## Account security and Torn API
 
