@@ -17,6 +17,10 @@ All workspaces use the same authenticated member session and one member-owned To
 
 The full product specification, verified API contract, data model, implementation phases and acceptance tests are maintained in [docs/FACTION-PERFORMANCE-DASHBOARD-PLAN.md](docs/FACTION-PERFORMANCE-DASHBOARD-PLAN.md). The branch implements scheduled public roster/stat/gym-energy collection, Sunday UTC rankings, immutable completed-week reports and comparisons, faction-wide totals, public live member status, a bounded activity feed, and audited administrator-only Sunday-boundary recovery. Weekly rankings include sortable columns, status/participation/anomaly filters and current/archived member drilldowns with metric deltas and capture provenance. The portal uses one owner-verified primary sign-in key for identity and owner-only features, with optional encrypted secondary company keys scoped by the company profile returned by Torn. Staging real-key company refresh acceptance is confirmed for primary Full Access, primary Custom Access and secondary company keys; adding and removing secondary keys also passed. Private-live and Halloween feature permissions still require their own acceptance. Private-live refresh remains member-triggered and is protected by a shared 30-second per-member request throttle.
 
+## Discord bot installation
+
+The Discord bot's four account commands are globally registered for user-installed applications and the bot's DM. See [the Discord user-install setup](docs/DISCORD-BOT-USER-INSTALL.md) for the one-time Developer Portal setting and user install link.
+
 ## Local development
 
 - Install Node.js 20 or later.
