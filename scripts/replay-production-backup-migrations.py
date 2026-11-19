@@ -118,13 +118,13 @@ def replay_backup(
         numbers = [int(path.name.split("_", 1)[0]) for path in candidate_files]
         if numbers != EXPECTED_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0037."
+                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0038."
             )
 
         pending = [path for path in candidate_files if path.name not in applied]
-        if len(pending) != 25:
+        if len(pending) != 26:
             raise RuntimeError(
-                f"Expected 25 pending migrations 0013-0037; found {len(pending)}."
+                f"Expected 26 pending migrations 0013-0038; found {len(pending)}."
             )
 
         before_counts = application_table_counts(connection)
