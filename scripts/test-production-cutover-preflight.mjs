@@ -8,7 +8,7 @@ import {
 const workflow = readFileSync(".github/workflows/worker-deploy.yml", "utf8");
 const restoreWorkflow = readFileSync(".github/workflows/restore-production-backup-rehearsal.yml", "utf8");
 assert.match(restoreWorkflow, /workflow_dispatch:/);
-assert.match(restoreWorkflow, /environment:\\s+name: production-backup/);
+assert.match(restoreWorkflow, /environment:\s+name: production-backup/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_URL/);
 assert.match(restoreWorkflow, /PRODUCTION_D1_BACKUP_PASSWORD/);
 assert.match(restoreWorkflow, /GPG AES-256|gpg/i);
@@ -19,14 +19,14 @@ assert.doesNotMatch(restoreWorkflow, /7z x|p7zip/);
 assert.ok(!restoreWorkflow.includes("cloudflare/wrangler-action@v4") && !restoreWorkflow.includes("api.cloudflare.com"),
   "The offline restore rehearsal must not call Cloudflare or D1.");
 assert.match(workflow, /workflow_dispatch:/);
-assert.doesNotMatch(workflow, /^\\s{2}(?:push|pull_request):/m, "Production deployment must remain manual-only.");
-assert.match(workflow, /environment:\\s+name: production/);
-assert.match(workflow, /inputs\\.release_authorization/);
-assert.match(workflow, /inputs\\.queue_configuration_ack/);
-assert.match(workflow, /inputs\\.backup_sha256/);
-assert.match(workflow, /inputs\\.d1_usage_checked_at/);
-assert.match(workflow, /inputs\\.restore_rehearsal_run_url/);
-assert.match(workflow, /inputs\\.restore_rehearsal_commit/);
+assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/m, "Production deployment must remain manual-only.");
+assert.match(workflow, /environment:\s+name: production/);
+assert.match(workflow, /inputs\.release_authorization/);
+assert.match(workflow, /inputs\.queue_configuration_ack/);
+assert.match(workflow, /inputs\.backup_sha256/);
+assert.match(workflow, /inputs\.d1_usage_checked_at/);
+assert.match(workflow, /inputs\.restore_rehearsal_run_url/);
+assert.match(workflow, /inputs\.restore_rehearsal_commit/);
 assert.doesNotMatch(workflow, /staging_acceptance|STAGING_ACCEPTANCE|worker-build-artifact/);
 assert.ok(restoreWorkflow.includes("github.ref == 'refs/heads/main'"));
 const preflightPosition = workflow.indexOf("node scripts/production-cutover-preflight.mjs");
@@ -187,7 +187,7 @@ const changedMigrationFetch = async url => {
 };
 await assert.rejects(
   verifyProductionCutoverEvidence(validEnv(), changedMigrationFetch, now),
-  /Restore rehearsal is stale; migration\\/replay files changed after it ran/,
+  /Restore rehearsal is stale; migration\/replay files changed after it ran/,
 );
 
 console.log("PASS production cutover preflight: production authorization, backup checksum/freshness, D1 usage freshness and reserve, queue authorization, restore rehearsal, candidate/main tree identity, and unchanged restore migration/replay files.");
