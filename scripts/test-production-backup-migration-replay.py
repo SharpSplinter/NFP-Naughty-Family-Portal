@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as temp:
         statements.append(
             "INSERT INTO d1_migrations (name) VALUES ('base_migration_%02d.sql');" % index
         )
-    sql.write_text("\\n".join(statements) + "\\n", encoding="utf-8")
+    sql.write_text("\n".join(statements) + "\n", encoding="utf-8")
 
     for number in range(13, 39):
         if number == 13:
@@ -50,11 +50,11 @@ with tempfile.TemporaryDirectory() as temp:
         else:
             body = f"CREATE TABLE migration_test_{number} (id INTEGER PRIMARY KEY);"
         filename = f"{number:04d}_fixture.sql"
-        (migrations / filename).write_text(body + "\\n", encoding="utf-8")
+        (migrations / filename).write_text(body + "\n", encoding="utf-8")
         if number < 38:
             with sql.open("a", encoding="utf-8") as stream:
                 stream.write(
-                    "INSERT INTO d1_migrations (name) VALUES ('" + filename + "');\\n"
+                    "INSERT INTO d1_migrations (name) VALUES ('" + filename + "');\n"
                 )
 
     original_sql = sql.read_text(encoding="utf-8")
@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory() as temp:
     # A missing previously-applied migration must not be mistaken for a valid
     # pending migration set.
     missing_prior_sql = original_sql.replace(
-        "INSERT INTO d1_migrations (name) VALUES ('0037_fixture.sql');\\n", ""
+        "INSERT INTO d1_migrations (name) VALUES ('0037_fixture.sql');\n", ""
     )
     sql.write_text(missing_prior_sql, encoding="utf-8")
     missing_prior_hash = hashlib.sha256(sql.read_bytes()).hexdigest()
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory() as temp:
 
     # The target migration must not already exist in the restored ledger.
     sql.write_text(
-        original_sql + "INSERT INTO d1_migrations (name) VALUES ('0038_fixture.sql');\\n",
+        original_sql + "INSERT INTO d1_migrations (name) VALUES ('0038_fixture.sql');\n",
         encoding="utf-8",
     )
     already_applied_hash = hashlib.sha256(sql.read_bytes()).hexdigest()
@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory() as temp:
     sql.write_text(original_sql, encoding="utf-8")
     destructive = migrations / "0038_fixture.sql"
     original = destructive.read_text()
-    destructive.write_text("DELETE FROM companies;\\n", encoding="utf-8")
+    destructive.write_text("DELETE FROM companies;\n", encoding="utf-8")
     try:
         module.replay_backup(sql, migrations, sql_hash)
         raise AssertionError("Expected a row-count decrease to be rejected.")
