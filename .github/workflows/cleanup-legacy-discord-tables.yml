@@ -23,6 +23,10 @@ on:
         description: Exact production API Worker version to verify before cleanup
         required: true
         type: string
+      expected_bot_version:
+        description: Exact production private daily-summary bot Worker version to verify before cleanup
+        required: true
+        type: string
       backup_reference:
         description: HTTPS reference to the encrypted dashboard D1 backup
         required: true
@@ -121,6 +125,7 @@ jobs:
           RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
           CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
           EXPECTED_API_VERSION: ${{ inputs.expected_api_version }}
+          EXPECTED_BOT_VERSION: ${{ inputs.expected_bot_version }}
           BACKUP_REFERENCE: ${{ inputs.backup_reference }}
           BACKUP_SHA256: ${{ inputs.backup_sha256 }}
           BACKUP_CREATED_AT: ${{ inputs.backup_created_at }}
