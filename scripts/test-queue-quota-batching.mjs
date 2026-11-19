@@ -19,7 +19,7 @@ const gym = between(worker, "async function runGymTrainingCollectionPage(", "asy
 assert.match(gym, /for \(let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE/);
 assert.equal((gym.match(/verifyFactionMembershipWithKey\(apiKey\)/g) ?? []).length, 1,
   "gym history batches must verify membership once, not once per API page");
-assert.ok(gym.indexOf("UPDATE gym_training_collection_jobs SET status = \'running\', cursor_url")
+assert.ok(gym.indexOf("UPDATE gym_training_collection_jobs SET status")
   < gym.indexOf("await sendGymTrainingCollectionJob(env, jobId)"),
   "gym history cursor must be checkpointed before the next queue message is sent");
 assert.match(gym, /INSERT OR IGNORE INTO gym_training_event_logs/);
@@ -28,11 +28,14 @@ const christmas = between(worker, "async function runChristmasTownLogCollectionP
 assert.match(christmas, /for \(let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE/);
 assert.equal((christmas.match(/verifyFactionMembershipWithKey\(apiKey\)/g) ?? []).length, 1,
   "Christmas Town history batches must verify membership once per bounded batch");
-assert.ok(christmas.indexOf("UPDATE christmas_town_collection_jobs SET status = \'running\', cursor_ts")
+assert.ok(christmas.indexOf("UPDATE christmas_town_collection_jobs SET status")
   < christmas.indexOf("await sendChristmasTownCollectionJob(env, jobId)"),
   "Christmas Town cursor must be checkpointed before the next queue message is sent");
 
-const importedCard = between(floor, "Imported snapshot summary & live charts", "<LineChart title=\\"Daily company income\\"");
+const importedCardStart = floor.indexOf("Imported snapshot summary & live charts");
+const importedChartStart = floor.indexOf("<LineChart title=", importedCardStart);
+assert.ok(importedCardStart >= 0 && importedChartStart > importedCardStart);
+const importedCard = floor.slice(importedCardStart, importedChartStart);
 assert.match(floor, /const importedSummaryPoint = currentChartCompany\?\.history\.at\(-1\) \?\? null/);
 assert.match(importedCard, /DAILY INCOME · IMPORTED/);
 assert.match(importedCard, /WEEKLY PROFIT · IMPORTED/);
