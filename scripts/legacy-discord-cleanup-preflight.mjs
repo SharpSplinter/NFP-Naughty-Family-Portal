@@ -71,6 +71,41 @@ async function cloudflareSqlQuery(databaseId, sql, token) {
 async function main() {
   const env = process.env;
   const now = Date.now();
+  function readEvidence(envKey, requiredFields) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(env[envKey] ?? ""));
+    } catch {
+      throw new Error(envKey + " must be valid JSON.");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(envKey + " must be a JSON object.");
+    }
+    for (const field of requiredFields) {
+      if (typeof parsed[field] !== "string" || !parsed[field].trim()) {
+        throw new Error(envKey + "." + field + " must be a non-empty string.");
+      }
+    }
+    return parsed;
+  }
+
+  const dashboardBackupEvidence = readEvidence("DASHBOARD_BACKUP_EVIDENCE", ["reference", "sha256", "created_at"]);
+  const botBackupEvidence = readEvidence("BOT_BACKUP_EVIDENCE", ["reference", "created_at"]);
+  const d1ReleaseEvidence = readEvidence("D1_RELEASE_EVIDENCE", [
+    "bookmark_reference", "usage_reference", "usage_checked_at",
+    "rows_read", "hard_stop_rows", "release_reserve_rows",
+  ]);
+  env.BACKUP_REFERENCE = dashboardBackupEvidence.reference;
+  env.BACKUP_SHA256 = dashboardBackupEvidence.sha256;
+  env.BACKUP_CREATED_AT = dashboardBackupEvidence.created_at;
+  env.BOT_BACKUP_REFERENCE = botBackupEvidence.reference;
+  env.BOT_BACKUP_CREATED_AT = botBackupEvidence.created_at;
+  env.TIME_TRAVEL_BOOKMARK_REFERENCE = d1ReleaseEvidence.bookmark_reference;
+  env.D1_USAGE_REFERENCE = d1ReleaseEvidence.usage_reference;
+  env.D1_USAGE_CHECKED_AT = d1ReleaseEvidence.usage_checked_at;
+  env.D1_ROWS_READ = d1ReleaseEvidence.rows_read;
+  env.D1_HARD_STOP_ROWS = d1ReleaseEvidence.hard_stop_rows;
+  env.D1_RELEASE_RESERVE_ROWS = d1ReleaseEvidence.release_reserve_rows;
   const required = [
     "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN", "GITHUB_SHA", "GITHUB_REF",
     "CANDIDATE_COMMIT", "EXPECTED_API_VERSION", "EXPECTED_BOT_VERSION", "RELEASE_AUTHORIZATION",
@@ -112,7 +147,8 @@ async function main() {
   const botBackupUrl = parseHttps(env.BOT_BACKUP_REFERENCE, "Bot database backup");
   const bookmarkUrl = parseHttps(env.TIME_TRAVEL_BOOKMARK_REFERENCE, "Time Travel bookmark");
   const usageUrl = parseHttps(env.D1_USAGE_REFERENCE, "D1 Insights reference");
-  if (backupUrl.hostname !== "drive.google.com" || botBackupUrl.hostname !== "drive.google.com") {
+  const driveHosts = new Set(["drive.google.com", "drive.usercontent.google.com"]);
+  if (!driveHosts.has(backupUrl.hostname) || !driveHosts.has(botBackupUrl.hostname)) {
     throw new Error("Both pre-cleanup backups must be stored in the connected Google Drive.");
   }
   if (bookmarkUrl.hostname !== "api.cloudflare.com" || usageUrl.hostname !== "api.cloudflare.com") {
