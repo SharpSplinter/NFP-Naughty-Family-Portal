@@ -11,6 +11,7 @@ const register = readFileSync(new URL("./register-commands.mjs", import.meta.url
 const ui = readFileSync(new URL("../src/components/floor/alerts-panel.tsx", import.meta.url), "utf8");
 const apiWorker = readFileSync(new URL("../src/worker/index.ts", import.meta.url), "utf8");
 const botSchema = readFileSync(new URL("./migrations/0001_bot_schema.sql", import.meta.url), "utf8");
+const botCleanupMigration = readFileSync(new URL("./migrations/0003_retire_legacy_alert_tables.sql", import.meta.url), "utf8");
 
 
 test("health is summary-only and unsigned requests are rejected", async () => {
@@ -73,7 +74,7 @@ test("scheduled Worker keeps the daily private summary and drops legacy poll/ale
   for (const required of ["runDailySummaryDelivery", "deliverDailyCompanySummary", "buildDailySummaryMessage", "isDailySummaryDue", "isDuringQuietHours", "alertsEnabled", "discord_daily_summary_deliveries", "discord_daily_company_summary_history"]) {
     assert.ok(workerSource.includes(required), `retained daily-summary contract must include ${required}`);
   }
-  for (const removed of ["pollPrivateAlerts", "discord_alert_poll_state", "discord_alert_poll_escalations", "alert_preferences", "/api/me/alerts", "/api/me/discord-alert-poll-health", "renderDashboardPanel"]) {
+  for (const removed of ["pollPrivateAlerts", "discord_alert_poll_state", "discord_alert_poll_escalations", "alert_preferences", "alert_deliveries", "discord_alert_deliveries", "discord_alert_state", "/api/me/alerts", "/api/me/discord-alert-poll-health", "renderDashboardPanel"]) {
     assert.equal(workerSource.includes(removed), false, `legacy bot surface must not include ${removed}`);
   }
 });
@@ -217,6 +218,12 @@ test("dashboard API no longer exposes or writes the removed poll-health telemetr
     assert.match(botSchema, new RegExp("CREATE TABLE IF NOT EXISTS " + table));
   }
   assert.doesNotMatch(botSchema, /CREATE TABLE IF NOT EXISTS (alert_preferences|discord_alert_poll_state|discord_alert_poll_escalations)/);
+  const retiredTables = ["alert_preferences", "alert_deliveries", "discord_alert_deliveries", "discord_alert_poll_escalations", "discord_alert_poll_state", "discord_alert_state"];
+  const droppedTables = [...botCleanupMigration.matchAll(/DROP TABLE IF EXISTS ([a-z0-9_]+)/g)].map((match) => match[1]);
+  assert.deepEqual(droppedTables, retiredTables, "cleanup migration must drop exactly the retired alert/poll tables");
+  for (const retained of ["discord_links", "discord_daily_summary_deliveries", "discord_daily_company_summary_state", "discord_daily_company_summary_history"]) {
+    assert.equal(droppedTables.includes(retained), false, `cleanup migration must retain ${retained}`);
+  }
 });
 
 test("Automation Center no longer polls old alert-health telemetry", () => {

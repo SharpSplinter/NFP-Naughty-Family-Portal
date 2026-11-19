@@ -14,9 +14,10 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_MIGRATION_NUMBERS = list(range(13, 39))
+EXPECTED_MIGRATION_NUMBERS = list(range(13, 40))
 EXPECTED_RESTORED_MIGRATION_COUNT = 42
-EXPECTED_PENDING_MIGRATION_NUMBERS = [38]
+EXPECTED_PENDING_MIGRATION_NUMBERS = [38, 39]
+EXPECTED_RETIRED_TABLES = {"discord_alert_poll_history", "discord_alert_poll_health"}
 
 
 def sha256_file(path: Path) -> str:
@@ -110,13 +111,13 @@ def replay_backup(
                 number = int(path.name.split("_", 1)[0])
             except ValueError:
                 continue
-            if 13 <= number <= 38:
+            if 13 <= number <= 39:
                 candidate_files.append(path)
 
         numbers = [int(path.name.split("_", 1)[0]) for path in candidate_files]
         if numbers != EXPECTED_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0038."
+                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0039."
             )
 
         prior_migrations = [
@@ -134,7 +135,7 @@ def replay_backup(
         pending_numbers = [int(path.name.split("_", 1)[0]) for path in pending]
         if pending_numbers != EXPECTED_PENDING_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "Expected only migration 0038 to be pending for this production backup; "
+                "Expected only migrations 0038 and 0039 to be pending for this production backup; "
                 f"found {pending_numbers}."
             )
 
@@ -146,7 +147,14 @@ def replay_backup(
             )
 
         before_counts = application_table_counts(connection)
+        missing_retired_tables = sorted(EXPECTED_RETIRED_TABLES - set(before_counts))
+        if missing_retired_tables:
+            raise RuntimeError(
+                "The production backup is missing expected retired Discord tables: "
+                + ", ".join(missing_retired_tables)
+            )
         before_total = sum(before_counts.values())
+        retired_rows_removed = sum(before_counts[name] for name in EXPECTED_RETIRED_TABLES)
 
         for migration in pending:
             sql = migration.read_text(encoding="utf-8")
@@ -161,15 +169,22 @@ def replay_backup(
 
         after_counts = application_table_counts(connection)
         missing_tables = sorted(set(before_counts) - set(after_counts))
-        if missing_tables:
+        unexpected_missing_tables = sorted(set(missing_tables) - EXPECTED_RETIRED_TABLES)
+        if unexpected_missing_tables:
             raise RuntimeError(
-                "A table present in the restored backup disappeared during replay: "
-                + ", ".join(missing_tables[:12])
+                "A non-retired table present in the restored backup disappeared during replay: "
+                + ", ".join(unexpected_missing_tables[:12])
+            )
+        remaining_retired_tables = sorted(EXPECTED_RETIRED_TABLES.intersection(after_counts))
+        if remaining_retired_tables:
+            raise RuntimeError(
+                "The cleanup migration did not remove all retired Discord tables: "
+                + ", ".join(remaining_retired_tables)
             )
 
         decreased_tables = sorted(
             name for name, count in before_counts.items()
-            if after_counts[name] < count
+            if name not in EXPECTED_RETIRED_TABLES and after_counts.get(name, -1) < count
         )
         if decreased_tables:
             details = ", ".join(
@@ -210,7 +225,9 @@ def replay_backup(
             "final_application_table_count": len(after_counts),
             "starting_application_row_count": before_total,
             "final_application_row_count": sum(after_counts.values()),
-            "preserved_existing_tables": len(before_counts),
+            "preserved_existing_tables": len(before_counts) - len(EXPECTED_RETIRED_TABLES),
+            "retired_tables_dropped": sorted(EXPECTED_RETIRED_TABLES),
+            "retired_rows_removed": retired_rows_removed,
             "row_count_decreases": 0,
             "integrity_check": integrity,
             "foreign_key_violations": len(foreign_key_violations),
@@ -248,6 +265,7 @@ def main() -> int:
         "PASS local production-data migration replay: "
         f"{len(report['replayed_migrations'])} migrations, "
         f"{report['preserved_existing_tables']} existing tables preserved, "
+        f"{len(report['retired_tables_dropped'])} explicitly retired tables, "
         f"{report['foreign_key_violations']} foreign-key violations."
     )
     print(f"SQLite integrity_check: {report['integrity_check']}")

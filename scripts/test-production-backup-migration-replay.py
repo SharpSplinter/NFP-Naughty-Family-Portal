@@ -17,7 +17,6 @@ with tempfile.TemporaryDirectory() as temp:
     migrations = root / "migrations"
     migrations.mkdir()
     sql = root / "restored.sql"
-    report = root / "report.json"
 
     statements = [
         "PRAGMA defer_foreign_keys=TRUE;",
@@ -28,16 +27,19 @@ with tempfile.TemporaryDirectory() as temp:
         "INSERT INTO archive_children (id, parent_id) VALUES (1, 7);",
         "CREATE TABLE archive_parents (id INTEGER PRIMARY KEY, label TEXT NOT NULL);",
         "INSERT INTO archive_parents (id, label) VALUES (7, 'Parent declared after child');",
+        "CREATE TABLE discord_alert_poll_history (report_id TEXT PRIMARY KEY, payload TEXT NOT NULL);",
+        "INSERT INTO discord_alert_poll_history VALUES ('poll-1', 'one'), ('poll-2', 'two');",
+        "CREATE TABLE discord_alert_poll_health (owner_player_id TEXT PRIMARY KEY, status TEXT NOT NULL);",
+        "INSERT INTO discord_alert_poll_health VALUES ('player-1', 'ok');",
     ]
-    # The production export has 17 historical ledger entries before the
-    # numbered 0013-0037 migration series: 17 + 25 = 42 applied entries.
+    # Production has 17 historical ledger entries plus numbered migrations 0013-0037.
     for index in range(17):
         statements.append(
             "INSERT INTO d1_migrations (name) VALUES ('base_migration_%02d.sql');" % index
         )
     sql.write_text("\n".join(statements) + "\n", encoding="utf-8")
 
-    for number in range(13, 39):
+    for number in range(13, 40):
         if number == 13:
             body = "ALTER TABLE companies ADD COLUMN notes TEXT;"
         elif number == 14:
@@ -46,7 +48,13 @@ with tempfile.TemporaryDirectory() as temp:
                 "FOREIGN KEY(company_id) REFERENCES companies(id));"
             )
         elif number == 38:
-            body = "CREATE TABLE migration_test_38 (id INTEGER PRIMARY KEY);"
+            body = "CREATE TABLE global_company_rank_snapshot_meta_fixture (id INTEGER PRIMARY KEY);"
+        elif number == 39:
+            body = (
+                "DROP TABLE IF EXISTS discord_alert_poll_history;\n"
+                "DROP TABLE IF EXISTS discord_alert_poll_health;\n"
+                "CREATE TABLE migration_test_39 (id INTEGER PRIMARY KEY);"
+            )
         else:
             body = f"CREATE TABLE migration_test_{number} (id INTEGER PRIMARY KEY);"
         filename = f"{number:04d}_fixture.sql"
@@ -63,14 +71,18 @@ with tempfile.TemporaryDirectory() as temp:
     result = module.replay_backup(sql, migrations, sql_hash)
     assert result["result"] == "success"
     assert result["starting_migration_count"] == 42
-    assert result["final_migration_count"] == 43
+    assert result["final_migration_count"] == 44
     assert result["preserved_existing_tables"] == 3
-    assert result["starting_application_row_count"] == 4
+    assert result["starting_application_row_count"] == 7
+    assert result["retired_tables_dropped"] == [
+        "discord_alert_poll_health",
+        "discord_alert_poll_history",
+    ]
+    assert result["retired_rows_removed"] == 3
     assert result["foreign_key_violations"] == 0
-    assert result["replayed_migrations"] == ["0038_fixture.sql"]
+    assert result["replayed_migrations"] == ["0038_fixture.sql", "0039_fixture.sql"]
 
-    # A missing previously-applied migration must not be mistaken for a valid
-    # pending migration set.
+    # A missing previously-applied migration must not be mistaken for a valid pending set.
     missing_prior_sql = original_sql.replace(
         "INSERT INTO d1_migrations (name) VALUES ('0037_fixture.sql');\n", ""
     )
@@ -82,7 +94,7 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as error:
         assert "missing previously applied migrations" in str(error)
 
-    # The target migration must not already exist in the restored ledger.
+    # Either target migration already being recorded makes the expected pending set invalid.
     sql.write_text(
         original_sql + "INSERT INTO d1_migrations (name) VALUES ('0038_fixture.sql');\n",
         encoding="utf-8",
@@ -92,20 +104,41 @@ with tempfile.TemporaryDirectory() as temp:
         module.replay_backup(sql, migrations, already_applied_hash)
         raise AssertionError("Expected an already-applied target migration to be rejected.")
     except RuntimeError as error:
-        assert "Expected only migration 0038 to be pending" in str(error)
+        assert "Expected only migrations 0038 and 0039 to be pending" in str(error)
 
-    # A replay that removes restored company rows must fail preservation checks.
+    # Decreasing a retained company's row count is still forbidden during cleanup replay.
     sql.write_text(original_sql, encoding="utf-8")
     destructive = migrations / "0038_fixture.sql"
-    original = destructive.read_text()
-    destructive.write_text("DELETE FROM companies;\n", encoding="utf-8")
+    original = destructive.read_text(encoding="utf-8")
+    destructive.write_text(
+        "DELETE FROM companies;\nCREATE TABLE global_company_rank_snapshot_meta_fixture (id INTEGER PRIMARY KEY);\n",
+        encoding="utf-8",
+    )
     try:
         module.replay_backup(sql, migrations, sql_hash)
-        raise AssertionError("Expected a row-count decrease to be rejected.")
+        raise AssertionError("Expected a retained-table row-count decrease to be rejected.")
     except RuntimeError as error:
         assert "row counts decreased" in str(error)
     finally:
         destructive.write_text(original, encoding="utf-8")
+
+    # A migration may not silently remove an unrelated restored table.
+    sql.write_text(original_sql, encoding="utf-8")
+    destructive_cleanup = migrations / "0039_fixture.sql"
+    original_cleanup = destructive_cleanup.read_text(encoding="utf-8")
+    destructive_cleanup.write_text(
+        "DROP TABLE companies;\n"
+        "DROP TABLE discord_alert_poll_history;\n"
+        "DROP TABLE discord_alert_poll_health;\n",
+        encoding="utf-8",
+    )
+    try:
+        module.replay_backup(sql, migrations, sql_hash)
+        raise AssertionError("Expected an unrelated table drop to be rejected.")
+    except RuntimeError as error:
+        assert "non-retired table" in str(error)
+    finally:
+        destructive_cleanup.write_text(original_cleanup, encoding="utf-8")
 
     try:
         module.replay_backup(sql, migrations, "0" * 64)
@@ -113,4 +146,7 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as error:
         assert "SHA-256 did not match" in str(error)
 
-print("PASS local production-backup migration replay harness: 42-entry production ledger, one pending 0038 migration, integrity, foreign keys, row preservation, and checksum guard.")
+print(
+    "PASS local production-backup migration replay harness: 42-entry ledger, exact pending migrations 0038-0039, "
+    "explicit two-table retirement, retained-row preservation, integrity, foreign keys, and checksum guard."
+)
