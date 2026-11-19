@@ -61,10 +61,26 @@ jobs:
           set -euo pipefail
           set +x
           archive="$RUNNER_TEMP/production-d1-backup.tar.gz.gpg"
-          curl --fail --location --silent --show-error --retry 2 --retry-delay 3 "$BACKUP_URL" --output "$archive"
+          download_url="$BACKUP_URL"
+
+          # Drive's legacy /uc endpoint can return a viewer/interstitial response to
+          # non-browser clients. Use its binary download host to force raw file bytes.
+          if [[ "$BACKUP_URL" == https://drive.google.com/uc\?* ]]; then
+            download_url="https://drive.usercontent.google.com/download?${BACKUP_URL#*\?}"
+          fi
+          [[ "$download_url" == *confirm=* ]] || download_url="${download_url}&confirm=t"
+          [[ "$download_url" == *authuser=* ]] || download_url="${download_url}&authuser=0"
+
+          content_type="$(curl --fail --location --silent --show-error --retry 2 --retry-delay 3 \
+            --header 'Accept: application/octet-stream' \
+            --output "$archive" --write-out '%{content_type}' "$download_url")"
           actual="$(sha256sum "$archive" | awk '{print $1}')"
-          test "$actual" = "$ARCHIVE_SHA256" || { echo "::error::Encrypted archive checksum mismatch."; exit 1; }
-          echo "Encrypted archive downloaded and SHA-256 verified against the Drive sidecar value."
+          actual_bytes="$(stat -c '%s' "$archive")"
+          if [[ "$actual" != "$ARCHIVE_SHA256" ]]; then
+            echo "::error::Encrypted archive checksum mismatch (expected $ARCHIVE_SHA256, received $actual, bytes $actual_bytes, content type $content_type)."
+            exit 1
+          fi
+          echo "Encrypted archive downloaded as raw bytes and SHA-256 verified against the Drive sidecar value."
 
       - name: Decrypt into ephemeral runner storage
         env:
