@@ -4631,6 +4631,15 @@ try {
           },
           async all() {
             if (normalized.startsWith("pragma table_info(admin_jobs)")) return { results: [{ name: "job_payload_json" }] }
+            if (normalized.startsWith("insert into halloween_api_throttles")) {
+              const [playerIdValue, nowValue] = values
+              const playerId = String(playerIdValue)
+              const nowMs = Number(nowValue)
+              const previous = halloweenTables.halloween_api_throttles.get(playerId)?.last_request_at
+              const reservedAt = previous === undefined ? nowMs : Math.max(Number(previous) + 800, nowMs)
+              halloweenTables.halloween_api_throttles.set(playerId, { player_id: playerId, last_request_at: reservedAt })
+              return { results: [{ last_request_at: reservedAt }] }
+            }
             return { results: [] }
           },
           async run() {
