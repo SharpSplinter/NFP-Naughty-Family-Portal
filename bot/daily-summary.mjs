@@ -17,7 +17,12 @@ export function previousReportingDay(day) {
 export function isDailySummaryDue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) return false;
-  return date.getUTCHours() > 18 || (date.getUTCHours() === 18 && date.getUTCMinutes() >= 20);
+  // Each Torn reporting day runs 18:00 UTC to 18:00 UTC the next day.
+  // Start polling 20 minutes into that window, then keep hourly retries
+  // eligible through the remainder of the same reporting day (including
+  // overnight) so quiet-hours deferrals do not wait for the next rollover.
+  const minutesIntoReportingDay = (date.getUTCHours() * 60 + date.getUTCMinutes() - 18 * 60 + 24 * 60) % (24 * 60);
+  return minutesIntoReportingDay >= 20;
 }
 
 export function calculateRankingMetrics(company, rankingRows) {

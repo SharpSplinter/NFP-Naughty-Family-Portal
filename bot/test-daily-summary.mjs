@@ -10,11 +10,19 @@ import {
   summaryMetricValues,
 } from "./daily-summary.mjs";
 
-test("Torn reporting day rolls over at 18:00 UTC and daily report waits until 18:20 UTC", () => {
+test("Torn reporting day rolls over at 18:00 UTC and summary retries remain eligible through quiet hours", () => {
   assert.equal(reportingDayAt("2026-10-20T17:59:59.000Z"), "2026-10-19");
   assert.equal(reportingDayAt("2026-10-20T18:00:00.000Z"), "2026-10-20");
   assert.equal(isDailySummaryDue("2026-10-20T18:19:59.000Z"), false);
   assert.equal(isDailySummaryDue("2026-10-20T18:20:00.000Z"), true);
+  assert.equal(isDailySummaryDue("2026-10-20T23:20:00.000Z"), true);
+  assert.equal(isDailySummaryDue("2026-10-21T00:20:00.000Z"), true);
+  assert.equal(isDailySummaryDue("2026-10-21T08:20:00.000Z"), true);
+  assert.equal(reportingDayAt("2026-10-21T08:20:00.000Z"), "2026-10-20");
+  assert.equal(isDailySummaryDue("2026-10-21T17:59:59.000Z"), true);
+  assert.equal(isDailySummaryDue("2026-10-21T18:00:00.000Z"), false);
+  assert.equal(isDailySummaryDue("2026-10-21T18:19:59.000Z"), false);
+  assert.equal(isDailySummaryDue("2026-10-21T18:20:00.000Z"), true);
   assert.equal(previousReportingDay("2026-10-20"), "2026-10-19");
 });
 
