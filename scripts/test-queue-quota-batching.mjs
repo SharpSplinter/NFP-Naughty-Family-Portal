@@ -19,7 +19,7 @@ const gym = between(worker, "async function runGymTrainingCollectionPage(", "asy
 assert.match(gym, /for \(let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE/);
 assert.equal((gym.match(/verifyFactionMembershipWithKey\(apiKey\)/g) ?? []).length, 1,
   "gym history batches must verify membership once, not once per API page");
-assert.ok(gym.indexOf("UPDATE gym_training_collection_jobs SET status")
+assert.ok(gym.indexOf("UPDATE gym_training_collection_jobs SET status = 'running'")
   < gym.indexOf("await sendGymTrainingCollectionJob(env, jobId)"),
   "gym history cursor must be checkpointed before the next queue message is sent");
 assert.match(gym, /INSERT OR IGNORE INTO gym_training_event_logs/);
@@ -28,7 +28,7 @@ const christmas = between(worker, "async function runChristmasTownLogCollectionP
 assert.match(christmas, /for \(let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE/);
 assert.equal((christmas.match(/verifyFactionMembershipWithKey\(apiKey\)/g) ?? []).length, 1,
   "Christmas Town history batches must verify membership once per bounded batch");
-assert.ok(christmas.indexOf("UPDATE christmas_town_collection_jobs SET status")
+assert.ok(christmas.indexOf("UPDATE christmas_town_collection_jobs SET status = 'running'")
   < christmas.indexOf("await sendChristmasTownCollectionJob(env, jobId)"),
   "Christmas Town cursor must be checkpointed before the next queue message is sent");
 
