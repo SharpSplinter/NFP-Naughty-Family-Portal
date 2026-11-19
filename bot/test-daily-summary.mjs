@@ -4,6 +4,7 @@ import {
   buildDailySummaryMessage,
   calculateRankingMetrics,
   isDailySummaryDue,
+  isDuringQuietHours,
   previousReportingDay,
   reportingDayAt,
   summaryMetricValues,
@@ -98,6 +99,15 @@ test("maximum star level marks next-star gap as not applicable", () => {
     }],
   });
   assert.ok(message.includes("Income gap to next star: N/A (maximum star level) | no change vs prior day"));
+});
+
+
+test("daily summary respects account quiet hours across midnight and IANA time zones", () => {
+  const preferences = { quietHoursEnabled: true, quietHoursStart: "22:00", quietHoursEnd: "08:00", timezone: "America/New_York" };
+  assert.equal(isDuringQuietHours(preferences, "2026-10-20T02:00:00.000Z"), true); // 22:00 EDT
+  assert.equal(isDuringQuietHours(preferences, "2026-10-20T14:00:00.000Z"), false); // 10:00 EDT
+  assert.equal(isDuringQuietHours({ ...preferences, quietHoursEnabled: false }, "2026-10-20T02:00:00.000Z"), false);
+  assert.equal(isDuringQuietHours({ ...preferences, quietHoursStart: "08:00", quietHoursEnd: "08:00" }, "2026-10-20T02:00:00.000Z"), false);
 });
 
 console.log("PASS daily company summary: reporting-day boundary, delay, rank math, metric deltas, and missing-data handling.");

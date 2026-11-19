@@ -5,7 +5,7 @@ import { commandSchemaDifferences } from "./command-schema-contract.mjs";
 
 const APP_ID = process.env.DISCORD_APP_ID || "1558700958983389254";
 const GUILD_ID = process.env.DISCORD_GUILD_ID || "1525623497999515770";
-const DEPRECATED_ROOT_ALIASES = new Set(["overview", "employees", "trends", "alerts", "rankings"]);
+const DEPRECATED_ROOT_ALIASES = new Set(["overview", "employees", "trends", "alerts", "rankings", "company", "automation", "dashboard", "bot", "help", "ping"]);
 // Flat aliases from earlier command layouts must be removed after nested roots are synced.
 const LEGACY_FLAT_ROOT_ALIASES = new Set([
   "bot-status",
@@ -132,8 +132,8 @@ export async function registerCommands({
     }
   }
 
-  // Remove only known legacy aliases and flattened forms of nested bot commands.
-  // Other guild commands, including context-menu commands with the same name, stay untouched.
+  // Remove every retired bot root and known flattened bot command.
+  // Unrelated guild commands and context-menu commands with matching names stay untouched.
   for (const stale of existing) {
     if ((!DEPRECATED_ROOT_ALIASES.has(stale.name) && !isLegacyFlatRootName(stale.name)) ||
         (stale.type !== undefined && stale.type !== 1) || !stale.id) continue;
@@ -167,8 +167,8 @@ export async function registerCommands({
   if (remainingFlatRoots.length) {
     throw new Error("Obsolete flat command roots remain registered: " + remainingFlatRoots.map(item => "/" + item.name).join(", "));
   }
-  log("Verified nested command trees for all " + commands.length + " canonical roots, including /company and /automation.");
-  log("Verified no obsolete flat aliases remain; unrelated commands were preserved.");
+  log("Verified the four private-summary account-linking commands.");
+  log("Verified retired bot commands were removed; unrelated commands were preserved.");
   return { checkToken: false, registeredCount: commands.length };
 }
 
