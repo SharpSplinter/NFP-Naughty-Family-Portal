@@ -58,6 +58,10 @@ jobs:
         run: node bot/test-register-commands.mjs
       - name: Test production Worker health contract
         run: node bot/test-production-health.mjs
+      - name: Verify Discord User Install is enabled (read-only)
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: node bot/configure-production-endpoint.mjs --check-install
       - name: Ensure production deployment is manual-only and main-only
         run: node bot/test-production-deploy-trigger.mjs
       - name: Validate production-only Worker and database targets
