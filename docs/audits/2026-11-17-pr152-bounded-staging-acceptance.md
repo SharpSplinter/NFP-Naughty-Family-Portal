@@ -83,3 +83,5 @@ This record replaces the earlier runtime SHA only for the current candidate's bo
 - No migration or fixture seeding was run for this bounded acceptance.
 - The staging-only D1 and Queue activity above remained within the bounded acceptance scope. **No production D1 data, Worker, Pages, Torn, or Queue resource was changed or used for the acceptance.** Separate production D1 Insights/bookmark/ledger checks were read-only cutover-preflight evidence only.
 - The portal's production cutover reserve/hard stop remains enforced by the protected production workflow; this staging record does not itself authorize a production deployment.
+
+<!-- PR validation refresh: evidence content above is unchanged; this line records the follow-up validation pass. -->
