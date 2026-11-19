@@ -40,7 +40,7 @@ export const SESSION_ACCESS_SQL = `
   LEFT JOIN admin_settings maintenance
     ON maintenance.setting_key = 'maintenanceMode'
   WHERE s.token_hash = ? AND s.expires_at > ?
-`.trim()
+`.replace(/\s+/g, " ").trim()
 
 export async function loadSessionAccess<T extends SessionAccessMetadata>(
   db: OptimizedD1Database,
