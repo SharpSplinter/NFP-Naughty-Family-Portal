@@ -5003,6 +5003,192 @@ try {
     }
   })
 
+
+  await test("D1 optimization combines authentication checks in one indexed query without weakening access control", async () => {
+    let preparedSql = ""
+    let bindings = []
+    let firstCalls = 0
+    const database = {
+      prepare(sql) {
+        preparedSql = sql
+        return {
+          bind(...values) { bindings = values; return this },
+          async first() {
+            firstCalls += 1
+            return {
+              player_id: "member-1",
+              player_name: "Member",
+              is_admin: 0,
+              disabled_at: null,
+              maintenance_mode_json: "true",
+            }
+          },
+        }
+      },
+    }
+    const row = await loadSessionAccess(database, "hashed-session", 1_800_000_000)
+    assert.equal(firstCalls, 1, "session and all access checks must be one D1 lookup")
+    assert.deepEqual(bindings, ["hashed-session", 1_800_000_000])
+    assert.equal(preparedSql, SESSION_ACCESS_SQL)
+    assert.match(preparedSql, /JOIN sessions s/)
+    assert.match(preparedSql, /LEFT JOIN administrators a ON a\.player_id = p\.player_id AND a\.revoked_at IS NULL/)
+    assert.match(preparedSql, /LEFT JOIN dashboard_member_status st/)
+    assert.match(preparedSql, /LEFT JOIN admin_settings maintenance/)
+    assert.equal(sessionAccessIsDenied(row), true, "maintenance mode must deny ordinary members")
+    assert.equal(sessionAccessIsDenied({ ...row, is_admin: 1 }), false, "active administrators retain maintenance-mode access")
+    assert.equal(sessionAccessIsDenied({ ...row, is_admin: 1, disabled_at: "2026-11-18T00:00:00Z" }), true,
+      "disabled status must deny access even to an administrator")
+    assert.equal(sessionAccessIsDenied({ ...row, maintenance_mode_json: "false" }), false)
+    assert.equal(sessionAccessIsDenied({ ...row, maintenance_mode_json: "not-json" }), false)
+    assert.equal(sessionAccessIsDenied(null), true)
+  })
+
+  await test("automation preference GET returns defaults without writing and preserves saved preferences", async () => {
+    const calls = []
+    const database = {
+      prepare(sql) {
+        calls.push({ method: "prepare", sql })
+        return {
+          bind(value) { calls.push({ method: "bind", value }); return this },
+          async first() { calls.push({ method: "first" }); return null },
+          async run() { calls.push({ method: "run" }); return { meta: { changes: 1 } } },
+        }
+      },
+    }
+    const defaults = await readAutomationPreferences(database, "member-2")
+    assert.deepEqual(defaults, DEFAULT_AUTOMATION_PREFERENCES)
+    assert.deepEqual(calls.map(call => call.method), ["prepare", "bind", "first"],
+      "a preference GET must not issue an INSERT, UPDATE, or DELETE")
+    assert.match(calls[0].sql, /^SELECT[\s\S]*FROM automation_preferences/)
+    assert.doesNotMatch(calls[0].sql, /INSERT|UPDATE|DELETE/i)
+
+    const saved = { browserNotificationsEnabled: 1, quietHoursEnabled: 1, timezone: "America/New_York" }
+    const savedDatabase = {
+      prepare(sql) {
+        assert.match(sql, /^SELECT/)
+        return { bind() { return this }, async first() { return saved } }
+      },
+    }
+    assert.deepEqual(await readAutomationPreferences(savedDatabase, "member-2"), saved)
+  })
+
+  await test("Halloween throttle reserves unique per-player 800 ms slots atomically under concurrency", async () => {
+    const reservedByPlayer = new Map()
+    let statementCount = 0
+    const database = {
+      prepare(sql) {
+        assert.match(sql, /INSERT INTO halloween_api_throttles/)
+        assert.match(sql, /ON CONFLICT\(player_id\) DO UPDATE/)
+        assert.match(sql, /MAX\(halloween_api_throttles\.last_request_at \+ 800, excluded\.last_request_at\)/)
+        assert.match(sql, /RETURNING last_request_at/)
+        let values = []
+        return {
+          bind(...args) { values = args; return this },
+          async all() {
+            statementCount += 1
+            const [playerId, nowMs] = values
+            const previous = reservedByPlayer.get(playerId)
+            const reservedAt = previous === undefined ? nowMs : Math.max(previous + 800, nowMs)
+            reservedByPlayer.set(playerId, reservedAt)
+            return { results: [{ last_request_at: reservedAt }] }
+          },
+        }
+      },
+    }
+    const results = await Promise.all(Array.from({ length: 5 }, () =>
+      reserveHalloweenRequestSlot(database, "same-player", 10_000, async () => {})))
+    assert.equal(statementCount, 5, "each request must issue exactly one atomic D1 statement")
+    assert.deepEqual(results.map(item => item.reservedAt).sort((a, b) => a - b),
+      [10_000, 10_800, 11_600, 12_400, 13_200])
+    assert.deepEqual(results.map(item => item.waitMs).sort((a, b) => a - b),
+      [0, 800, 1_600, 2_400, 3_200])
+    const otherPlayer = await reserveHalloweenRequestSlot(database, "other-player", 10_000, async () => {})
+    assert.deepEqual(otherPlayer, { reservedAt: 10_000, waitMs: 0 }, "reservations must be isolated by player ID")
+  })
+
+  await test("global ranking endpoint reads singleton metadata and publishes it with the completed snapshot", async () => {
+    let metadata = null
+    let reads = 0
+    let writes = 0
+    const database = {
+      prepare(sql) {
+        if (sql.includes("SELECT") && sql.includes("global_company_rank_snapshot_meta")) {
+          assert.match(sql, /WHERE singleton_id = 1/)
+          assert.doesNotMatch(sql, /MAX\(|COUNT\(\*\)|global_company_rank_snapshots/,
+            "normal requests must not scan the historical snapshot table")
+          return { async first() { reads += 1; return metadata } }
+        }
+        if (sql.includes("INSERT INTO global_company_rank_snapshot_meta")) {
+          return {
+            bind(...values) { this.values = values; return this },
+            async run() {
+              writes += 1
+              const [reportingDay, sourceFetchedAt, companyCount, updatedAt] = this.values
+              metadata = { reportingDay, sourceFetchedAt, companyCount, updatedAt }
+              return { success: true }
+            },
+          }
+        }
+        throw new Error("Unexpected ranking metadata SQL: " + sql)
+      },
+    }
+    assert.equal(await readGlobalRankingSnapshotMetadata(database), null)
+    const snapshot = {
+      reportingDay: "2026-11-18",
+      sourceFetchedAt: "2026-11-18T18:11:03.763Z",
+      companyCount: 15_362,
+      updatedAt: "2026-11-18T18:11:04.000Z",
+    }
+    await writeGlobalRankingSnapshotMetadata(database, snapshot)
+    assert.deepEqual(await readGlobalRankingSnapshotMetadata(database), snapshot)
+    assert.equal(reads, 2)
+    assert.equal(writes, 1)
+
+    const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    const rankingStart = workerSource.indexOf('if (url.pathname === "/api/rankings" && request.method === "GET")')
+    const rankingEnd = workerSource.indexOf("const rows = await requireDb(env).prepare", rankingStart)
+    const rankingHandler = workerSource.slice(rankingStart, rankingEnd)
+    assert.ok(rankingStart >= 0 && rankingEnd > rankingStart)
+    assert.match(rankingHandler, /readGlobalRankingSnapshotMetadata/)
+    assert.doesNotMatch(rankingHandler, /MAX\(source_fetched_at\)|COUNT\(\*\).*global_company_rank_snapshots/)
+    const finalizeStart = workerSource.indexOf("async function finalizeGlobalRankingRefresh")
+    const finalizeEnd = workerSource.indexOf("async function processGlobalRankingQueueMessage", finalizeStart)
+    assert.match(workerSource.slice(finalizeStart, finalizeEnd), /writeGlobalRankingSnapshotMetadata/)
+    const migration = readFileSync(join(root, "migrations/auth/0038_global_company_rank_snapshot_meta.sql"), "utf8")
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS global_company_rank_snapshot_meta/)
+    assert.match(migration, /MAX\(source_fetched_at\)/)
+    assert.match(migration, /COUNT\(\*\)/)
+    assert.doesNotMatch(migration, /DELETE FROM global_company_rank_snapshots|DROP TABLE/i,
+      "the metadata migration must not delete history")
+  })
+
+  await test("production Worker routes call all four D1 optimization helpers", () => {
+    const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    const optimizationSource = readFileSync(join(root, "src/worker/d1-optimizations.ts"), "utf8")
+    const authStart = workerSource.indexOf("async function authenticateUncached")
+    const authEnd = workerSource.indexOf("async function validateTornKey", authStart)
+    const authBody = workerSource.slice(authStart, authEnd)
+    assert.match(workerSource, /from "\.\/d1-optimizations"/)
+    assert.match(authBody, /loadSessionAccess/)
+    assert.match(authBody, /sessionAccessIsDenied/)
+    assert.doesNotMatch(authBody, /SELECT disabled_at FROM dashboard_member_status/)
+    assert.doesNotMatch(authBody, /readAdminBoolean\(env, "maintenanceMode"/)
+
+    const throttleStart = workerSource.indexOf("async function throttleHalloweenRequest")
+    const throttleEnd = workerSource.indexOf("async function getHalloweenHistoricalCollectionKey", throttleStart)
+    assert.match(workerSource.slice(throttleStart, throttleEnd), /reserveHalloweenRequestSlot/)
+    assert.doesNotMatch(workerSource.slice(throttleStart, throttleEnd), /SELECT last_request_at/)
+
+    const prefsStart = workerSource.indexOf('if (preferencesPath && request.method === "GET")')
+    const prefsEnd = workerSource.indexOf('if (webhookPath && request.method === "GET")', prefsStart)
+    const prefsBody = workerSource.slice(prefsStart, prefsEnd)
+    assert.match(prefsBody, /readAutomationPreferences/)
+    assert.doesNotMatch(prefsBody, /INSERT OR IGNORE INTO automation_preferences/)
+
+    assert.match(optimizationSource, /DEFAULT_AUTOMATION_PREFERENCES/)
+    assert.match(optimizationSource, /HALLOWEEN_THROTTLE_RESERVATION_SQL/)
+  })
+
   await test("daily report cache follows the 18:00 UTC reporting boundary and fails closed for live tables", () => {
     assert.equal(dailyReportingDay(Date.parse("2026-11-15T17:59:59.000Z")), "2026-11-14")
     assert.equal(dailyReportingDay(Date.parse("2026-11-15T18:00:00.000Z")), "2026-11-15")
