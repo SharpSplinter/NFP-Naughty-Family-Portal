@@ -83,21 +83,21 @@ jobs:
 
       - name: Verify live Worker, backups, restore rehearsal and fresh D1 reserve before changes
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: \${{ github.repository }}
-          GITHUB_REF: \${{ github.ref }}
-          GITHUB_SHA: \${{ github.sha }}
-          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CONFIRM_TARGET: \${{ inputs.confirm_target }}
-          RELEASE_AUTHORIZATION: \${{ inputs.release_authorization }}
-          CANDIDATE_COMMIT: \${{ inputs.candidate_commit }}
-          EXPECTED_API_VERSION: \${{ inputs.expected_api_version }}
-          EXPECTED_BOT_VERSION: \${{ inputs.expected_bot_version }}
-          DASHBOARD_BACKUP_EVIDENCE: \${{ inputs.dashboard_backup_evidence }}
-          BOT_BACKUP_EVIDENCE: \${{ inputs.bot_backup_evidence }}
-          D1_RELEASE_EVIDENCE: \${{ inputs.d1_release_evidence }}
-          RESTORE_REHEARSAL_RUN_URL: \${{ inputs.restore_rehearsal_run_url }}
-          RESTORE_REHEARSAL_COMMIT: \${{ inputs.restore_rehearsal_commit }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONFIRM_TARGET: ${{ inputs.confirm_target }}
+          RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          EXPECTED_API_VERSION: ${{ inputs.expected_api_version }}
+          EXPECTED_BOT_VERSION: ${{ inputs.expected_bot_version }}
+          DASHBOARD_BACKUP_EVIDENCE: ${{ inputs.dashboard_backup_evidence }}
+          BOT_BACKUP_EVIDENCE: ${{ inputs.bot_backup_evidence }}
+          D1_RELEASE_EVIDENCE: ${{ inputs.d1_release_evidence }}
+          RESTORE_REHEARSAL_RUN_URL: ${{ inputs.restore_rehearsal_run_url }}
+          RESTORE_REHEARSAL_COMMIT: ${{ inputs.restore_rehearsal_commit }}
         run: node scripts/legacy-discord-cleanup-preflight.mjs
 
       - name: Remove retired Discord poll telemetry from dashboard D1
