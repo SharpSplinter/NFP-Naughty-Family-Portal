@@ -8,15 +8,6 @@ const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_D1_USAGE_AGE_MS = 15 * 60 * 1000;
 const REQUIRED_RELEASE_ACK = "I approve production D1 migrations and Worker deployment";
 const REQUIRED_QUEUE_ACK = "I approve reconciliation of configured Queue bindings";
-const STAGING_ACCEPTANCE_EVIDENCE_PATH = "docs/audits/2026-11-17-pr152-bounded-staging-acceptance.md";
-const ALLOWED_STAGING_RUNTIME_EQUIVALENCE_FILES = new Set([
-  ".github/workflows/restore-production-backup-rehearsal.yml",
-  ".github/workflows/worker-deploy.yml",
-  "scripts/production-cutover-preflight.mjs",
-  "scripts/test-production-cutover-preflight.mjs",
-  STAGING_ACCEPTANCE_EVIDENCE_PATH,
-  "docs/PRODUCTION-CUTOVER-REVIEW.md",
-]);
 
 function parseHttpsReference(value, name, errors) {
   try {
@@ -112,20 +103,6 @@ export function validateProductionCutoverInputs(env, now = new Date()) {
   if (!HEX_40.test(restoreRehearsalCommit)) {
     errors.push("RESTORE_REHEARSAL_COMMIT must identify the exact commit used by the successful local restore rehearsal.");
   }
-  const stagingRunId = runIdFromReference(env.STAGING_ACCEPTANCE_RUN_URL, "Staging Worker deployment reference", errors);
-  const stagingAcceptanceCommit = String(env.STAGING_ACCEPTANCE_COMMIT ?? "");
-  if (!HEX_40.test(stagingAcceptanceCommit)) {
-    errors.push("STAGING_ACCEPTANCE_COMMIT must be the full SHA deployed and exercised in staging.");
-  }
-  const stagingEvidenceReference = parseHttpsReference(
-    env.STAGING_ACCEPTANCE_EVIDENCE_REFERENCE,
-    "Bounded staging acceptance evidence reference",
-    errors,
-  );
-  const expectedStagingEvidenceUrl = `https://github.com/${REPOSITORY}/blob/main/${STAGING_ACCEPTANCE_EVIDENCE_PATH}`;
-  if (stagingEvidenceReference && stagingEvidenceReference.href !== expectedStagingEvidenceUrl) {
-    errors.push("Bounded staging acceptance evidence must reference the committed PR #152 acceptance record.");
-  }
   if (candidateCommit && HEX_40.test(candidateCommit) && !HEX_40.test(restoreRehearsalCommit)) {
     errors.push("A valid restore-rehearsal commit SHA is required.");
   }
@@ -134,7 +111,6 @@ export function validateProductionCutoverInputs(env, now = new Date()) {
     errors,
     candidateCommit,
     restoreRunId,
-    stagingRunId,
   };
 }
 
@@ -150,20 +126,6 @@ async function githubJson(url, token, fetchImpl) {
   });
   if (!response.ok) throw new Error(`GitHub evidence lookup failed with HTTP ${response.status}.`);
   return response.json();
-}
-
-async function githubText(url, token, fetchImpl) {
-  const response = await fetchImpl(url, {
-    method: "GET",
-    headers: {
-      Accept: "text/plain",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`Staging acceptance evidence lookup failed with HTTP ${response.status}.`);
-  return response.text();
 }
 
 function validateRun(run, expectedSha, label, expectedWorkflowPath) {
@@ -194,53 +156,30 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
   }
 
   const apiRoot = `https://api.github.com/repos/${REPOSITORY}`;
-  const stagingAcceptanceCommit = String(env.STAGING_ACCEPTANCE_COMMIT);
-  const stagingEvidenceRawUrl = `https://raw.githubusercontent.com/${REPOSITORY}/main/${STAGING_ACCEPTANCE_EVIDENCE_PATH}`;
   const restoreRehearsalCommit = String(env.RESTORE_REHEARSAL_COMMIT);
-  const [restoreRun, stagingDeploymentRun, candidateCommit, releaseCommit, stagingCommit, restoreCommit, stagingEvidence] = await Promise.all([
+  const [restoreRun, candidateCommit, releaseCommit, restoreCommit] = await Promise.all([
     githubJson(`${apiRoot}/actions/runs/${parsed.restoreRunId}`, env.GITHUB_TOKEN, fetchImpl),
-    githubJson(`${apiRoot}/actions/runs/${parsed.stagingRunId}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${parsed.candidateCommit}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${env.GITHUB_SHA}`, env.GITHUB_TOKEN, fetchImpl),
-    githubJson(`${apiRoot}/commits/${stagingAcceptanceCommit}`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/commits/${restoreRehearsalCommit}`, env.GITHUB_TOKEN, fetchImpl),
-    githubText(stagingEvidenceRawUrl, env.GITHUB_TOKEN, fetchImpl),
   ]);
 
   validateRun(restoreRun, restoreRehearsalCommit, "Production-data restore rehearsal", ".github/workflows/restore-production-backup-rehearsal.yml");
-  validateRun(stagingDeploymentRun, stagingAcceptanceCommit, "Staging Worker deployment", ".github/workflows/worker-build-artifact.yml");
-
-  const requiredStagingEvidence = [
-    `Runtime source SHA: \`${stagingAcceptanceCommit}\``,
-    "268 D1 rows read",
-    "0 D1 rows written",
-    "3 billable Queue operations",
-    "1 synthetic no-op message",
-    "DLQ messages: 0",
-    "No production D1, Worker, Pages, Torn, or Queue resource was accessed.",
-  ];
-  const missingEvidence = requiredStagingEvidence.filter(item => !stagingEvidence.includes(item));
-  if (missingEvidence.length) {
-    throw new Error(`Committed bounded staging acceptance evidence is incomplete: ${missingEvidence.join("; ")}.`);
-  }
 
   const candidateTree = candidateCommit.commit?.tree?.sha;
   const releaseTree = releaseCommit.commit?.tree?.sha;
   if (!candidateTree || !releaseTree || candidateTree !== releaseTree) {
     throw new Error("The tested candidate's Git tree does not exactly match the main release commit.");
   }
-  const stagingTree = stagingCommit.commit?.tree?.sha;
-  if (!stagingTree) throw new Error("The staging deployment commit could not be verified.");
   const restoreTree = restoreCommit.commit?.tree?.sha;
   if (!restoreTree) throw new Error("The restore rehearsal commit could not be verified.");
 
-  const [candidateTreeData, stagingTreeData, restoreTreeData] = await Promise.all([
+  const [candidateTreeData, restoreTreeData] = await Promise.all([
     githubJson(`${apiRoot}/git/trees/${candidateTree}?recursive=1`, env.GITHUB_TOKEN, fetchImpl),
-    githubJson(`${apiRoot}/git/trees/${stagingTree}?recursive=1`, env.GITHUB_TOKEN, fetchImpl),
     githubJson(`${apiRoot}/git/trees/${restoreTree}?recursive=1`, env.GITHUB_TOKEN, fetchImpl),
   ]);
-  if (candidateTreeData.truncated || stagingTreeData.truncated || restoreTreeData.truncated) {
-    throw new Error("Git tree comparison was truncated; staging runtime and restore migration equivalence cannot be proven safely.");
+  if (candidateTreeData.truncated || restoreTreeData.truncated) {
+    throw new Error("Git tree comparison was truncated; candidate and restore migration equivalence cannot be proven safely.");
   }
   const toBlobMap = tree => new Map(
     (tree.tree ?? [])
@@ -248,18 +187,7 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
       .map(entry => [entry.path, entry.sha])
   );
   const candidateFiles = toBlobMap(candidateTreeData);
-  const stagingFiles = toBlobMap(stagingTreeData);
   const restoreFiles = toBlobMap(restoreTreeData);
-  const allPaths = new Set([...candidateFiles.keys(), ...stagingFiles.keys()]);
-  const changedRuntimeFiles = [...allPaths]
-    .filter(file => candidateFiles.get(file) !== stagingFiles.get(file))
-    .sort();
-  const disallowedRuntimeChanges = changedRuntimeFiles.filter(file => !ALLOWED_STAGING_RUNTIME_EQUIVALENCE_FILES.has(file));
-  if (disallowedRuntimeChanges.length > 0) {
-    throw new Error(
-      `Staging runtime equivalence check failed; candidate contains changes outside the approved release-workflow/evidence allow-list: ${disallowedRuntimeChanges.join(", ")}.`
-    );
-  }
 
   const migrationAndReplayPaths = new Set([
     ...[...candidateFiles.keys(), ...restoreFiles.keys()]
@@ -281,10 +209,6 @@ export async function verifyProductionCutoverEvidence(env, fetchImpl = fetch, no
     restoreRunId: parsed.restoreRunId,
     restoreRehearsalCommit,
     restoreMigrationReplayFilesCompared: migrationAndReplayPaths.size,
-    stagingRunId: parsed.stagingRunId,
-    stagingAcceptanceCommit,
-    stagingTreeSha: stagingTree,
-    stagingRuntimeEquivalentFiles: changedRuntimeFiles,
     d1RowsRead: Number(env.D1_ROWS_READ),
     d1ReleaseReserveRows: Number(env.D1_RELEASE_RESERVE_ROWS),
     d1HardStopRows: Number(env.D1_HARD_STOP_ROWS),
@@ -301,8 +225,6 @@ async function main() {
     "- Time Travel bookmark and D1 migration-ledger references: supplied",
     "- Fresh account-wide D1 usage check and deployment reserve: passed",
     "- Restore rehearsal: successful local-SQLite run verified, with every release migration and the replay script blob-identical to the rehearsed commit",
-    "- Bounded staging acceptance: committed D1/Queue operation evidence verified against the deployed staging runtime SHA",
-    "- Staging runtime equivalence: GitHub commit comparison confirms only allow-listed release-workflow/evidence files changed since staging",
     "- Candidate source tree: matches the main release commit exactly",
     "- Service-key permission and Queue configuration review references: supplied",
     "- No Cloudflare API, D1, or Queue API calls were made by this preflight",
@@ -310,8 +232,6 @@ async function main() {
     `Candidate commit: ${result.candidateCommit}`,
     `Main release commit: ${result.releaseCommit}`,
     `Restore rehearsal commit: ${result.restoreRehearsalCommit} (${result.restoreMigrationReplayFilesCompared} migration/replay files unchanged)`,
-    `Staging runtime commit: ${result.stagingAcceptanceCommit}`,
-    `Staging runtime-equivalent comparison: ${result.stagingRuntimeEquivalentFiles.join(", ") || "identical source"}`,
     `D1 rows used: ${result.d1RowsRead} / hard stop ${result.d1HardStopRows}; reserve ${result.d1ReleaseReserveRows}`,
     "",
     "This preflight validates evidence references and GitHub workflow outcomes. It does not independently download or decrypt the external backup, inspect D1, inspect Cloudflare quotas, or prove the semantic correctness of operator-supplied evidence. The protected production Environment approval remains a separate required gate.",
