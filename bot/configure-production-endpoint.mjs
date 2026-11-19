@@ -1,6 +1,6 @@
 const APPLICATION_ID = process.env.DISCORD_APP_ID || "1558700958983389254";
 const INTERACTIONS_ENDPOINT = process.env.DISCORD_INTERACTIONS_ENDPOINT || "https://naughty-company-bot.kboone801.workers.dev";
-const TOKEN = (process.env.DISCORD_TOKEN || "").replace(/^Bot\\s+/i, "").trim();
+const TOKEN = (process.env.DISCORD_TOKEN || "").replace(/^Bot\s+/i, "").trim();
 
 if (!TOKEN) throw new Error("Missing DISCORD_TOKEN. Add it as a repository Actions secret.");
 let endpointUrl;
