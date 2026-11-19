@@ -67,6 +67,9 @@ export function normalizeCommandSchema(command) {
       }
     }
   }
+  for (const field of ["integration_types", "contexts"]) {
+    if (Array.isArray(command[field])) result[field] = [...command[field]];
+  }
   if (Array.isArray(command.options) && command.options.length) {
     result.options = command.options.map(normalizeOption);
   }
