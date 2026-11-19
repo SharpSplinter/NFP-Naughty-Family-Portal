@@ -96,6 +96,7 @@ try {
   const worker = require(join(temp, "worker/index.js")).default
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
+  const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot, readGlobalRankingSnapshotMetadata, writeGlobalRankingSnapshotMetadata } = require(join(temp, "worker/d1-optimizations.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
@@ -2232,7 +2233,7 @@ try {
     assert.ok(batchSource.includes("await removeDepartedFactionAccess(env, playerId)"))
     const authStart = workerSource.indexOf("async function authenticate")
     const authEnd = workerSource.indexOf("async function validateTornKey", authStart)
-    const authSource = workerSource.slice(authStart, authEnd)
+    const authSource = workerSource.slice(authStart, authEnd) + readFileSync(join(root, "src/worker/d1-optimizations.ts"), "utf8")
     assert.match(authSource, /p\.membership_check_attempted_at/)
     assert.ok(authSource.includes("attemptedRecently"), "request-time checks must honor a recent scheduled or request attempt")
     assert.ok(authSource.includes("membership_check_attempted_at IS NULL OR membership_check_attempted_at < ?"), "request-time checks must use an atomic claim instead of racing concurrent requests")
