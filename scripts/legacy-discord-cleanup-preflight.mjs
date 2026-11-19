@@ -42,11 +42,30 @@ async function cloudflareRequest(path, token) {
 }
 
 async function githubRequest(path, token) {
-  return jsonRequest(`${API_ROOT}${path}`, {
-    Authorization: `Bearer ${token}`,
+  return jsonRequest(API_ROOT + path, {
+    Authorization: "Bearer " + token,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
   }, "GitHub evidence lookup");
+}
+
+async function cloudflareSqlQuery(databaseId, sql, token) {
+  const response = await fetch(CF_ROOT + "/accounts/" + ACCOUNT_ID + "/d1/database/" + databaseId + "/query", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + token,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sql }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("Cloudflare D1 preflight query failed with HTTP " + response.status + ".");
+  const payload = await response.json();
+  if (payload.success !== true) throw new Error("Cloudflare D1 preflight query failed.");
+  const statement = Array.isArray(payload.result) ? payload.result[0] : payload.result;
+  if (!statement?.success) throw new Error("Cloudflare D1 preflight SQL statement did not succeed.");
+  return statement.results ?? [];
 }
 
 async function main() {
@@ -54,7 +73,7 @@ async function main() {
   const now = Date.now();
   const required = [
     "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN", "GITHUB_SHA", "GITHUB_REF",
-    "CANDIDATE_COMMIT", "EXPECTED_API_VERSION", "RELEASE_AUTHORIZATION",
+    "CANDIDATE_COMMIT", "EXPECTED_API_VERSION", "EXPECTED_BOT_VERSION", "RELEASE_AUTHORIZATION",
     "BACKUP_REFERENCE", "BACKUP_SHA256", "BACKUP_CREATED_AT",
     "BOT_BACKUP_REFERENCE", "BOT_BACKUP_CREATED_AT",
     "TIME_TRAVEL_BOOKMARK_REFERENCE", "D1_USAGE_REFERENCE",
@@ -83,7 +102,10 @@ async function main() {
     throw new Error("The encrypted dashboard backup checksum must be 64 hexadecimal characters.");
   }
   if (!/^[0-9a-f-]{36}$/i.test(env.EXPECTED_API_VERSION)) {
-    throw new Error("EXPECTED_API_VERSION must be the exact deployed Worker version UUID.");
+    throw new Error("EXPECTED_API_VERSION must be the exact deployed API Worker version UUID.");
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(env.EXPECTED_BOT_VERSION)) {
+    throw new Error("EXPECTED_BOT_VERSION must be the exact deployed Discord bot Worker version UUID.");
   }
 
   const backupUrl = parseHttps(env.BACKUP_REFERENCE, "Dashboard backup");
@@ -116,19 +138,25 @@ async function main() {
 
   const ghHeaders = env.GITHUB_TOKEN;
   const cfToken = env.CLOUDFLARE_API_TOKEN;
-  const [restoreRun, candidateCommit, releaseCommit, restoreCommit, deployment, dashboardBookmark, botBookmark, insights] =
+  const [restoreRun, candidateCommit, releaseCommit, restoreCommit, deployment, botDeployment, dashboardBookmark, botBookmark, insights, dashboardLedger, dashboardTables, botTables] =
     await Promise.all([
-      githubRequest(`/repos/${REPOSITORY}/actions/runs/${runMatch[1]}`, ghHeaders),
-      githubRequest(`/repos/${REPOSITORY}/commits/${env.CANDIDATE_COMMIT}`, ghHeaders),
-      githubRequest(`/repos/${REPOSITORY}/commits/${env.GITHUB_SHA}`, ghHeaders),
-      githubRequest(`/repos/${REPOSITORY}/commits/${env.RESTORE_REHEARSAL_COMMIT}`, ghHeaders),
-      cloudflareRequest(`/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/deployments`, cfToken),
-      cloudflareRequest(`/accounts/${ACCOUNT_ID}/d1/database/${DASHBOARD_DB_ID}/time_travel/bookmark`, cfToken),
-      cloudflareRequest(`/accounts/${ACCOUNT_ID}/d1/database/${BOT_DB_ID}/time_travel/bookmark`, cfToken),
+      githubRequest("/repos/" + REPOSITORY + "/actions/runs/" + runMatch[1], ghHeaders),
+      githubRequest("/repos/" + REPOSITORY + "/commits/" + env.CANDIDATE_COMMIT, ghHeaders),
+      githubRequest("/repos/" + REPOSITORY + "/commits/" + env.GITHUB_SHA, ghHeaders),
+      githubRequest("/repos/" + REPOSITORY + "/commits/" + env.RESTORE_REHEARSAL_COMMIT, ghHeaders),
+      cloudflareRequest("/accounts/" + ACCOUNT_ID + "/workers/scripts/naughtyfamily-api/deployments", cfToken),
+      cloudflareRequest("/accounts/" + ACCOUNT_ID + "/workers/scripts/naughty-company-bot/deployments", cfToken),
+      cloudflareRequest("/accounts/" + ACCOUNT_ID + "/d1/database/" + DASHBOARD_DB_ID + "/time_travel/bookmark", cfToken),
+      cloudflareRequest("/accounts/" + ACCOUNT_ID + "/d1/database/" + BOT_DB_ID + "/time_travel/bookmark", cfToken),
       cloudflareRequest(
-        `/accounts/${ACCOUNT_ID}/d1/insights/databases?order_by=rows_read&since=${encodeURIComponent(new Date().toISOString().slice(0, 10) + "T00:00:00Z")}&until=${encodeURIComponent(new Date().toISOString())}&limit=1000`,
+        "/accounts/" + ACCOUNT_ID + "/d1/insights/databases?order_by=rows_read&since=" +
+          encodeURIComponent(new Date().toISOString().slice(0, 10) + "T00:00:00Z") +
+          "&until=" + encodeURIComponent(new Date().toISOString()) + "&limit=1000",
         cfToken,
       ),
+      cloudflareSqlQuery(DASHBOARD_DB_ID, "SELECT name FROM d1_migrations WHERE name IN ('0038_global_company_rank_snapshot_meta.sql', '0039_retire_discord_poll_telemetry.sql') ORDER BY name", cfToken),
+      cloudflareSqlQuery(DASHBOARD_DB_ID, "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('discord_alert_poll_history', 'discord_alert_poll_health', 'discord_account_links', 'discord_link_codes', 'global_company_rank_snapshot_meta') ORDER BY name", cfToken),
+      cloudflareSqlQuery(BOT_DB_ID, "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('alert_preferences', 'alert_deliveries', 'discord_alert_deliveries', 'discord_alert_poll_escalations', 'discord_alert_poll_state', 'discord_alert_state', 'discord_links', 'discord_daily_summary_deliveries', 'discord_daily_company_summary_state', 'discord_daily_company_summary_history') ORDER BY name", cfToken),
     ]);
 
   if (restoreRun.status !== "completed" || restoreRun.conclusion !== "success" ||
@@ -146,16 +174,40 @@ async function main() {
   const activeDeployment = deployments[0];
   const activeVersion = activeDeployment?.versions?.find((item) => Number(item.percentage) === 100)?.version_id;
   if (activeVersion !== env.EXPECTED_API_VERSION) {
-    throw new Error(`Production API Worker version changed: expected ${env.EXPECTED_API_VERSION}, found ${activeVersion ?? "unknown"}.`);
+    throw new Error("Production API Worker version changed: expected " + env.EXPECTED_API_VERSION + ", found " + (activeVersion ?? "unknown") + ".");
+  }
+  const activeBotVersion = botDeployment?.deployments?.[0]?.versions?.find((item) => Number(item.percentage) === 100)?.version_id;
+  if (activeBotVersion !== env.EXPECTED_BOT_VERSION) {
+    throw new Error("Production bot Worker version changed: expected " + env.EXPECTED_BOT_VERSION + ", found " + (activeBotVersion ?? "unknown") + ".");
   }
 
-  const healthResponse = await fetch("https://naughtyfamily-api.kboone801.workers.dev/health", {
-    signal: AbortSignal.timeout(15_000),
-  });
-  const health = await healthResponse.json().catch(() => null);
+  const [healthResponse, botHealthResponse] = await Promise.all([
+    fetch("https://naughtyfamily-api.kboone801.workers.dev/health", { signal: AbortSignal.timeout(15_000) }),
+    fetch("https://naughty-company-bot.kboone801.workers.dev/health", { signal: AbortSignal.timeout(15_000) }),
+  ]);
+  const [health, botHealth] = await Promise.all([
+    healthResponse.json().catch(() => null),
+    botHealthResponse.json().catch(() => null),
+  ]);
   if (!healthResponse.ok || health?.ok !== true || health?.database !== "ok" || health?.keyEncryption !== "ok") {
     throw new Error("The live production API Worker health check failed.");
   }
+  if (!botHealthResponse.ok || botHealth?.ok !== true || botHealth?.privateDailySummary !== true) {
+    throw new Error("The live production Discord bot is not the expected private daily-summary Worker.");
+  }
+
+  const dashboardLedgerNames = new Set(dashboardLedger.map((row) => String(row.name)));
+  if (!dashboardLedgerNames.has("0038_global_company_rank_snapshot_meta.sql") || dashboardLedgerNames.has("0039_retire_discord_poll_telemetry.sql")) {
+    throw new Error("Dashboard D1 must have migration 0038 applied and 0039 pending before cleanup.");
+  }
+  const dashboardTableNames = new Set(dashboardTables.map((row) => String(row.name)));
+  const expectedDashboardTables = ["discord_alert_poll_history", "discord_alert_poll_health", "discord_account_links", "discord_link_codes", "global_company_rank_snapshot_meta"];
+  const missingDashboardTables = expectedDashboardTables.filter((name) => !dashboardTableNames.has(name));
+  if (missingDashboardTables.length) throw new Error("Dashboard D1 cleanup target tables are missing: " + missingDashboardTables.join(", ") + ".");
+  const botTableNames = new Set(botTables.map((row) => String(row.name)));
+  const expectedBotTables = ["alert_preferences", "alert_deliveries", "discord_alert_deliveries", "discord_alert_poll_escalations", "discord_alert_poll_state", "discord_alert_state", "discord_links", "discord_daily_summary_deliveries", "discord_daily_company_summary_state", "discord_daily_company_summary_history"];
+  const missingBotTables = expectedBotTables.filter((name) => !botTableNames.has(name));
+  if (missingBotTables.length) throw new Error("Bot D1 cleanup target or retained tables are missing: " + missingBotTables.join(", ") + ".");
 
   const liveRowsRead = (insights ?? []).reduce((sum, item) => sum + Number(item.rows_read ?? 0), 0);
   if (liveRowsRead + reserve > hardStop || rowsReadInput + reserve > hardStop) {
@@ -171,7 +223,8 @@ async function main() {
     "- Exact candidate and restore rehearsal commit: passed",
     "- Encrypted dashboard backup reference, checksum format, and freshness: passed",
     "- Bot D1 SQL export reference and freshness: passed",
-    "- Production API Worker deployment version and health: passed",
+    "- Production API Worker and private daily-summary bot versions and health: passed",
+    "- Dashboard D1 ledger has 0038 applied and 0039 pending; exact cleanup targets and retained Discord tables are present",
     "- Fresh dashboard and bot D1 Time Travel bookmarks: retrieved",
     "- Fresh account-wide D1 Insights and deployment reserve: passed",
     "",
