@@ -1,5 +1,22 @@
 # Production backup, migration, rollback and cutover review
 
+## Current production Worker state (authoritative, 2026-11-19 00:57 UTC)
+
+The quota-safe Worker changes from PR #161 are now deployed to production. This section supersedes the historical "production source has not been deployed" and "NO-GO" statements above for the Worker release only. The separate production Pages publication remains outstanding.
+
+- **Production Worker deployment:** [workflow run #44432797320](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44432797320) completed successfully at 2026-11-19 00:56:45 UTC for main commit `436b6d328a5eaf4c99c7a155f3fa1c6afe41e99f`.
+- **Deployed version:** `9beb57d3-9c30-4f29-b46b-b30312c1d00d`, version 145, uploaded 2026-11-19 00:56:39 UTC.
+- **Worker health:** production `/health` returned HTTP 200; database=`ok`; keyEncryption=`ok`.
+- **D1 migration state:** the workflow reviewed, applied and re-listed production migrations successfully. Wrangler reported "No migrations to apply!" both before and after the apply command. The live ledger still contains 42 migrations through `0037_private_data_visibility.sql`; no migration was applied by this deployment.
+- **Bindings:** production D1 `bbbe128a-c5cc-46ec-b8ef-93860183e795`, KV `9587689089c04f37b28eb9c93156cc47`, Queue `ncd-global-rankings-refresh`, allowed origin `https://naughtyfamily.pages.dev`, and the configured secret binding names were retained. The three production schedules and Queue producer/consumer routes were preserved.
+- **Post-deploy Queue health:** production rankings Queue backlog 0; production DLQ backlog 0.
+- **Post-deploy account-wide D1 Insights:** for 2026-11-19 00:00:00–00:57:34.277 UTC, 85,946 rows read and 2,443 rows written across production dashboard, production bot, and acceptance staging. Against the application's 4,000,000-row read hard stop with a 100,000-row release reserve, this snapshot leaves 3,814,054 rows before the hard stop after reserve. This is a point-in-time usage snapshot, not a live remaining-quota counter.
+- **Quota-safe changes now live in Worker:** gym-training and Christmas Town historical jobs process up to eight Torn log pages per Queue delivery with per-page cursor checkpoints; global-ranking refresh processes up to six pages per delivery. These reduce continuation messages while preserving resumable/idempotent processing.
+- **Production Pages:** no Pages deployment was included in this authorization. The snapshot-summary card frontend correction is merged and passed the exact-source staging Pages test, but the production `naughtyfamily` Pages site has not yet been republished from this commit. Do not describe that UI correction as live until a separate production Pages publication is authorized and completed.
+
+The backup used for this deployment was the encrypted production D1 archive created 2026-11-18 02:47:15.545 UTC, SHA-256 `8074ec26d1914db32027bad3cd1130b19242f06514601d796ed35f52f8477894`. The successful exact-candidate local-SQLite restore rehearsal is [run #44428221356](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44428221356); the exact-source bounded staging Worker acceptance is [run #44428265647](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44428265647). Production Environment protection remained enabled and was approved only for run #44432797320.
+
+
 **Original review date:** 2026-11-03  
 **State refresh:** 2026-11-18 UTC (PR #152 merge, branch-protection restoration, bounded staging evidence reconciliation, and production preflight update)
 **Scope:** PR #152, merged from `portal-rebuild`  
