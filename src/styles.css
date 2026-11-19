@@ -978,3 +978,15 @@ th.numeric-cell {
 .login-key-builder-button:hover{border-color:#82d9c6;background:linear-gradient(120deg,#1e665c66,#24405b);transform:translateY(-1px)}
 .login-key-builder-button>span{display:grid;place-items:center;width:25px;height:25px;border:1px solid #72cfb16b;border-radius:7px;color:#a4efda;font-size:18px}
 .login-key-builder-button>b{color:#a8dccc;font-size:15px}
+
+/* Shared chart date-range and labeled-axis treatment. */
+.chart-range-toolbar{display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 18px;color:var(--muted);font-size:11px}
+.chart-range-toolbar>span{line-height:1.5}
+.chart-range-select{display:grid;gap:6px;color:#cdd4e8;font-size:11px}
+.chart-range-select select{min-height:38px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:#0b1120;color:var(--white);font:inherit}
+.chart-axis{stroke:#65718c;stroke-width:1.25}
+.chart-axis-tick{stroke:#65718c;stroke-width:1}
+.chart-axis-title{fill:#cbd4e8;font-size:11px;font-weight:600}
+.chart-date-tick{font-size:10px}
+.line-chart{min-width:760px;max-height:none}
+@media(max-width:600px){.chart-range-toolbar{align-items:stretch;flex-direction:column}.chart-range-select select{width:100%}}
