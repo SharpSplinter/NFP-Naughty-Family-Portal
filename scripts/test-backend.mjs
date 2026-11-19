@@ -5039,7 +5039,7 @@ try {
     assert.equal(firstCalls, 1, "session and all access checks must be one D1 lookup")
     assert.deepEqual(bindings, ["hashed-session", 1_800_000_000])
     assert.equal(preparedSql, SESSION_ACCESS_SQL)
-    assert.match(preparedSql, /JOIN sessions s/)
+    assert.match(preparedSql, /FROM sessions s JOIN players p/)
     assert.match(preparedSql, /LEFT JOIN administrators a ON a\.player_id = p\.player_id AND a\.revoked_at IS NULL/)
     assert.match(preparedSql, /LEFT JOIN dashboard_member_status st/)
     assert.match(preparedSql, /LEFT JOIN admin_settings maintenance/)
