@@ -14,7 +14,7 @@ expected_retired = {
     "discord_alert_poll_state",
     "discord_alert_state",
 }
-actual_retired = set(re.findall(r"DROP\\s+TABLE\\s+IF\\s+EXISTS\\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, re.I))
+actual_retired = set(re.findall(r"DROP\s+TABLE\s+IF\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, re.I))
 assert actual_retired == expected_retired, (actual_retired, expected_retired)
 
 connection = sqlite3.connect(":memory:")
