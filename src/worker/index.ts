@@ -711,6 +711,11 @@ type FactionPerformanceRunRow = {
   lastEnqueuedAt: string | null
 }
 
+// Process several historical log pages per Queue delivery. Queue operations are
+// charged per message (write/read/delete), so checkpointing each API page would
+// burn thousands of daily operations for large backfills.
+const HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE = 8
+const GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE = 6
 const FACTION_PERFORMANCE_PAGE_SIZE = 5
 
 // Keep the five-minute scheduler for membership revalidation, weekly-boundary
@@ -1916,7 +1921,7 @@ async function processGlobalRankingQueueMessage(env: WorkerEnv, runId: string): 
     let expectedTotal = run.expected_total === null ? null : Number(run.expected_total)
     let companiesSeen = Number(run.companies_seen)
     const pageSize = 100
-    const maxPagesPerInvocation = 3
+    const maxPagesPerInvocation = GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE
     for (let pageNumber = 0; pageNumber < maxPagesPerInvocation && typeIndex < types.length; pageNumber++) {
       const type = types[typeIndex]
       const response = await trackedTornFetch("global-company-ranking-page", "https://api.torn.com/v2/company/" + type.id + "/companies?offset=" + offset + "&limit=" + pageSize, {
@@ -3112,121 +3117,131 @@ async function runChristmasTownLogCollectionPage(env: WorkerEnv, jobId: string):
 
   const eventStart = Math.floor(Date.parse(job.window_start_at) / 1000)
   const eventEnd = Math.floor(Date.parse(job.window_end_at) / 1000)
-  const dayStart = Number(job.cursor_ts)
+  let cursorTs = Number(job.cursor_ts)
+  let cursorUrl = job.cursor_url
+  let cursorDirection = job.cursor_direction
+  let pages = Number(job.pages_collected ?? 0)
+  let logs = Number(job.logs_collected ?? 0)
   if (!Number.isFinite(eventStart) || !Number.isFinite(eventEnd) || eventEnd <= eventStart ||
-      !Number.isFinite(dayStart) || dayStart < eventStart) {
+      !Number.isFinite(cursorTs) || cursorTs < eventStart) {
     await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
       .bind("The Christmas Town collection window is invalid.", new Date().toISOString(), jobId).run()
     return
   }
-  if (dayStart >= eventEnd) {
+  if (cursorTs >= eventEnd) {
     const now = new Date().toISOString()
-    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'complete', completed_at = ?, updated_at = ?, last_error = NULL WHERE job_id = ?")
-      .bind(now, now, jobId).run()
+    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'complete', cursor_url = NULL, pages_collected = ?, logs_collected = ?, completed_at = ?, updated_at = ?, last_error = NULL WHERE job_id = ?")
+      .bind(pages, logs, now, now, jobId).run()
     return
   }
 
-  const dayEnd = Math.min(dayStart + 86400, eventEnd)
-  const requestUrl = job.cursor_url || (() => {
-    const url = new URL("https://api.torn.com/v2/user/log")
-    url.searchParams.set("from", String(dayStart))
-    url.searchParams.set("to", String(dayEnd - 1))
-    url.searchParams.set("limit", "100")
-    url.searchParams.set("sort", "desc")
-    return url.toString()
-  })()
-  const parsedUrl = new URL(requestUrl)
-  if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "api.torn.com" ||
-      parsedUrl.pathname !== "/v2/user/log" || parsedUrl.searchParams.has("key")) {
-    throw new Error("Torn returned an unsafe Christmas Town pagination URL. The API key was not sent.")
-  }
+  // Each invocation verifies membership once, then consumes up to eight Torn
+  // pages. Cursor progress is committed after every page so retries resume
+  // safely without rescanning or enqueueing one message per API page.
+  for (let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE; pagesProcessed += 1) {
+    const dayEnd = Math.min(cursorTs + 86400, eventEnd)
+    const requestUrl = cursorUrl || (() => {
+      const url = new URL("https://api.torn.com/v2/user/log")
+      url.searchParams.set("from", String(cursorTs))
+      url.searchParams.set("to", String(dayEnd - 1))
+      url.searchParams.set("limit", "100")
+      url.searchParams.set("sort", "desc")
+      return url.toString()
+    })()
+    const parsedUrl = new URL(requestUrl)
+    if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "api.torn.com" ||
+        parsedUrl.pathname !== "/v2/user/log" || parsedUrl.searchParams.has("key")) {
+      throw new Error("Torn returned an unsafe Christmas Town pagination URL. The API key was not sent.")
+    }
 
-  await throttleHalloweenRequest(env, job.player_id)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15000)
-  let response: Response
-  let payload: unknown
-  try {
-    response = await trackedTornFetch("christmas-town-historical-log", parsedUrl.toString(), {
-      headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
-      signal: controller.signal,
-    }, fetch, job.player_id)
-    payload = await response.json().catch(() => null)
-  } finally {
-    clearTimeout(timeout)
-  }
+    await throttleHalloweenRequest(env, job.player_id)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+    let response: Response
+    let payload: unknown
+    try {
+      response = await trackedTornFetch("christmas-town-historical-log", parsedUrl.toString(), {
+        headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+        signal: controller.signal,
+      }, fetch, job.player_id)
+      payload = await response.json().catch(() => null)
+    } finally {
+      clearTimeout(timeout)
+    }
 
-  const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
-  if (!response.ok || apiError) {
-    const code = typeof apiError?.code === "number" ? apiError.code : undefined
-    if (code === 2 || code === 16 || code === 18) {
-      await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
-        .bind("Torn rejected the saved key. Reconnect a key that includes User → Log access.", new Date().toISOString(), jobId).run()
+    const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
+    if (!response.ok || apiError) {
+      const code = typeof apiError?.code === "number" ? apiError.code : undefined
+      if (code === 2 || code === 16 || code === 18) {
+        await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
+          .bind("Torn rejected the saved key. Reconnect a key that includes User → Log access.", new Date().toISOString(), jobId).run()
+        return
+      }
+      throw new Error(code === 5 || code === 8 || code === 14
+        ? "Torn rate limit reached during Christmas Town collection."
+        : code === 9 ? "Torn's API is currently disabled." : "Torn Christmas Town log request failed.")
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.log)) {
+      throw new Error("Torn returned an unexpected Christmas Town user log response.")
+    }
+
+    const collectedAt = new Date().toISOString()
+    let inserted = 0
+    for (const raw of payload.log) {
+      if (!isRecord(raw) || raw.id == null || !Number.isFinite(Number(raw.timestamp))) continue
+      const timestamp = Number(raw.timestamp)
+      if (timestamp < eventStart || timestamp >= eventEnd || !classifyChristmasTownLog(raw)) continue
+      const details = isRecord(raw.details) ? raw.details : {}
+      const parsedLogType = details.id == null ? null : Number(details.id)
+      const logTypeId = parsedLogType !== null && Number.isFinite(parsedLogType) ? parsedLogType : null
+      const result = await db.prepare(
+        "INSERT OR IGNORE INTO christmas_town_event_logs (player_id, event_year, log_id, event_timestamp, log_type_id, category, title, log_json, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).bind(
+        job.player_id,
+        job.event_year,
+        String(raw.id),
+        timestamp,
+        logTypeId,
+        typeof details.category === "string" ? details.category : null,
+        typeof details.title === "string" ? details.title : null,
+        asJson(raw),
+        collectedAt,
+      ).run()
+      inserted += Number(result.meta?.changes ?? 0)
+    }
+
+    const metadata = isRecord(payload._metadata) ? payload._metadata : {}
+    const links = isRecord(metadata.links) ? metadata.links : {}
+    const direction = cursorDirection || (typeof links.prev === "string" ? "prev" : "next")
+    const candidate = links[direction]
+    const nextUrl = typeof candidate === "string" ? candidate : null
+    pages += 1
+    logs += inserted
+    const now = new Date().toISOString()
+
+    if (nextUrl) {
+      const next = new URL(nextUrl, parsedUrl)
+      if (next.protocol !== "https:" || next.hostname !== "api.torn.com" ||
+          next.pathname !== "/v2/user/log" || next.searchParams.has("key")) {
+        throw new Error("Torn returned an unsafe Christmas Town pagination link.")
+      }
+      cursorUrl = next.toString()
+      cursorDirection = direction
+    } else if (dayEnd < eventEnd) {
+      cursorTs = dayEnd
+      cursorUrl = null
+      cursorDirection = null
+    } else {
+      await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'complete', cursor_ts = ?, cursor_url = NULL, cursor_direction = NULL, pages_collected = ?, logs_collected = ?, last_error = NULL, completed_at = ?, updated_at = ? WHERE job_id = ?")
+        .bind(cursorTs, pages, logs, now, now, jobId).run()
       return
     }
-    throw new Error(code === 5 || code === 8 || code === 14
-      ? "Torn rate limit reached during Christmas Town collection."
-      : code === 9 ? "Torn's API is currently disabled." : "Torn Christmas Town log request failed.")
-  }
-  if (!isRecord(payload) || !Array.isArray(payload.log)) {
-    throw new Error("Torn returned an unexpected Christmas Town user log response.")
+
+    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'running', cursor_ts = ?, cursor_url = ?, cursor_direction = ?, pages_collected = ?, logs_collected = ?, last_error = NULL, updated_at = ? WHERE job_id = ?")
+      .bind(cursorTs, cursorUrl, cursorDirection, pages, logs, now, jobId).run()
   }
 
-  const collectedAt = new Date().toISOString()
-  let inserted = 0
-  for (const raw of payload.log) {
-    if (!isRecord(raw) || raw.id == null || !Number.isFinite(Number(raw.timestamp))) continue
-    const timestamp = Number(raw.timestamp)
-    if (timestamp < eventStart || timestamp >= eventEnd || !classifyChristmasTownLog(raw)) continue
-    const details = isRecord(raw.details) ? raw.details : {}
-    const parsedLogType = details.id == null ? null : Number(details.id)
-    const logTypeId = parsedLogType !== null && Number.isFinite(parsedLogType) ? parsedLogType : null
-    const result = await db.prepare(
-      "INSERT OR IGNORE INTO christmas_town_event_logs (player_id, event_year, log_id, event_timestamp, log_type_id, category, title, log_json, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).bind(
-      job.player_id,
-      job.event_year,
-      String(raw.id),
-      timestamp,
-      logTypeId,
-      typeof details.category === "string" ? details.category : null,
-      typeof details.title === "string" ? details.title : null,
-      asJson(raw),
-      collectedAt,
-    ).run()
-    inserted += Number(result.meta?.changes ?? 0)
-  }
-
-  const metadata = isRecord(payload._metadata) ? payload._metadata : {}
-  const links = isRecord(metadata.links) ? metadata.links : {}
-  const direction = job.cursor_direction || (typeof links.prev === "string" ? "prev" : "next")
-  const candidate = links[direction]
-  const nextUrl = typeof candidate === "string" ? candidate : null
-  const pages = Number(job.pages_collected ?? 0) + 1
-  const logs = Number(job.logs_collected ?? 0) + inserted
-  const now = new Date().toISOString()
-
-  if (nextUrl) {
-    const next = new URL(nextUrl, parsedUrl)
-    if (next.protocol !== "https:" || next.hostname !== "api.torn.com" ||
-        next.pathname !== "/v2/user/log" || next.searchParams.has("key")) {
-      throw new Error("Torn returned an unsafe Christmas Town pagination link.")
-    }
-    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'running', cursor_url = ?, cursor_direction = ?, pages_collected = ?, logs_collected = ?, last_error = NULL, updated_at = ? WHERE job_id = ?")
-      .bind(next.toString(), direction, pages, logs, now, jobId).run()
-    await sendChristmasTownCollectionJob(env, jobId)
-    return
-  }
-
-  if (dayEnd < eventEnd) {
-    await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'queued', cursor_ts = ?, cursor_url = NULL, cursor_direction = NULL, pages_collected = ?, logs_collected = ?, last_error = NULL, updated_at = ? WHERE job_id = ?")
-      .bind(dayEnd, pages, logs, now, jobId).run()
-    await sendChristmasTownCollectionJob(env, jobId)
-    return
-  }
-
-  await db.prepare("UPDATE christmas_town_collection_jobs SET status = 'complete', pages_collected = ?, logs_collected = ?, last_error = NULL, completed_at = ?, updated_at = ? WHERE job_id = ?")
-    .bind(pages, logs, now, now, jobId).run()
+  await sendChristmasTownCollectionJob(env, jobId)
 }
 
 async function sendGymTrainingCollectionJob(env: WorkerEnv, jobId: string): Promise<void> {
@@ -3283,97 +3298,112 @@ async function runGymTrainingCollectionPage(env: WorkerEnv, jobId: string): Prom
     return
   }
 
-  const requestUrl = job.cursor_url || (() => {
-    const url = new URL("https://api.torn.com/v2/user/log")
-    url.searchParams.set("limit", "100")
-    url.searchParams.set("sort", "desc")
-    return url.toString()
-  })()
-  const parsedUrl = new URL(requestUrl)
-  if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "api.torn.com" ||
-      parsedUrl.pathname !== "/v2/user/log" || parsedUrl.searchParams.has("key")) {
-    throw new Error("Torn returned an unsafe gym training pagination URL. The API key was not sent.")
-  }
+  let cursorUrl = job.cursor_url
+  let cursorDirection = job.cursor_direction
+  let pages = Number(job.pages_collected ?? 0)
+  let scannedTotal = Number(job.logs_scanned ?? 0)
+  let logsTotal = Number(job.logs_collected ?? 0)
 
-  await throttleHalloweenRequest(env, job.player_id)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15000)
-  let response: Response
-  let payload: unknown
-  try {
-    response = await trackedTornFetch("gym-training-historical-log", parsedUrl.toString(), {
-      headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
-      signal: controller.signal,
-    }, fetch, job.player_id)
-    payload = await response.json().catch(() => null)
-  } finally {
-    clearTimeout(timeout)
-  }
-
-  const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
-  if (!response.ok || apiError) {
-    const code = typeof apiError?.code === "number" ? apiError.code : undefined
-    if (code === 2 || code === 16 || code === 18) {
-      await db.prepare("UPDATE gym_training_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
-        .bind("Torn rejected the saved portal key or its User → Log permission was removed. Reconnect a valid member key.", new Date().toISOString(), jobId).run()
-      return
+  // Verify membership once per bounded batch, not once per historical API
+  // page. Persist the cursor after every page so a retry never replays progress.
+  for (let pagesProcessed = 0; pagesProcessed < HISTORICAL_LOG_PAGES_PER_QUEUE_MESSAGE; pagesProcessed += 1) {
+    const requestUrl = cursorUrl || (() => {
+      const url = new URL("https://api.torn.com/v2/user/log")
+      url.searchParams.set("limit", "100")
+      url.searchParams.set("sort", "desc")
+      return url.toString()
+    })()
+    const parsedUrl = new URL(requestUrl)
+    if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "api.torn.com" ||
+        parsedUrl.pathname !== "/v2/user/log" || parsedUrl.searchParams.has("key")) {
+      throw new Error("Torn returned an unsafe gym training pagination URL. The API key was not sent.")
     }
-    throw new Error(code === 5 || code === 8 || code === 14
-      ? "Torn rate limit reached during gym training history collection."
-      : code === 9 ? "Torn's API is currently disabled." : "Torn gym training log request failed.")
-  }
-  if (!isRecord(payload) || !Array.isArray(payload.log)) {
-    throw new Error("Torn returned an unexpected gym training user log response.")
-  }
 
-  const collectedAt = new Date().toISOString()
-  let inserted = 0
-  let scanned = 0
-  for (const raw of payload.log) {
-    if (!isRecord(raw) || raw.id == null || !Number.isFinite(Number(raw.timestamp))) continue
-    scanned += 1
-    if (!isGymTrainingLog(raw)) continue
-    const details = isRecord(raw.details) ? raw.details : {}
-    const rawTypeId = details.id == null ? null : Number(details.id)
-    const logTypeId = rawTypeId !== null && Number.isFinite(rawTypeId) ? rawTypeId : null
-    const result = await db.prepare(
-      "INSERT OR IGNORE INTO gym_training_event_logs (player_id, log_id, event_timestamp, log_type_id, category, title, log_json, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(
-      job.player_id,
-      String(raw.id),
-      Number(raw.timestamp),
-      logTypeId,
-      typeof details.category === "string" ? details.category : null,
-      typeof details.title === "string" ? details.title : null,
-      asJson(raw),
-      collectedAt,
-    ).run()
-    inserted += Number(result.meta?.changes ?? 0)
-  }
-
-  const metadata = isRecord(payload._metadata) ? payload._metadata : {}
-  const links = isRecord(metadata.links) ? metadata.links : {}
-  const direction = job.cursor_direction || (typeof links.prev === "string" ? "prev" : "next")
-  const candidate = links[direction]
-  const nextUrl = typeof candidate === "string" ? candidate : null
-  const pages = Number(job.pages_collected ?? 0) + 1
-  const scannedTotal = Number(job.logs_scanned ?? 0) + scanned
-  const logsTotal = Number(job.logs_collected ?? 0) + inserted
-  const now = new Date().toISOString()
-  if (nextUrl) {
-    const next = new URL(nextUrl, parsedUrl)
-    if (next.protocol !== "https:" || next.hostname !== "api.torn.com" ||
-        next.pathname !== "/v2/user/log" || next.searchParams.has("key")) {
-      throw new Error("Torn returned an unsafe gym training pagination link.")
+    await throttleHalloweenRequest(env, job.player_id)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+    let response: Response
+    let payload: unknown
+    try {
+      response = await trackedTornFetch("gym-training-historical-log", parsedUrl.toString(), {
+        headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+        signal: controller.signal,
+      }, fetch, job.player_id)
+      payload = await response.json().catch(() => null)
+    } finally {
+      clearTimeout(timeout)
     }
-    await db.prepare("UPDATE gym_training_collection_jobs SET status = 'running', cursor_url = ?, cursor_direction = ?, pages_collected = ?, logs_scanned = ?, logs_collected = ?, last_error = NULL, updated_at = ? WHERE job_id = ?")
-      .bind(next.toString(), direction, pages, scannedTotal, logsTotal, now, jobId).run()
-    await sendGymTrainingCollectionJob(env, jobId)
+
+    const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
+    if (!response.ok || apiError) {
+      const code = typeof apiError?.code === "number" ? apiError.code : undefined
+      if (code === 2 || code === 16 || code === 18) {
+        await db.prepare("UPDATE gym_training_collection_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE job_id = ?")
+          .bind("Torn rejected the saved portal key or its User → Log permission was removed. Reconnect a valid member key.", new Date().toISOString(), jobId).run()
+        return
+      }
+      throw new Error(code === 5 || code === 8 || code === 14
+        ? "Torn rate limit reached during gym training history collection."
+        : code === 9 ? "Torn's API is currently disabled." : "Torn gym training log request failed.")
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.log)) {
+      throw new Error("Torn returned an unexpected gym training user log response.")
+    }
+
+    const collectedAt = new Date().toISOString()
+    let scanned = 0
+    let inserted = 0
+    for (const raw of payload.log) {
+      if (!isRecord(raw) || raw.id == null || !Number.isFinite(Number(raw.timestamp))) continue
+      scanned += 1
+      if (!isGymTrainingLog(raw)) continue
+      const details = isRecord(raw.details) ? raw.details : {}
+      const rawTypeId = details.id == null ? null : Number(details.id)
+      const logTypeId = rawTypeId !== null && Number.isFinite(rawTypeId) ? rawTypeId : null
+      const result = await db.prepare(
+        "INSERT OR IGNORE INTO gym_training_event_logs (player_id, log_id, event_timestamp, log_type_id, category, title, log_json, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(
+        job.player_id,
+        String(raw.id),
+        Number(raw.timestamp),
+        logTypeId,
+        typeof details.category === "string" ? details.category : null,
+        typeof details.title === "string" ? details.title : null,
+        asJson(raw),
+        collectedAt,
+      ).run()
+      inserted += Number(result.meta?.changes ?? 0)
+    }
+
+    const metadata = isRecord(payload._metadata) ? payload._metadata : {}
+    const links = isRecord(metadata.links) ? metadata.links : {}
+    const direction = cursorDirection || (typeof links.prev === "string" ? "prev" : "next")
+    const candidate = links[direction]
+    const nextUrl = typeof candidate === "string" ? candidate : null
+    pages += 1
+    scannedTotal += scanned
+    logsTotal += inserted
+    const now = new Date().toISOString()
+
+    if (nextUrl) {
+      const next = new URL(nextUrl, parsedUrl)
+      if (next.protocol !== "https:" || next.hostname !== "api.torn.com" ||
+          next.pathname !== "/v2/user/log" || next.searchParams.has("key")) {
+        throw new Error("Torn returned an unsafe gym training pagination link.")
+      }
+      cursorUrl = next.toString()
+      cursorDirection = direction
+      await db.prepare("UPDATE gym_training_collection_jobs SET status = 'running', cursor_url = ?, cursor_direction = ?, pages_collected = ?, logs_scanned = ?, logs_collected = ?, last_error = NULL, updated_at = ? WHERE job_id = ?")
+        .bind(cursorUrl, cursorDirection, pages, scannedTotal, logsTotal, now, jobId).run()
+      continue
+    }
+
+    await db.prepare("UPDATE gym_training_collection_jobs SET status = 'complete', cursor_url = NULL, cursor_direction = NULL, pages_collected = ?, logs_scanned = ?, logs_collected = ?, last_error = NULL, completed_at = ?, updated_at = ? WHERE job_id = ?")
+      .bind(pages, scannedTotal, logsTotal, now, now, jobId).run()
     return
   }
 
-  await db.prepare("UPDATE gym_training_collection_jobs SET status = 'complete', cursor_url = NULL, pages_collected = ?, logs_scanned = ?, logs_collected = ?, last_error = NULL, completed_at = ?, updated_at = ? WHERE job_id = ?")
-    .bind(pages, scannedTotal, logsTotal, now, now, jobId).run()
+  await sendGymTrainingCollectionJob(env, jobId)
 }
 
 async function runHalloweenLiveSnapshot(env: WorkerEnv, playerId: string, eventYear: number, snapshotKind: "opening" | "periodic" | "closing" | "manual"): Promise<Record<string, unknown>> {
