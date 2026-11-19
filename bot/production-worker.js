@@ -2,7 +2,15 @@ import { isDailySummaryDue, previousReportingDay, reportingDayAt, summaryMetricV
 
 const enc = new TextEncoder();
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
-const privateReply = content => ({ type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } });
+const isDirectMessageInteraction = interaction => interaction?.context === 1 || interaction?.context === 2;
+const privateReply = (content, interaction) => ({
+  type: 4,
+  data: {
+    content,
+    ...(isDirectMessageInteraction(interaction) ? {} : { flags: 64 }),
+    allowed_mentions: { parse: [] }
+  }
+});
 const hexBytes = value => Uint8Array.from((String(value).match(/.{2}/g) || []), item => parseInt(item, 16));
 
 function isTimeoutError(error) {
@@ -320,7 +328,7 @@ async function replyFor(interaction, env) {
 
   if (interaction.type !== 2) return privateReply("Only secure account linking and the private daily summary are supported.");
   const name = interaction.data?.name;
-  if (name === "link") return privateReply("**Secure dashboard linking**\n1. Open https://naughtyfamily.pages.dev and sign in.\n2. Open the Automation Center and generate a one-time Discord link code. It expires after five minutes.\n3. Run /link-code and submit the code in the private form.\n\nEnable **Private DM daily summary** in the dashboard to receive the daily report. Never post a Torn API key in Discord.");
+  if (name === "link") return privateReply("**Secure dashboard linking**\n1. Open https://naughtyfamily.pages.dev and sign in.\n2. Open the Automation Center and generate a one-time Discord link code. It expires after five minutes.\n3. Run /link-code and submit the code in this private DM.\n\nNeed to install the commands to your Discord account first? Choose Add to My Apps: https://discord.com/oauth2/authorize?client_id=1558700958983389254&integration_type=1&scope=applications.commands\n\nEnable **Private DM daily summary** in the dashboard to receive the daily report. Never post a Torn API key in Discord.", interaction);
   if (name === "link-code") return { type: 9, data: { custom_id: "link_code_submit", title: "Link dashboard account", components: [{ type: 18, label: "Dashboard link code", component: { type: 4, custom_id: "link_code", style: 1, min_length: 48, max_length: 48, required: true, placeholder: "Paste the one-time dashboard code" } }] } };
   if (!userId) return privateReply("Unable to identify your Discord account.");
   if (name === "status") {
@@ -358,7 +366,7 @@ async function editOriginalInteraction(interaction, reply) {
 async function completeDeferredInteraction(interaction, env) {
   let reply;
   try { await ensureBotSchema(env); reply = await replyFor(interaction, env); }
-  catch { reply = privateReply("The request could not be completed. Please try again later."); }
+  catch { reply = privateReply("The request could not be completed. Please try again later.", interaction); }
   try { await editOriginalInteraction(interaction, reply); }
   catch { console.warn("Discord deferred response delivery failed."); }
 }
@@ -384,8 +392,8 @@ export default {
     if (interaction?.type === 2 && interaction.data?.name === "link") return json(await replyFor(interaction, env));
     if ((interaction?.type === 2 && ["status", "unlink"].includes(interaction.data?.name)) || (interaction?.type === 5 && interaction.data?.custom_id === "link_code_submit")) {
       ctx.waitUntil(completeDeferredInteraction(interaction, env));
-      return json({ type: 5, data: { flags: 64 } });
+      return json({ type: 5, data: isDirectMessageInteraction(interaction) ? {} : { flags: 64 } });
     }
-    return json(privateReply("This bot now supports secure account linking and the private daily summary only."));
+    return json(privateReply("This bot now supports secure account linking and the private daily summary only.", interaction));
   }
 };
