@@ -15,6 +15,8 @@ from pathlib import Path
 
 
 EXPECTED_MIGRATION_NUMBERS = list(range(13, 39))
+EXPECTED_RESTORED_MIGRATION_COUNT = 42
+EXPECTED_PENDING_MIGRATION_NUMBERS = [38]
 
 
 def sha256_file(path: Path) -> str:
@@ -97,10 +99,6 @@ def replay_backup(
         connection.execute("PRAGMA foreign_keys = ON")
 
         applied, ledger_columns = read_migration_ledger(connection)
-        if len(applied) != 16:
-            raise RuntimeError(
-                f"Expected the restored 16-entry migration ledger; found {len(applied)} entries."
-            )
 
         all_files = sorted(
             (path for path in migrations_dir.glob("*.sql") if path.is_file()),
@@ -121,10 +119,30 @@ def replay_backup(
                 "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0038."
             )
 
-        pending = [path for path in candidate_files if path.name not in applied]
-        if len(pending) != 26:
+        if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
             raise RuntimeError(
-                f"Expected 26 pending migrations 0013-0038; found {len(pending)}."
+                "Expected the production backup to contain "
+                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
+                f"found {len(applied)} entries."
+            )
+
+        prior_migrations = [
+            path for path in candidate_files
+            if int(path.name.split("_", 1)[0]) < 38
+        ]
+        missing_prior = [path.name for path in prior_migrations if path.name not in applied]
+        if missing_prior:
+            raise RuntimeError(
+                "The restored production ledger is missing previously applied migrations: "
+                + ", ".join(missing_prior[:12])
+            )
+
+        pending = [path for path in candidate_files if path.name not in applied]
+        pending_numbers = [int(path.name.split("_", 1)[0]) for path in pending]
+        if pending_numbers != EXPECTED_PENDING_MIGRATION_NUMBERS:
+            raise RuntimeError(
+                "Expected only migration 0038 to be pending for this production backup; "
+                f"found {pending_numbers}."
             )
 
         before_counts = application_table_counts(connection)
