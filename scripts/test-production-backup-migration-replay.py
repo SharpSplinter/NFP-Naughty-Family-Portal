@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as temp:
     sql.write_text("\n".join(statements) + "\n", encoding="utf-8")
     sql_hash = hashlib.sha256(sql.read_bytes()).hexdigest()
 
-    for number in range(13, 38):
+    for number in range(13, 39):
         if number == 13:
             body = "ALTER TABLE companies ADD COLUMN notes TEXT;"
         elif number == 14:
@@ -51,11 +51,11 @@ with tempfile.TemporaryDirectory() as temp:
     result = module.replay_backup(sql, migrations, sql_hash)
     assert result["result"] == "success"
     assert result["starting_migration_count"] == 16
-    assert result["final_migration_count"] == 41
+    assert result["final_migration_count"] == 42
     assert result["preserved_existing_tables"] == 3
     assert result["starting_application_row_count"] == 4
     assert result["foreign_key_violations"] == 0
-    assert len(result["replayed_migrations"]) == 25
+    assert len(result["replayed_migrations"]) == 26
 
     # A replay that removes restored company rows must fail preservation checks.
     destructive = migrations / "0014_fixture.sql"
