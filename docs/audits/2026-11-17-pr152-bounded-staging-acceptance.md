@@ -44,3 +44,25 @@ No Worker, frontend, migration, or other runtime source/configuration file chang
 No production D1, Worker, Pages, Torn, or Queue resource was accessed. No production deployment, migration, Pages publication, production secret change, or production Queue reconciliation occurred. No staging Pages deployment or staging migration was performed as part of this bounded run. Only the one staging Worker deployment, the read-only acceptance D1 queries, and the single synthetic no-op Queue lifecycle described above were performed.
 
 This record documents the bounded acceptance actually authorized and performed. It does not upgrade it into a full feature-suite staging integration run.
+
+
+## 2026-11-18 exact-current-runtime bounded acceptance
+
+**Runtime source SHA: `4d4e8976feb5a86cbdeb44d25bc42b9dcc6d2d7a`**  
+**Equivalent reviewed main source:** `10a41079db00a31030a838d1d34136d6847341e1` (identical Git tree `0113fbd91121e7c5edeab15c500c634811478879`).
+
+- Staging Worker deployment: [run #44245138458](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44245138458), `worker-build-artifact.yml`, completed successfully on the exact-current application tree.
+- Staging Worker target: `naughtyfamily-api-staging`.
+- Deployed Worker version: `699f7b6a-2ce7-4b79-ac7f-dbba0d852179` (version 139), uploaded at 2026-11-18T05:34:18.188097Z.
+- Quality validation: npm install, typecheck, complete backend regression checks, Worker bundle, staging binding-preservation checks, and one read-only `/health` request all passed.
+- Confirmed isolated staging bindings: D1 `02cca699-1232-495f-8a0a-de525058b92a`; KV `fa61636ea2cf4a39b00e255024d0fc7d`; collection Queue `ncd-naughtyfamily-staging-collection`; DLQ `ncd-naughtyfamily-staging-dlq`; origin `https://naughtyfamily-staging.pages.dev`. Existing secret binding names were preserved.
+- Bounded acceptance query: `SELECT run_id FROM faction_member_stat_snapshots LIMIT 268`; **268 D1 rows read**, **0 D1 rows written**, 0 changes.
+- Wider read-only diagnostic queries performed during this acceptance had a combined direct D1 query meter of 15,552 rows read and 0 rows written, below the cumulative owner-set limit of 25,000 rows read / 2,000 rows written. No fixture seeding or cleanup was performed.
+- Queue baseline before sending: collection queue backlog 0; DLQ backlog 0.
+- **3 billable Queue operations** were confirmed by Cloudflare Queue GraphQL analytics for the single message: 1 write, 1 read and 1 successful delete; message payload 6 bytes.
+- **1 synthetic no-op message** with empty JSON body was delivered. The current Worker handler acknowledged it without a collection run or associated D1 write. Backlog returned to zero after consumption.
+- **DLQ messages: 0**; the DLQ backlog remained zero.
+- No migration was run. No staging Pages deployment was performed.
+- **No production D1, Worker, Pages, Torn, or Queue resource was accessed.** This statement describes the staging acceptance scope; separate production release-preflight checks in the cutover review were read-only.
+
+This record replaces the earlier runtime SHA only for the current candidate's bounded acceptance. The earlier `f25c2980` record is retained above as historical evidence. This is not a claim that the complete `deploy-staging-acceptance.yml` feature suite ran.
