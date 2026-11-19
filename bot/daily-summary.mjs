@@ -17,7 +17,12 @@ export function previousReportingDay(day) {
 export function isDailySummaryDue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) return false;
-  return date.getUTCHours() > 18 || (date.getUTCHours() === 18 && date.getUTCMinutes() >= 20);
+  // Each Torn reporting day runs 18:00 UTC to 18:00 UTC the next day.
+  // Start polling 20 minutes into that window, then keep hourly retries
+  // eligible through the remainder of the same reporting day (including
+  // overnight) so quiet-hours deferrals do not wait for the next rollover.
+  const minutesIntoReportingDay = (date.getUTCHours() * 60 + date.getUTCMinutes() - 18 * 60 + 24 * 60) % (24 * 60);
+  return minutesIntoReportingDay >= 20;
 }
 
 export function calculateRankingMetrics(company, rankingRows) {
@@ -163,4 +168,34 @@ export function summaryMetricValues(point, rankingRows, company) {
     stockQuantity: isFiniteNumber(point.stockQuantity) ? point.stockQuantity : null,
     weeklyIncome,
   };
+}
+
+/**
+ * Evaluate an account's quiet-hours window at a supplied instant.
+ * The optional clock keeps timezone and daylight-saving behavior deterministic in tests.
+ */
+export function isDuringQuietHours(preferences, now = new Date()) {
+  if (!(preferences?.quietHoursEnabled === true || Number(preferences?.quietHoursEnabled) === 1)) return false;
+  const timezone = typeof preferences.timezone === "string" && preferences.timezone ? preferences.timezone : "UTC";
+  const startText = typeof preferences.quietHoursStart === "string" ? preferences.quietHoursStart : "22:00";
+  const endText = typeof preferences.quietHoursEnd === "string" ? preferences.quietHoursEnd : "08:00";
+  const minutes = value => {
+    const match = String(value).match(/^(\d{2}):(\d{2})$/);
+    if (!match) return null;
+    const hour = Number(match[1]), minute = Number(match[2]);
+    return hour <= 23 && minute <= 59 ? hour * 60 + minute : null;
+  };
+  const start = minutes(startText), end = minutes(endText);
+  if (start === null || end === null || start === end) return false;
+  try {
+    const instant = now instanceof Date ? now : new Date(now);
+    if (!Number.isFinite(instant.getTime())) return false;
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).format(instant).split(":");
+    const current = Number(parts[0]) * 60 + Number(parts[1]);
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  } catch {
+    return false;
+  }
 }

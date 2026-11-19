@@ -9,7 +9,7 @@ const healthyPayload = {
   encryption: true,
   discordConfigured: true,
   dashboardBinding: true,
-  privateAlertDelivery: true
+  privateDailySummary: true
 };
 const validResponse = {
   status: 200,
@@ -44,7 +44,7 @@ test("rejects a response from the wrong service or an unhealthy Worker", () => {
 });
 
 test("rejects every missing or false required configuration flag", () => {
-  for (const flag of ["database", "encryption", "discordConfigured", "dashboardBinding", "privateAlertDelivery"]) {
+  for (const flag of ["database", "encryption", "discordConfigured", "dashboardBinding", "privateDailySummary"]) {
     assert.throws(() => assertProductionHealth({
       ...validResponse,
       payload: { ...healthyPayload, [flag]: false }

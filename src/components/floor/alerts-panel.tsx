@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
-import { evaluateDiscordPollHealth } from "../../lib/automation/discord-poll-monitoring"
 
 type AlertRuleType = "income_drop" | "stale_data" | "refresh_failure" | "income_increase" | "rating_drop" | "roster_change"
 type CompanyOption = { company_id: string; company_name: string | null }
@@ -10,9 +9,6 @@ type AutomationRun = { triggerName: string; status: string; startedAt: string; f
 type Props = { apiBase: string; sessionToken: string; companies: CompanyOption[]; selectedCompanyId: string; demoMode: boolean; onNavigateCharts: () => void }
 type AutomationPreferences = { browserNotificationsEnabled: boolean; quietHoursEnabled: boolean; quietHoursStart: string; quietHoursEnd: string; timezone: string; minimumSeverity: "info" | "warning" | "critical"; digestMode: "instant" | "daily" | "both" | "off" }
 type WebhookDelivery = { deliveryId: string; eventId: string; status: "delivered" | "failed"; statusCode?: number | null; detail?: string | null; createdAt: string; deliveredAt?: string | null }
-type DiscordPollHealth = { pollStartedAt?: string | null; pollCompletedAt?: string | null; lastSuccessAt?: string | null; status: string; errorCode?: string | null; errorAt?: string | null; consecutiveFailures: number; pageCount: number; eventsSeen: number; delivered: number; filtered: number; failed: number; exhausted: number; staleRecovered: number; exhaustedDeliveries: number; staleClaims: number; updatedAt?: string | null }
-type DiscordPollHistory = { pollCompletedAt: string; status: string; errorCode?: string | null; consecutiveFailures: number; eventsSeen: number; delivered: number; failed: number; exhaustedDeliveries: number; staleClaims: number }
-type DiscordPollMonitoring = { linked: boolean; alertsEnabled: boolean; health: DiscordPollHealth | null; history: DiscordPollHistory[] }
 const DEFAULT_PREFERENCES: AutomationPreferences = { browserNotificationsEnabled: false, quietHoursEnabled: false, quietHoursStart: "22:00", quietHoursEnd: "08:00", timezone: "UTC", minimumSeverity: "info", digestMode: "instant" }
 
 async function automationFetch<T>(apiBase: string, token: string, path: string, init: RequestInit = {}): Promise<T> {
@@ -68,8 +64,7 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
   const [webhookUrl, setWebhookUrl] = useState("")
   const [webhookConfigured, setWebhookConfigured] = useState(false)
   const [discordLinked, setDiscordLinked] = useState(false)
-  const [discordAlertsEnabled, setDiscordAlertsEnabled] = useState(false)
-  const [discordPollMonitoring, setDiscordPollMonitoring] = useState<DiscordPollMonitoring | null>(null)
+  const [discordSummaryEnabled, setDiscordSummaryEnabled] = useState(false)
   const [discordCode, setDiscordCode] = useState("")
   const [discordCodeExpiresAt, setDiscordCodeExpiresAt] = useState<string | null>(null)
   const [discordLinkBusy, setDiscordLinkBusy] = useState(false)
@@ -108,7 +103,7 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
       if (prefsResult.status === "fulfilled") { const raw = prefsResult.value.preferences; setPreferences({ browserNotificationsEnabled: Boolean(raw.browserNotificationsEnabled), quietHoursEnabled: Boolean(raw.quietHoursEnabled), quietHoursStart: String(raw.quietHoursStart || "22:00"), quietHoursEnd: String(raw.quietHoursEnd || "08:00"), timezone: String(raw.timezone || "UTC"), minimumSeverity: ["info", "warning", "critical"].includes(String(raw.minimumSeverity)) ? raw.minimumSeverity as AutomationPreferences["minimumSeverity"] : "info", digestMode: raw.digestMode === "daily" ? "daily" : raw.digestMode === "both" ? "both" : raw.digestMode === "off" ? "off" : "instant" }) }
       if (hookResult.status === "fulfilled") setWebhookConfigured(hookResult.value.configured === true)
       if (deliveryResult.status === "fulfilled") setDeliveries(deliveryResult.value.deliveries || [])
-      if (discordResult.status === "fulfilled") { setDiscordLinked(discordResult.value.linked === true); setDiscordAlertsEnabled(discordResult.value.alertsEnabled === true) }
+      if (discordResult.status === "fulfilled") { setDiscordLinked(discordResult.value.linked === true); setDiscordSummaryEnabled(discordResult.value.alertsEnabled === true) }
     } catch (caught) {
       if (requestId !== loadRequestId.current) return
       const message = caught instanceof Error ? caught.message : "Could not load automation data."
@@ -122,30 +117,6 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
   }, [apiBase, sessionToken, demoMode])
 
   useEffect(() => { void load() }, [load])
-
-  const refreshDiscordPollMonitoring = useCallback(async () => {
-    if (!sessionToken || demoMode) { setDiscordPollMonitoring(null); return }
-    try {
-      const monitoring = await automationFetch<DiscordPollMonitoring>(apiBase, sessionToken, "/api/me/discord-alert-poll-health")
-      setDiscordPollMonitoring(monitoring)
-      setDiscordLinked(monitoring.linked === true)
-      setDiscordAlertsEnabled(monitoring.alertsEnabled === true)
-    } catch {
-      setDiscordPollMonitoring(null)
-    }
-  }, [apiBase, sessionToken, demoMode])
-
-  useEffect(() => {
-    void refreshDiscordPollMonitoring()
-    const timer = window.setInterval(() => { void refreshDiscordPollMonitoring() }, 60_000)
-    return () => window.clearInterval(timer)
-  }, [refreshDiscordPollMonitoring])
-
-  const pollHealth = discordPollMonitoring?.health ?? null
-  const pollAssessment = evaluateDiscordPollHealth(pollHealth, { linked: discordLinked, alertsEnabled: discordAlertsEnabled })
-  const pollWarningReasons = pollAssessment.warningReasons
-  const pollNeedsAttention = pollAssessment.needsAttention
-  const pollBadgeLabel = pollAssessment.badgeLabel
 
   const filteredEvents = events.filter((event) => {
     const query = alertSearch.trim().toLocaleLowerCase()
@@ -237,16 +208,16 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
     finally { setDiscordLinkBusy(false) }
   }
 
-  async function configureDiscordAlerts() {
+  async function configureDiscordSummary() {
     if (!discordLinked) { await generateDiscordLinkCode(); return }
     setDiscordLinkBusy(true); setError(""); setNotice("")
     try {
-      const enabled = !discordAlertsEnabled
+      const enabled = !discordSummaryEnabled
       await automationFetch<{ linked: boolean; alertsEnabled: boolean }>(apiBase, sessionToken, "/api/me/discord-link", { method: "POST", body: JSON.stringify({ alertsEnabled: enabled }) })
-      setDiscordAlertsEnabled(enabled)
-      setNotice(enabled ? "Private Discord alert DMs are enabled. Company alerts will be sent only to your linked Discord account." : "Private Discord alert DMs are disabled.")
+      setDiscordSummaryEnabled(enabled)
+      setNotice(enabled ? "Private daily-summary DMs are enabled for your linked Discord account." : "Private daily-summary DMs are disabled.")
       await load()
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update Discord alert settings. Please try again.") }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update private daily-summary settings. Please try again.") }
     finally { setDiscordLinkBusy(false) }
   }
 
@@ -315,35 +286,9 @@ export function AlertsPanel({ apiBase, sessionToken, companies, selectedCompanyI
     <section className="panel automation-delivery-settings">
       <div className="panel-heading"><div><h2>Notification delivery & quiet hours</h2><p>In-app alerts are always retained. Browser notifications can respect your local quiet window; optional webhooks send matching alerts to an external HTTPS endpoint.</p></div><span className={webhookConfigured ? "admin-status good" : "admin-status neutral"}>{webhookConfigured ? "Webhook configured" : "In-app only"}</span></div>
       <div className="automation-delivery-grid">
-        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>Private Discord alerts</h3><p>One consolidated daily company summary is delivered by direct message to the Discord account linked to this dashboard. It compares income, profit, star level, next-star income gap, company rank, and stock quantity with the prior reporting day. It is never posted to a shared channel.</p></div><span className={discordAlertsEnabled ? "admin-status good" : "admin-status neutral"}>{discordAlertsEnabled ? "DM alerts enabled" : discordLinked ? "Account linked" : "Not linked"}</span></div><p className="field-hint">You can link from here using a one-time code, or link directly in Discord with /link and your limited-access Torn API key.</p><button type="button" className="primary-button" disabled={discordLinkBusy || demoMode} onClick={() => void configureDiscordAlerts()}>{discordLinkBusy ? "Working…" : !discordLinked ? "Generate one-time link code" : discordAlertsEnabled ? "Disable private Discord alerts" : "Enable private Discord alerts"}</button>{discordLinked && <button type="button" className="text-button" disabled={discordLinkBusy || demoMode} onClick={() => void generateDiscordLinkCode()}>Reconnect Discord</button>}{discordCode && <div className="automation-notice" role="status"><strong>Your one-time Discord link code</strong><p><code>{discordCode}</code></p><p>In Discord, run <strong>/link-code</strong> and paste this code. It expires at {prettyDate(discordCodeExpiresAt)}. Submitting it refreshes the bot's saved dashboard session for this account.</p><button type="button" className="text-button" onClick={() => void load()}>Check connection status</button></div>}{discordLinked && <p className="field-hint">Discord account linked. {discordAlertsEnabled ? "One consolidated daily company summary will be sent privately by DM." : "Enable private alerts to start receiving DMs."}</p>}
-          {discordLinked && <section className="discord-poll-monitor" aria-labelledby="discord-poll-monitor-title">
-            <div className="discord-poll-monitor-heading">
-              <div><h4 id="discord-poll-monitor-title">Private alert delivery health</h4><p>Updated automatically about once a minute. Warnings appear after 3 consecutive poll failures, exhausted retries, stale claims, or 30 minutes without telemetry. After 3 consecutive poll failures, the bot also attempts one private escalation DM for that outage; it resets after a successful poll.</p></div>
-              <span className={`admin-status ${pollNeedsAttention ? "danger" : pollHealth ? "good" : "neutral"}`}>{pollBadgeLabel}</span>
-            </div>
-            {!pollHealth ? <div className="discord-poll-empty" role="status">No poll telemetry has arrived yet. The monitoring panel will populate after the next scheduled bot poll completes.</div> : <>
-              {pollNeedsAttention && <div className="discord-poll-warning" role="alert"><strong>Attention required</strong><ul>{pollWarningReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>{pollHealth.errorCode && <p>Latest diagnostic: <code>{pollHealth.errorCode}</code> · {prettyDate(pollHealth.errorAt)}</p>}</div>}
-              <div className="discord-poll-metrics">
-                <div><span>Last poll</span><strong>{String(pollHealth.status).replaceAll("_", " ")}</strong><small>{prettyDate(pollHealth.pollCompletedAt)}</small></div>
-                <div><span>Consecutive failures</span><strong>{Number(pollHealth.consecutiveFailures || 0)}</strong><small>Warning threshold: 3</small></div>
-                <div><span>Companies summarized</span><strong>{Number(pollHealth.eventsSeen || 0).toLocaleString("en-US")}</strong><small>In the latest daily report</small></div>
-                <div><span>Summary DMs sent</span><strong>{Number(pollHealth.delivered || 0)}</strong><small>{Number(pollHealth.failed || 0)} failed in last poll</small></div>
-                <div><span>Retries exhausted</span><strong>{Number(pollHealth.exhaustedDeliveries || 0)}</strong><small>Outstanding delivery issues</small></div>
-                <div><span>Stale claims</span><strong>{Number(pollHealth.staleClaims || 0)}</strong><small>Claims older than 5 minutes</small></div>
-              </div>
-              <div className="discord-poll-history"><div className="discord-poll-history-heading"><strong>Recent poll trend</strong><span>Latest {Math.min(6, discordPollMonitoring?.history?.length || 0)} reports</span></div>
-                {discordPollMonitoring?.history?.length ? <ul>{discordPollMonitoring.history.slice(0, 6).map((item, index) => <li key={item.pollCompletedAt + ":" + index}>
-                  <time dateTime={item.pollCompletedAt}>{prettyDate(item.pollCompletedAt)}</time>
-                  <span className={item.status === "error" || item.status === "partial" || Number(item.exhaustedDeliveries || 0) > 0 ? "discord-poll-history-status warning" : "discord-poll-history-status"}>{String(item.status).replaceAll("_", " ")}</span>
-                  <span>{Number(item.eventsSeen || 0)} scanned · {Number(item.delivered || 0)} sent</span>
-                  {Number(item.exhaustedDeliveries || 0) > 0 && <span>{Number(item.exhaustedDeliveries)} exhausted</span>}
-                </li>)}</ul> : <p className="field-hint">The first report will start the recent poll trend.</p>}
-              </div>
-            </>}
-            <div className="discord-poll-monitor-footer"><span className="field-hint">Last successful poll: {prettyDate(pollHealth?.lastSuccessAt)}</span><button className="text-button" type="button" onClick={() => void refreshDiscordPollMonitoring()}>Refresh health</button></div>
-          </section>}
+        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>Private DM daily summary</h3><p>One consolidated company summary is sent by private DM after the 18:00 UTC Torn reporting-day rollover, with the first delivery check at 18:20 UTC. It compares income, profit, star level, next-star income gap, company rank, and stock quantity with the prior reporting day. Delivery respects your quiet hours and is never posted to a shared channel.</p></div><span className={discordSummaryEnabled ? "admin-status good" : "admin-status neutral"}>{discordSummaryEnabled ? "Daily summary enabled" : discordLinked ? "Summary opt-in off" : "Not linked"}</span></div><p className="field-hint">Generate a secure one-time code here, then redeem it with /link-code in Discord. The code expires after five minutes. Enabling the daily summary is a separate opt-in.</p><button type="button" className="primary-button" disabled={discordLinkBusy || demoMode} onClick={() => void configureDiscordSummary()}>{discordLinkBusy ? "Working…" : !discordLinked ? "Generate one-time link code" : discordSummaryEnabled ? "Disable private daily summary" : "Enable private daily summary"}</button>{discordLinked && <button type="button" className="text-button" disabled={discordLinkBusy || demoMode} onClick={() => void generateDiscordLinkCode()}>Reconnect Discord</button>}{discordCode && <div className="automation-notice" role="status"><strong>Your one-time Discord link code</strong><p><code>{discordCode}</code></p><p>In Discord, run <strong>/link-code</strong> and paste this code. It expires at {prettyDate(discordCodeExpiresAt)}. Submitting it refreshes the bot's saved dashboard session for this account.</p><button type="button" className="text-button" onClick={() => void load()}>Check connection status</button></div>}{discordLinked && <p className="field-hint">Discord account linked. {discordSummaryEnabled ? "One consolidated daily company summary will be sent privately by DM." : "Enable the private daily summary to start receiving DMs."}</p>}
         </div>
-        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>External HTTPS webhook</h3><p>For non-Discord services only. Discord channel webhooks are blocked because channel members could see company-specific alerts.</p></div></div><form className="automation-form" onSubmit={saveWebhook}><label>Webhook URL<input type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://hooks.your-domain.com/alerts" autoComplete="off" /></label><button type="submit" className="primary-button" disabled={webhookBusy || !webhookUrl.trim()}>{webhookBusy ? "Saving…" : webhookConfigured ? "Replace encrypted webhook" : "Save encrypted webhook"}</button></form>{webhookConfigured && <div className="automation-webhook-actions"><button type="button" className="primary-button" disabled={webhookBusy} onClick={() => void testWebhook("connection")}>{webhookBusy ? "Sending…" : "Test connection"}</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void testWebhook("alert")}>Test alert format</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void testWebhook("summary")}>Test summary format</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void removeWebhook()}>Remove webhook endpoint</button></div>}<p className="field-hint">Use Test connection to check reachability, Test alert format to preview a sample alert, and Test summary format to preview a daily roundup. Sample tests do not create alert history. Discord channel webhook URLs are rejected for privacy; use Private Discord alerts for direct messages. Never paste a webhook URL you do not control.</p></div>
+        <div className="automation-webhook-panel"><div className="automation-webhook-heading"><div><h3>External HTTPS webhook</h3><p>For non-Discord services only. Discord channel webhooks are blocked because channel members could see company-specific alerts.</p></div></div><form className="automation-form" onSubmit={saveWebhook}><label>Webhook URL<input type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://hooks.your-domain.com/alerts" autoComplete="off" /></label><button type="submit" className="primary-button" disabled={webhookBusy || !webhookUrl.trim()}>{webhookBusy ? "Saving…" : webhookConfigured ? "Replace encrypted webhook" : "Save encrypted webhook"}</button></form>{webhookConfigured && <div className="automation-webhook-actions"><button type="button" className="primary-button" disabled={webhookBusy} onClick={() => void testWebhook("connection")}>{webhookBusy ? "Sending…" : "Test connection"}</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void testWebhook("alert")}>Test alert format</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void testWebhook("summary")}>Test summary format</button><button type="button" className="text-button" disabled={webhookBusy} onClick={() => void removeWebhook()}>Remove webhook endpoint</button></div>}<p className="field-hint">Use Test connection to check reachability, Test alert format to preview a sample alert, and Test summary format to preview a daily roundup. Sample tests do not create alert history. Discord channel webhook URLs are rejected for privacy; use the private daily summary for direct messages. Never paste a webhook URL you do not control.</p></div>
       </div>
       <div className="automation-delivery-history"><div className="panel-heading"><div><h3>Webhook delivery history</h3><p>Latest outbound attempts. Failed deliveries can be retried after fixing the endpoint.</p></div><span className="count-chip">{deliveries.length} attempts</span></div>{deliveries.length ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>TIME</th><th>STATUS</th><th>HTTP</th><th>DETAIL</th><th>ACTION</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.deliveryId}><td>{prettyDate(delivery.createdAt)}</td><td><span className={`admin-status ${delivery.status === "delivered" ? "good" : "danger"}`}>{delivery.status}</span></td><td>{delivery.statusCode ?? "—"}</td><td>{delivery.detail || "—"}</td><td>{delivery.status === "failed" && <button type="button" className="text-button" disabled={webhookBusy || !webhookConfigured} onClick={() => void retryWebhook(delivery)}>Retry</button>}</td></tr>)}</tbody></table></div> : <div className="empty-state">No webhook delivery attempts yet. Save an HTTPS endpoint to start delivering new alerts.</div>}</div>
     </section>

@@ -3,7 +3,7 @@ const REQUIRED_FLAGS = [
   "encryption",
   "discordConfigured",
   "dashboardBinding",
-  "privateAlertDelivery"
+  "privateDailySummary"
 ];
 
 export function assertProductionHealth({ status, contentType, payload }) {

@@ -11,12 +11,19 @@ const response = (payload, status = 200, headers = {}) => new Response(JSON.stri
 function makeHarness({ rateLimitFirstPatch = false, alwaysRateLimit = false, initialCommands } = {}) {
   const initial = structuredClone(initialCommands || [
     { id: "owned-link", type: 1, ...commands.find(command => command.name === "link") },
+    { id: "legacy-company", type: 1, name: "company", description: "Old company commands" },
+    { id: "legacy-automation", type: 1, name: "automation", description: "Old automation commands" },
+    { id: "legacy-dashboard", type: 1, name: "dashboard", description: "Old dashboard commands" },
+    { id: "legacy-bot", type: 1, name: "bot", description: "Old bot commands" },
+    { id: "legacy-help", type: 1, name: "help", description: "Old help command" },
+    { id: "legacy-ping", type: 1, name: "ping", description: "Old ping command" },
     { id: "legacy-overview", type: 1, name: "overview", description: "Old flat command" },
-    { id: "legacy-bot-status", type: 1, name: "bot-status", description: "Old flat command" },
+    { id: "legacy-employees", type: 1, name: "employees", description: "Old flat command" },
     { id: "legacy-ranking-global", type: 1, name: "company-rankings-global", description: "Old flat command" },
     { id: "legacy-webhook-delete", type: 1, name: "automation-webhook-delete", description: "Old flat command" },
     { id: "foreign-weather", type: 1, name: "weather", description: "Owned by another integration" },
-    // Discord permits a context-menu command to share a name with a slash command.
+    // Discord permits context-menu commands to share a name with slash commands.
+    { id: "foreign-company-context", type: 2, name: "company" },
     { id: "foreign-overview-context", type: 2, name: "overview" }
   ]);
   let registered = structuredClone(initial);
@@ -108,22 +115,19 @@ assert.equal(scenario.calls.filter(call => call.method === "POST").length, comma
 
 const deletedIds = scenario.calls.filter(call => call.method === "DELETE").map(call => call.url.split("/").at(-1));
 assert.deepEqual(new Set(deletedIds), new Set([
-  "legacy-overview",
-  "legacy-bot-status",
-  "legacy-ranking-global",
-  "legacy-webhook-delete"
-]), "cleanup must delete only known obsolete chat-input command aliases");
+  "legacy-company", "legacy-automation", "legacy-dashboard", "legacy-bot",
+  "legacy-help", "legacy-ping", "legacy-overview", "legacy-employees",
+  "legacy-ranking-global", "legacy-webhook-delete"
+]), "cleanup must delete the retired bot roots and known flat chat-input commands");
 assert.equal(scenario.registered.some(command => command.id === "foreign-weather"), true,
   "an unrelated slash command must be preserved");
-assert.equal(scenario.registered.some(command => command.id === "foreign-overview-context"), true,
-  "an unrelated context-menu command sharing a deprecated alias name must be preserved");
+assert.equal(scenario.registered.some(command => command.id === "foreign-company-context" && command.type === 2) && scenario.registered.some(command => command.id === "foreign-overview-context" && command.type === 2), true,
+  "unrelated context-menu commands sharing retired root names must be preserved");
 assert.equal(scenario.registered.some(command => command.id === "legacy-overview"), false,
   "the deprecated chat-input alias must be removed");
-assert.equal(scenario.registered.filter(command => command.name === "overview").length, 1,
-  "only the unrelated context-menu root named overview should remain");
-const registeredCompany = scenario.registered.find(command => command.name === "company" && command.type === 1);
-assert.ok(registeredCompany?.options?.some(option => option.name === "overview" && option.type === 1),
-  "the canonical /company overview subcommand must remain registered");
+assert.deepEqual(new Set(scenario.registered.filter(command => command.type === 1).map(command => command.name)),
+  new Set([...commands.map(command => command.name), "weather"]),
+  "only the four canonical account-link commands and unrelated slash commands should remain");
 assert.equal(scenario.calls.filter(call => call.method === "DELETE").every(call => call.url.startsWith(base + "/")),
   true, "cleanup requests must target only the configured guild command endpoint");
 assert.ok(scenario.logs.some(line => line.includes("unrelated commands were preserved")),
@@ -167,4 +171,4 @@ await assert.rejects(registerCommands({
   fetchImpl: async () => { throw new Error("network should not be called"); }
 }), /Missing DISCORD_TOKEN/, "missing credentials must fail before making an API request");
 
-console.log("PASS Discord command registration API tests: bounded 429 retry, command creation/update, scoped legacy cleanup, unrelated command preservation, and read-only token check.");
+console.log("PASS Discord command registration API tests: bounded 429 retry, four-command create/update, retired-root cleanup, unrelated command preservation, and read-only token check.");
