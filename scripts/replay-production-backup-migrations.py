@@ -119,13 +119,6 @@ def replay_backup(
                 "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0038."
             )
 
-        if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
-            raise RuntimeError(
-                "Expected the production backup to contain "
-                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
-                f"found {len(applied)} entries."
-            )
-
         prior_migrations = [
             path for path in candidate_files
             if int(path.name.split("_", 1)[0]) < 38
@@ -135,6 +128,13 @@ def replay_backup(
             raise RuntimeError(
                 "The restored production ledger is missing previously applied migrations: "
                 + ", ".join(missing_prior[:12])
+            )
+
+        if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
+            raise RuntimeError(
+                "Expected the production backup to contain "
+                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
+                f"found {len(applied)} entries."
             )
 
         pending = [path for path in candidate_files if path.name not in applied]
