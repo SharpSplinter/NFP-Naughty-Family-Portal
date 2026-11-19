@@ -54,10 +54,14 @@ jobs:
         run: node bot/test-bot-contract.mjs
       - name: Test daily summary calculation, scheduling, and delivery behavior
         run: node bot/test-daily-summary.mjs
-      - name: Test the four retained Discord commands
+      - name: Test global USER_INSTALL and BOT_DM command registration
         run: node bot/test-register-commands.mjs
       - name: Test production Worker health contract
         run: node bot/test-production-health.mjs
+      - name: Verify Discord User Install is enabled (read-only)
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: node bot/configure-production-endpoint.mjs --check-install
       - name: Ensure production deployment is manual-only and main-only
         run: node bot/test-production-deploy-trigger.mjs
       - name: Validate production-only Worker and database targets
@@ -100,6 +104,10 @@ jobs:
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: node bot/register-commands.mjs --check-token
+      - name: Require Discord User Install to be enabled
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: node bot/configure-production-endpoint.mjs --check-install
       - name: Initialize production bot database schema
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -119,7 +127,7 @@ jobs:
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: node bot/configure-production-endpoint.mjs
-      - name: Register the updated guild slash commands
+      - name: Register global user-installed DM slash commands
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: node bot/register-commands.mjs

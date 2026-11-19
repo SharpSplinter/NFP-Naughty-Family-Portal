@@ -27,8 +27,8 @@ test("the only onboarding commands reply privately and link-code opens the redem
   const keyPair = await webcrypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const publicKey = Buffer.from(await webcrypto.subtle.exportKey("raw", keyPair.publicKey)).toString("hex");
   const timestamp = String(Math.floor(Date.now() / 1000));
-  async function send(data) {
-    const body = JSON.stringify({ type: 2, application_id: "app-id", token: "interaction-token", user: { id: "123456789012345678" }, data });
+  async function send(data, context = 0, type = 2) {
+    const body = JSON.stringify({ type, context, application_id: "app-id", token: "interaction-token", user: { id: "123456789012345678" }, data });
     const signature = Buffer.from(await webcrypto.subtle.sign("Ed25519", keyPair.privateKey, new TextEncoder().encode(timestamp + body))).toString("hex");
     return worker.fetch(new Request("https://bot.example/interactions", { method: "POST", headers: { "content-type": "application/json", "x-signature-ed25519": signature, "x-signature-timestamp": timestamp }, body }), { DISCORD_PUBLIC_KEY: publicKey }, { waitUntil() {} });
   }
@@ -40,7 +40,18 @@ test("the only onboarding commands reply privately and link-code opens the redem
   assert.match(linkReply.data.content, /generate a one-time Discord link code/i);
   assert.match(linkReply.data.content, /\/link-code/);
 
-  const redeem = await send({ name: "link-code" });
+  const dmLink = await send({ name: "link" }, 1);
+  const dmLinkReply = await dmLink.json();
+  assert.equal(dmLinkReply.type, 4);
+  assert.equal("flags" in dmLinkReply.data, false, "BOT_DM replies must not request the guild-only ephemeral flag");
+  assert.match(dmLinkReply.data.content, /integration_type=1.*scope=applications.commands/);
+
+  const dmStatus = await send({ name: "status" }, 1);
+  const dmStatusAck = await dmStatus.json();
+  assert.equal(dmStatusAck.type, 5);
+  assert.deepEqual(dmStatusAck.data, {}, "deferred BOT_DM replies must omit ephemeral flags");
+
+  const redeem = await send({ name: "link-code" }, 1);
   assert.equal(redeem.status, 200);
   const modal = await redeem.json();
   assert.equal(modal.type, 9);
@@ -50,8 +61,12 @@ test("the only onboarding commands reply privately and link-code opens the redem
   assert.equal(modal.data.components[0].component.max_length, 48);
 });
 
-test("only four private-summary account-linking slash commands remain", () => {
+test("only four private-summary account-linking slash commands remain and are user-install BOT_DM only", () => {
   assert.deepEqual(commands.map(command => command.name), ["link", "link-code", "status", "unlink"]);
+  for (const command of commands) {
+    assert.deepEqual(command.integration_types, [1]);
+    assert.deepEqual(command.contexts, [1]);
+  }
 });
 
 test("scheduled Worker keeps the daily private summary and drops legacy poll/alert routes", () => {

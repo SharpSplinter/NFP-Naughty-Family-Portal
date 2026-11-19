@@ -5,60 +5,34 @@ import { commandSchemaDifferences } from "./command-schema-contract.mjs";
 
 const APP_ID = process.env.DISCORD_APP_ID || "1558700958983389254";
 const GUILD_ID = process.env.DISCORD_GUILD_ID || "1525623497999515770";
+const CANONICAL_ROOTS = new Set(commands.map(command => command.name));
 const DEPRECATED_ROOT_ALIASES = new Set(["overview", "employees", "trends", "alerts", "rankings", "company", "automation", "dashboard", "bot", "help", "ping"]);
-// Flat aliases from earlier command layouts must be removed after nested roots are synced.
 const LEGACY_FLAT_ROOT_ALIASES = new Set([
-  "bot-status",
-  "dashboard-health",
-  "dashboard-summary",
-  "automation-rules-list",
-  "automation-rules-create",
-  "automation-rules-enable",
-  "automation-rules-disable",
-  "automation-rules-delete",
-  "automation-notifications-status",
-  "automation-notifications-configure",
-  "automation-webhook-status",
-  "automation-webhook-deliveries",
-  "automation-webhook-retry",
-  "automation-webhook-delete",
-  "company-list",
-  "company-overview",
-  "company-income",
-  "company-profit",
-  "company-stars",
-  "company-ads",
-  "company-stock",
-  "company-employees",
-  "company-wages",
-  "company-trends",
-  "company-alerts",
-  "company-alerts-recent",
-  "company-alerts-enable",
-  "company-alerts-disable",
-  "company-alerts-configure",
-  "company-alerts-status",
-  "company-alerts-settings",
-  "company-alerts-acknowledge",
-  "company-alerts-rules",
-  "company-rankings",
-  "company-rankings-companies",
-  "company-rankings-company",
-  "company-rankings-compare",
-  "company-rankings-global",
-  "company-rankings-faction"
+  "bot-status", "dashboard-health", "dashboard-summary",
+  "automation-rules-list", "automation-rules-create", "automation-rules-enable", "automation-rules-disable",
+  "automation-rules-delete", "automation-notifications-status", "automation-notifications-configure",
+  "automation-webhook-status", "automation-webhook-deliveries", "automation-webhook-retry", "automation-webhook-delete",
+  "company-list", "company-overview", "company-income", "company-profit", "company-stars", "company-ads",
+  "company-stock", "company-employees", "company-wages", "company-trends", "company-alerts",
+  "company-alerts-recent", "company-alerts-enable", "company-alerts-disable", "company-alerts-configure",
+  "company-alerts-status", "company-alerts-settings", "company-alerts-acknowledge", "company-alerts-rules",
+  "company-rankings", "company-rankings-companies", "company-rankings-company", "company-rankings-compare",
+  "company-rankings-global", "company-rankings-faction"
 ]);
 
 function isLegacyFlatRootName(name) {
   return typeof name === "string" &&
     (LEGACY_FLAT_ROOT_ALIASES.has(name) || /^(?:company|automation|dashboard|bot)[-_]/.test(name));
 }
+function isOwnedOrRetiredChatInput(command) {
+  return command && (command.type === undefined || command.type === 1) &&
+    (CANONICAL_ROOTS.has(command.name) || DEPRECATED_ROOT_ALIASES.has(command.name) || isLegacyFlatRootName(command.name));
+}
 
 /**
- * Synchronize the owned guild commands against Discord.
- *
- * Dependencies are injectable so this exact orchestration can be covered by
- * deterministic mocked-API tests without credentials, network calls, or sleeps.
+ * Sync the four account commands as global user-installed commands, usable in
+ * the bot's DM only. After the global upsert succeeds, remove this bot's old
+ * guild-scoped roots so users no longer need a server channel.
  */
 export async function registerCommands({
   token = process.env.DISCORD_TOKEN || "",
@@ -76,17 +50,15 @@ export async function registerCommands({
   }
   if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
 
-  const base = "https://discord.com/api/v10/applications/" + appId + "/guilds/" + guildId + "/commands";
+  const globalBase = "https://discord.com/api/v10/applications/" + appId + "/commands";
+  const guildBase = "https://discord.com/api/v10/applications/" + appId + "/guilds/" + guildId + "/commands";
   const headers = {
     authorization: "Bot " + normalizedToken,
     "content-type": "application/json",
-    "user-agent": "NaughtyCompanyDashboardCommandSync/1.0"
+    "user-agent": "NaughtyCompanyDashboardCommandSync/2.0"
   };
 
   async function request(url, method, body) {
-    // Discord applies per-route limits to guild command updates. Retry explicit
-    // 429 responses using Discord's retry_after value so a longer command set can sync
-    // without leaving registration half-complete after a temporary rate limit.
     const maxRateLimitRetries = 8;
     for (let attempt = 0; attempt <= maxRateLimitRetries; attempt += 1) {
       const response = await fetchImpl(url, {
@@ -101,7 +73,7 @@ export async function registerCommands({
         const retryAfter = Number(data && typeof data === "object" ? data.retry_after : undefined) ||
           Number(response.headers.get("retry-after")) || 1;
         const delayMs = Math.max(250, Math.ceil((retryAfter + 0.25) * 1000));
-        warn("Discord rate limited guild command sync; retrying after " + (delayMs / 1000).toFixed(2) + " seconds.");
+        warn("Discord rate limited command sync; retrying after " + (delayMs / 1000).toFixed(2) + " seconds.");
         await sleep(delayMs);
         continue;
       }
@@ -110,42 +82,58 @@ export async function registerCommands({
       }
       return data;
     }
-    throw new Error("Discord guild command sync exceeded its rate-limit retry budget.");
+    throw new Error("Discord command sync exceeded its rate-limit retry budget.");
   }
 
-  const existing = await request(base, "GET");
-  if (!Array.isArray(existing)) throw new Error("Discord returned an unexpected guild-command list.");
-
+  const [existingGlobal, existingGuild] = await Promise.all([
+    request(globalBase, "GET"),
+    request(guildBase, "GET")
+  ]);
+  if (!Array.isArray(existingGlobal) || !Array.isArray(existingGuild)) {
+    throw new Error("Discord returned an unexpected application-command list.");
+  }
   if (checkToken) {
-    log("Discord token is valid for application " + appId + " and guild " + guildId + "; command-registration endpoint is accessible.");
-    return { checkToken: true, registeredCount: existing.length };
+    log("Discord token is valid for application " + appId + "; global and legacy guild command endpoints are accessible.");
+    return { checkToken: true, registeredCount: existingGlobal.length };
   }
 
   for (const command of commands) {
-    const current = existing.find(item => item.name === command.name && (item.type === undefined || item.type === 1));
-    if (current && current.id) {
-      await request(base + "/" + current.id, "PATCH", command);
-      log("Updated guild command /" + command.name);
+    const current = existingGlobal.find(item => item.name === command.name && (item.type === undefined || item.type === 1));
+    if (current?.id) {
+      await request(globalBase + "/" + current.id, "PATCH", command);
+      log("Updated global DM command /" + command.name);
     } else {
-      await request(base, "POST", command);
-      log("Created guild command /" + command.name);
+      await request(globalBase, "POST", command);
+      log("Created global DM command /" + command.name);
     }
   }
 
-  // Remove every retired bot root and known flattened bot command.
-  // Unrelated guild commands and context-menu commands with matching names stay untouched.
-  for (const stale of existing) {
-    if ((!DEPRECATED_ROOT_ALIASES.has(stale.name) && !isLegacyFlatRootName(stale.name)) ||
-        (stale.type !== undefined && stale.type !== 1) || !stale.id) continue;
-    await request(base + "/" + stale.id, "DELETE");
-    log("Removed obsolete guild command /" + stale.name);
+  for (const stale of existingGlobal) {
+    if (!stale?.id || (stale.type !== undefined && stale.type !== 1)) continue;
+    if (!DEPRECATED_ROOT_ALIASES.has(stale.name) && !isLegacyFlatRootName(stale.name)) continue;
+    await request(globalBase + "/" + stale.id, "DELETE");
+    log("Removed obsolete global command /" + stale.name);
   }
 
-  const registeredAfterSync = await request(base, "GET");
-  if (!Array.isArray(registeredAfterSync)) throw new Error("Discord returned an unexpected command list after registration.");
+  // Keep these four account commands out of guild-channel command scope.
+  // Unrelated slash commands and all context-menu commands are deliberately preserved.
+  for (const stale of existingGuild) {
+    if (!stale?.id || !isOwnedOrRetiredChatInput(stale)) continue;
+    await request(guildBase + "/" + stale.id, "DELETE");
+    log("Removed legacy guild command /" + stale.name);
+  }
+
+  const [registeredGlobal, registeredGuild] = await Promise.all([
+    request(globalBase, "GET"),
+    request(guildBase, "GET")
+  ]);
+  if (!Array.isArray(registeredGlobal) || !Array.isArray(registeredGuild)) {
+    throw new Error("Discord returned an unexpected command list after registration.");
+  }
+
   const missingOrMismatched = [];
   for (const command of commands) {
-    const registeredCommand = registeredAfterSync.find(item =>
+    const registeredCommand = registeredGlobal.find(item =>
       item.name === command.name && (item.type === undefined || item.type === 1));
     if (!registeredCommand) {
       missingOrMismatched.push("/" + command.name + " (missing)");
@@ -159,16 +147,22 @@ export async function registerCommands({
     }
   }
   if (missingOrMismatched.length) {
-    throw new Error("Discord command-tree verification failed: " + missingOrMismatched.join(", "));
+    throw new Error("Discord global command verification failed: " + missingOrMismatched.join(", "));
   }
-  const remainingFlatRoots = registeredAfterSync.filter(item =>
+
+  const remainingGlobalAliases = registeredGlobal.filter(item =>
     (item.type === undefined || item.type === 1) &&
     (DEPRECATED_ROOT_ALIASES.has(item.name) || isLegacyFlatRootName(item.name)));
-  if (remainingFlatRoots.length) {
-    throw new Error("Obsolete flat command roots remain registered: " + remainingFlatRoots.map(item => "/" + item.name).join(", "));
+  if (remainingGlobalAliases.length) {
+    throw new Error("Obsolete global command roots remain registered: " + remainingGlobalAliases.map(item => "/" + item.name).join(", "));
   }
-  log("Verified the four private-summary account-linking commands.");
-  log("Verified retired bot commands were removed; unrelated commands were preserved.");
+  const remainingGuildBotRoots = registeredGuild.filter(isOwnedOrRetiredChatInput);
+  if (remainingGuildBotRoots.length) {
+    throw new Error("Legacy guild command roots remain registered: " + remainingGuildBotRoots.map(item => "/" + item.name).join(", "));
+  }
+
+  log("Verified four global USER_INSTALL commands restricted to BOT_DM.");
+  log("Verified legacy guild bot commands are removed; unrelated integrations and context-menu commands were preserved.");
   return { checkToken: false, registeredCount: commands.length };
 }
 
