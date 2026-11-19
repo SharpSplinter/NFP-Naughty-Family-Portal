@@ -2,32 +2,25 @@
 
 ## Projects and release targets
 
-- **Current production API Worker:** `naughtyfamily-api` at https://naughtyfamily-api.kboone801.workers.dev
-- **Current production D1:** `naughty-company-dashboard` (UUID `bbbe128a-c5cc-46ec-b8ef-93860183e795`)
-- **Legacy Pages rollback site:** `naughty-company-dashboard` at https://naughty-company-dashboard.pages.dev
-- **New Pages cutover target:** `naughtyfamily` at https://naughtyfamily.pages.dev
-- **Acceptance Pages:** `naughtyfamily-staging` at https://naughtyfamily-staging.pages.dev
-- **Acceptance API Worker:** `naughtyfamily-api-staging` at https://naughtyfamily-api-staging.kboone801.workers.dev
-- **Acceptance D1:** `naughtyfamily-acceptance-staging` (UUID `02cca699-1232-495f-8a0a-de525058b92a`)
+- **Production Pages:** `naughtyfamily` at https://naughtyfamily.pages.dev
+- **Production API Worker:** `naughtyfamily-api` at https://naughtyfamily-api.kboone801.workers.dev
+- **Production API D1:** `naughty-company-dashboard`
+- **Production Discord bot Worker:** `naughty-company-bot` at https://naughty-company-bot.kboone801.workers.dev
+- **Production bot D1:** `naughty-company-bot-production`
+- **Production rankings Queue and DLQ:** `ncd-global-rankings-refresh` and `ncd-global-rankings-refresh-dlq`
+- **Production daily-read cache:** Workers KV binding `NCD_DAILY_READ_CACHE`
 - **Git repository:** `SharpSplinter/Naughty-Company-Dashboard`
 - **Production branch:** `main`
 
-The legacy Pages project `naughty-company-dashboard` was rebuilt from `main` and published on 2026-11-17 as deployment `02c82647-7bd2-47f7-8ffd-ec3c2e7ee3c2`. Its compiled frontend and saved production Pages build variable now use `https://naughtyfamily-api.kboone801.workers.dev`, replacing the retired `naughty-company-api` hostname. This repairs the static frontend-to-API URL wiring. No login or authenticated API smoke was run, so treat this as a repaired Company Dashboard fallback candidate, not a fully end-to-end-verified portal rollback. The separate `naughtyfamily` project is configured for `main` with automatic production/preview deployments disabled and still has no production deployment. Do not point a staging Worker or acceptance database at production resources.
+The account's dashboard infrastructure is production-only. Staging/acceptance Workers, Pages projects, D1 databases, Queues, test Workers and their staging cache namespaces have been retired. The legacy and empty Pages projects have also been removed. Keep the unrelated `tornapi-plugin-gpt` Worker and its OAuth KV namespace separate from the dashboard stack.
 
-Pages build settings for the new target:
-
-- Build command: `npm run build`
-- Output directory: `dist`
-- Root directory: repository root
-- Production build variable: `VITE_API_BASE_URL=https://naughtyfamily-api.kboone801.workers.dev`
-
-See [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the release checklist, verified production baseline, backup procedure, migration order, rollback boundaries and explicit no-production-change status.
+The sole Pages target is manually published to `naughtyfamily` after the production API is healthy. Automatic production and preview deployments remain disabled.
 
 ## API Worker
 
 The Worker exposes health, authenticated dashboard, company intelligence, automation, and administrator routes. The current health check is `GET /health`. Company IDs must be positive integers. Torn API keys are validated through the Worker; never put a key in a URL, source file, or logs.
 
-The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from `https://naughtyfamily.pages.dev`, the preserved legacy Pages hostname for compatibility, and localhost port 3000 for local development. The production master Full Access key is configured as secret `TORN_API_KEY_SERVICE`; the Worker code must use that exact binding name. `TORN_API_KEY_CUSTOM` remains a fallback for public global-ranking requests, and `TORN_FACTION_API_KEY` remains dedicated to scheduled public faction collection.
+The Worker maps Torn API errors into stable HTTP statuses and accepts browser requests from `https://naughtyfamily.pages.dev` and localhost port 3000 for local development. The production master Full Access key is configured as secret `TORN_API_KEY_SERVICE`; the Worker code must use that exact binding name. `TORN_API_KEY_CUSTOM` remains a fallback for public global-ranking requests, and `TORN_FACTION_API_KEY` remains dedicated to scheduled public faction collection.
 
 ## Security notes
 
@@ -58,7 +51,7 @@ The count comes from D1 statement metadata, not account analytics deltas. The wr
 
 The log record includes aggregate rows read/written, statement/method counts, missing metrics, failed statements, unsupported operations, background-task counts, and an `accountingStatus`. It deliberately excludes SQL text, bound values, player IDs and API keys. A record is `incomplete` if a D1 result omits `rows_read`, a statement fails, a batch returns a mismatched result count, a metadata-free `first()` fallback is required, or a code path uses `raw()`/database `exec()` where this wrapper cannot obtain per-statement metadata. The `unmeteredFirstFallbacks` field makes those compatibility fallbacks visible. Treat any `incomplete` record as a stop condition for quota certification; never count it as zero. Logs are emitted as structured objects so Workers Logs can index their fields, not as JSON embedded in a message string.
 
-Both `wrangler.toml` and `wrangler.acceptance.toml` enable Workers Observability with `head_sampling_rate = 1.0` so these events are not intentionally sampled. The records are emitted to Cloudflare Workers Logs, not written back to D1, avoiding recursive reads/writes in the application database. To calculate a run total, sum `rowsRead` only across complete `d1_read_accounting` records for the corresponding time window and include fetch, queue and scheduled events. Account-level D1 analytics remains useful as a cross-check, but must not replace these statement-level totals when it under-reports.
+`wrangler.toml` enables Workers Observability with `head_sampling_rate = 1.0` so production accounting events are not intentionally sampled. The records are emitted to Cloudflare Workers Logs, not written back to D1, avoiding recursive reads/writes in the application database. To calculate a run total, sum `rowsRead` only across complete `d1_read_accounting` records for the corresponding time window and include fetch, queue and scheduled events. Account-level D1 analytics remains useful as a cross-check, but must not replace these statement-level totals when it under-reports.
 
 **Retention boundary:** Workers Logs are short-term operational telemetry, not a permanent ledger. On Cloudflare's Free Workers Logs allowance, stored logs have a three-day retention period; other plans have different retention allowances. Export the structured records to an approved durable destination (for example, Workers Logpush or an OpenTelemetry destination) before relying on historical totals beyond the available retention window. No external log destination is configured by this code change.
 
@@ -73,17 +66,17 @@ The meter is runtime code only. It has not been deployed to either Worker by thi
 - `npm run typecheck`
 - `npm test`
 
-Production Pages publishing is manual during this migration. Do not publish the portal to the legacy `naughty-company-dashboard` project. After the production Worker migration/deployment and health verification are approved, build with the production API URL and explicitly publish `dist/` to the `naughtyfamily` project. Keep both projects' automatic deployments disabled until the cutover is accepted.
+Production Pages publishing remains manual. Build with the production API URL and explicitly publish `dist/` to the sole dashboard Pages project, `naughtyfamily`. Automatic deployments remain disabled.
 
 The production Worker workflow is `workflow_dispatch`-only on `main` and targets only `naughtyfamily-api`. It uses the GitHub Environment `production`; configure required reviewers and restrict its deployment branches to `main` before release. The workflow's evidence preflight runs before the first Cloudflare action and requires:
 - an HTTPS external-backup reference, independently verified SHA-256, and backup timestamp less than 24 hours old;
 - a fresh Time Travel bookmark and D1 migration-ledger reference;
 - account-wide D1 rows-read evidence less than 15 minutes old, with an explicit hard stop and deployment reserve that do not exceed the hard stop;
-- successful, manually dispatched isolated restore-rehearsal and stateful-staging runs for the exact candidate commit, with the candidate Git tree matching the `main` release tree;
+- a successful, manually dispatched offline production-data restore rehearsal for the exact rehearsal commit, with the candidate Git tree matching the `main` release tree and all migration/replay files unchanged;
 - service-key permission evidence and a reviewed Queue configuration reference;
 - explicit release authorization and explicit authorization to reconcile the Queue bindings declared in `wrangler.toml`.
 
-The preflight validates reference formats, age, numeric headroom, exact GitHub workflow paths/run outcomes, and tested commit/tree identity. The separate manual [offline restore rehearsal workflow](https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/portal-rebuild/.github/workflows/restore-production-backup-rehearsal.yml) now downloads and checks the encrypted archive, decrypts it only on an ephemeral runner, and replays migrations 0013–0037 against a local SQLite restore. It does not call Cloudflare or D1. This local replay does not replace the separate stateful D1 staging acceptance. The production Environment reviewer approval is separate. The `production-backup` Environment must have the `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` secrets configured before the restore workflow can run. The preflight does **not** independently verify external D1/Time Travel/service-key/Queue reference contents or inspect Cloudflare quotas. Those must be independently inspected before dispatch; see [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the remaining NO-GO release gates.
+The preflight validates reference formats, age, numeric headroom, exact GitHub workflow paths/run outcomes, and tested commit/tree identity. The separate manual [offline restore rehearsal workflow](https://github.com/SharpSplinter/Naughty-Company-Dashboard/blob/portal-rebuild/.github/workflows/restore-production-backup-rehearsal.yml) now downloads and checks the encrypted archive, decrypts it only on an ephemeral runner, and replays migrations 0013–0037 against a local SQLite restore. It does not call Cloudflare or D1. This local replay is the required restore rehearsal; there is no longer a staging D1/Queue environment. The production Environment reviewer approval is separate. The `production-backup` Environment must have the `PRODUCTION_D1_BACKUP_URL` and `PRODUCTION_D1_BACKUP_PASSWORD` secrets configured before the restore workflow can run. The preflight does **not** independently verify external D1/Time Travel/service-key/Queue reference contents or inspect Cloudflare quotas. Those must be independently inspected before dispatch; see [PRODUCTION-CUTOVER-REVIEW.md](PRODUCTION-CUTOVER-REVIEW.md) for the remaining NO-GO release gates.
 
 
 ### Current production D1 backup (2026-11-17)
