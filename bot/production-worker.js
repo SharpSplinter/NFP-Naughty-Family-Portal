@@ -310,30 +310,30 @@ function modalField(components, wantedId) {
 async function replyFor(interaction, env) {
   const userId = interactionUser(interaction);
   if (interaction.type === 5 && interaction.data?.custom_id === "link_code_submit") {
-    if (!userId) return privateReply("Unable to identify your Discord account.");
+    if (!userId) return privateReply("Unable to identify your Discord account.", interaction);
     const code = String(modalField(interaction.data.components, "link_code") || "").trim().toLowerCase();
-    if (!/^[a-f0-9]{48}$/.test(code)) return privateReply("Enter the 48-character code generated in your dashboard.");
+    if (!/^[a-f0-9]{48}$/.test(code)) return privateReply("Enter the 48-character code generated in your dashboard.", interaction);
     try {
       const response = await dashboardFetch(env, "/api/discord/link/redeem", {
         method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ code, discordUserId: userId }), signal: AbortSignal.timeout(8000)
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) return privateReply(String(result.error || "The dashboard link code is invalid or expired. Generate a new one and try again."));
-      if (typeof result.token !== "string" || !result.playerId) return privateReply("Dashboard linking could not be completed. Generate a new code and try again.");
+      if (!response.ok) return privateReply(String(result.error || "The dashboard link code is invalid or expired. Generate a new one and try again."), interaction);
+      if (typeof result.token !== "string" || !result.playerId) return privateReply("Dashboard linking could not be completed. Generate a new code and try again.", interaction);
       await storeBotLink(userId, String(result.playerId), result.token, env);
-      return privateReply("Dashboard account linked securely. To receive the daily private DM, enable **Private DM daily summary** in the dashboard Automation Center.");
-    } catch { return privateReply("Dashboard linking is temporarily unavailable. Generate a new code and try again."); }
+      return privateReply("Dashboard account linked securely. To receive the daily private DM, enable **Private DM daily summary** in the dashboard Automation Center.", interaction);
+    } catch { return privateReply("Dashboard linking is temporarily unavailable. Generate a new code and try again.", interaction); }
   }
 
-  if (interaction.type !== 2) return privateReply("Only secure account linking and the private daily summary are supported.");
+  if (interaction.type !== 2) return privateReply("Only secure account linking and the private daily summary are supported.", interaction);
   const name = interaction.data?.name;
   if (name === "link") return privateReply("**Secure dashboard linking**\n1. Open https://naughtyfamily.pages.dev and sign in.\n2. Open the Automation Center and generate a one-time Discord link code. It expires after five minutes.\n3. Run /link-code and submit the code in this private DM.\n\nNeed to install the commands to your Discord account first? Choose Add to My Apps: https://discord.com/oauth2/authorize?client_id=1558700958983389254&integration_type=1&scope=applications.commands\n\nEnable **Private DM daily summary** in the dashboard to receive the daily report. Never post a Torn API key in Discord.", interaction);
   if (name === "link-code") return { type: 9, data: { custom_id: "link_code_submit", title: "Link dashboard account", components: [{ type: 18, label: "Dashboard link code", component: { type: 4, custom_id: "link_code", style: 1, min_length: 48, max_length: 48, required: true, placeholder: "Paste the one-time dashboard code" } }] } };
-  if (!userId) return privateReply("Unable to identify your Discord account.");
+  if (!userId) return privateReply("Unable to identify your Discord account.", interaction);
   if (name === "status") {
     const row = await env.BOT_DB.prepare("SELECT dashboard_player_id,updated_at FROM discord_links WHERE discord_user_id=?").bind(userId).first();
-    return privateReply(row ? "Your dashboard account is securely linked. Player ID: " + row.dashboard_player_id + ". Last linked: " + row.updated_at + ". Manage the private daily summary opt-in in the dashboard Automation Center." : "No dashboard account is linked. Run /link to see the secure setup steps.");
+    return privateReply(row ? "Your dashboard account is securely linked. Player ID: " + row.dashboard_player_id + ". Last linked: " + row.updated_at + ". Manage the private daily summary opt-in in the dashboard Automation Center." : "No dashboard account is linked. Run /link to see the secure setup steps.", interaction);
   }
   if (name === "unlink") {
     const row = await env.BOT_DB.prepare("SELECT encrypted_session_token,token_iv FROM discord_links WHERE discord_user_id=?").bind(userId).first();
@@ -349,9 +349,9 @@ async function replyFor(interaction, env) {
       env.BOT_DB.prepare("DELETE FROM discord_daily_company_summary_history WHERE discord_user_id=?").bind(userId),
       env.BOT_DB.prepare("DELETE FROM discord_links WHERE discord_user_id=?").bind(userId)
     ]);
-    return privateReply("Your dashboard link and saved daily-summary delivery history have been removed.");
+    return privateReply("Your dashboard link and saved daily-summary delivery history have been removed.", interaction);
   }
-  return privateReply("That command is no longer available. This bot now supports secure account linking and the private daily summary only.");
+  return privateReply("That command is no longer available. This bot now supports secure account linking and the private daily summary only.", interaction);
 }
 
 async function editOriginalInteraction(interaction, reply) {
