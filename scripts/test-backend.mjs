@@ -10,7 +10,6 @@ const temp = mkdtempSync(join(tmpdir(), "naughty-company-tests-"))
 writeFileSync(join(temp, "package.json"), JSON.stringify({ type: "commonjs" }))
 const sourceFiles = [
   "src/lib/automation/rules.ts",
-  "src/lib/automation/discord-poll-monitoring.ts",
   "src/lib/company/engine.ts",
   "src/lib/company/types.ts",
   "src/lib/torn/client.ts",
@@ -103,7 +102,6 @@ try {
   const { placement } = require(join(temp, "components/floor/ranking-utils.js"))
   const { estimateWeeklyProfit, financialCosts, isIsoReportingDay, reportedCompanyProfit, resolveDisplayedDailyProfit, stockCostTotal } = require(join(temp, "components/floor/financial-utils.js"))
   const { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isWithinQuietHours, normalizeWebhookUrl, isSnapshotStale, normalizeAlertThreshold, normalizeCooldownHours } = require(join(temp, "lib/automation/rules.js"))
-  const { evaluateDiscordPollHealth } = require(join(temp, "lib/automation/discord-poll-monitoring.js"))
 
   // Existing backend route fixtures model members who have completed first-login
   // setup. Keep the authentication and consent-management routes unmodified so
@@ -1961,41 +1959,6 @@ try {
     assert.equal(isWithinQuietHours(12 * 60, "22:00", "08:00"), false)
     assert.equal(isWithinQuietHours(300, "08:00", "08:00"), true)
     assert.equal(isWithinQuietHours(300, "bad", "08:00"), false)
-  })
-
-  await test("Discord poll monitoring raises threshold warnings and detects stale telemetry", () => {
-    const nowMs = Date.parse("2026-10-20T18:10:00.000Z")
-    const healthy = evaluateDiscordPollHealth({
-      pollCompletedAt: "2026-10-20T18:09:00.000Z", status: "healthy", consecutiveFailures: 0,
-      failed: 0, exhaustedDeliveries: 0, staleClaims: 0,
-    }, { linked: true, alertsEnabled: true, nowMs })
-    assert.equal(healthy.needsAttention, false)
-    assert.equal(healthy.badgeLabel, "Reporting normally")
-
-    const repeatedFailures = evaluateDiscordPollHealth({
-      pollCompletedAt: "2026-10-20T18:09:00.000Z", status: "error", consecutiveFailures: 3,
-      failed: 0, exhaustedDeliveries: 0, staleClaims: 0,
-    }, { linked: true, alertsEnabled: true, nowMs })
-    assert.equal(repeatedFailures.needsAttention, true)
-    assert.match(repeatedFailures.warningReasons[0], /3 times in a row/)
-
-    const stuckDeliveries = evaluateDiscordPollHealth({
-      pollCompletedAt: "2026-10-20T18:09:00.000Z", status: "partial", consecutiveFailures: 0,
-      failed: 1, exhaustedDeliveries: 2, staleClaims: 1,
-    }, { linked: true, alertsEnabled: true, nowMs })
-    assert.equal(stuckDeliveries.needsAttention, true)
-    assert.equal(stuckDeliveries.warningReasons.length, 3)
-
-    const staleTelemetry = evaluateDiscordPollHealth({
-      pollCompletedAt: "2026-10-20T17:00:00.000Z", status: "healthy", consecutiveFailures: 0,
-      exhaustedDeliveries: 0, staleClaims: 0,
-    }, { linked: true, alertsEnabled: true, nowMs })
-    assert.equal(staleTelemetry.telemetryStale, true)
-    assert.match(staleTelemetry.warningReasons[0], /30 minutes/)
-
-    const awaitingFirstReport = evaluateDiscordPollHealth(null, { linked: true, alertsEnabled: true, nowMs })
-    assert.equal(awaitingFirstReport.needsAttention, false)
-    assert.equal(awaitingFirstReport.badgeLabel, "Awaiting first report")
   })
 
   await test("automatic alert delivery honors preferences and scheduled digests", () => {
@@ -3940,83 +3903,14 @@ try {
     assert.equal(invalidCursor.status, 400)
   })
 
-  await test("Discord alert poll health reports are authenticated, linked-account scoped, and retain bounded history", async () => {
-    const token = "discord-poll-health-session"
-    const tokenDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))
-    const tokenHash = Array.from(new Uint8Array(tokenDigest), byte => byte.toString(16).padStart(2, "0")).join("")
-    const discordUserId = "123456789012345678"
-    const ownerId = "777"
-    let currentHealth = {
-      status: "error",
-      consecutiveFailures: 2,
-      lastSuccessAt: "2026-10-18T18:10:00.000Z"
-    }
-    const historyRows = []
-    const writes = []
-    const link = { discordUserId, alertsEnabled: 1 }
-    const db = {
-      prepare(sql) {
-        let values = []
-        return {
-          bind(...args) { values = args; return this },
-          async first() {
-            const lower = sql.toLowerCase()
-            if (lower.includes("from sessions s join players p")) return values[0] === tokenHash ? { player_id: ownerId, player_name: "Poll Tester" } : null
-            if (lower.includes("from dashboard_member_status") || lower.includes("from admin_settings")) return null
-            if (lower.includes("from discord_account_links where owner_player_id = ?")) return link
-            if (lower.includes("from discord_alert_poll_health")) {
-              if (currentHealth && values[0] === ownerId && values[1] === discordUserId) return currentHealth
-              return null
-            }
-            return null
-          },
-          async all() {
-            if (sql.includes("FROM discord_alert_poll_history")) return { results: historyRows.filter(row => row.ownerPlayerId === values[0] && row.discordUserId === values[1]) }
-            return { results: [] }
-          },
-          async run() {
-            writes.push({ sql, values: [...values] })
-            if (sql.includes("INSERT INTO discord_alert_poll_health")) {
-              const [playerId, userId, startedAt, completedAt, lastSuccessAt, status, errorCode, errorAt, consecutiveFailures, pageCount, eventsSeen, delivered, filtered, failed, exhausted, staleRecovered, exhaustedDeliveries, staleClaims, updatedAt] = values
-              currentHealth = { ownerPlayerId: playerId, discordUserId: userId, pollStartedAt: startedAt, pollCompletedAt: completedAt, lastSuccessAt, status, errorCode, errorAt, consecutiveFailures, pageCount, eventsSeen, delivered, filtered, failed, exhausted, staleRecovered, exhaustedDeliveries, staleClaims, updatedAt }
-            } else if (sql.includes("INSERT INTO discord_alert_poll_history")) {
-              const [reportId, ownerPlayerId, discordUserIdValue, startedAt, completedAt, status, errorCode, consecutiveFailures, pageCount, eventsSeen, delivered, filtered, failed, exhausted, staleRecovered, exhaustedDeliveries, staleClaims] = values
-              historyRows.unshift({ reportId, ownerPlayerId, discordUserId: discordUserIdValue, pollStartedAt: startedAt, pollCompletedAt: completedAt, status, errorCode, consecutiveFailures, pageCount, eventsSeen, delivered, filtered, failed, exhausted, staleRecovered, exhaustedDeliveries, staleClaims })
-            }
-            return { success: true, meta: { changes: 1 } }
-          }
-        }
-      }
-    }
-    const headers = { Origin: "https://naughty-company-dashboard.pages.dev", Authorization: "Bearer " + token, "Content-Type": "application/json" }
-    const payload = {
-      discordUserId, startedAt: "2026-10-19T18:00:00.000Z", completedAt: "2026-10-19T18:00:05.000Z",
-      status: "error", errorCode: "dashboard_alerts_http_503", pages: 1, eventsSeen: 100,
-      delivered: 0, filtered: 0, failed: 0, exhausted: 0, staleRecovered: 0, exhaustedDeliveries: 2, staleClaims: 1
-    }
-    const posted = await worker.fetch(new Request("https://worker.test/api/me/discord-alert-poll-health", { method: "POST", headers, body: JSON.stringify(payload) }), { DB: db })
-    assert.equal(posted.status, 200)
-    const postResult = await posted.json()
-    assert.equal(postResult.recorded, true)
-    assert.equal(postResult.consecutiveFailures, 3, "repeated poll errors should trip the stored warning threshold")
-    assert.equal(currentHealth.errorCode, "dashboard_alerts_http_503")
-    assert.equal(currentHealth.exhaustedDeliveries, 2)
-    assert.equal(historyRows.length, 1)
-
-    const fetched = await worker.fetch(new Request("https://worker.test/api/me/discord-alert-poll-health", { headers }), { DB: db })
-    assert.equal(fetched.status, 200)
-    const fetchedPayload = await fetched.json()
-    assert.equal(fetchedPayload.linked, true)
-    assert.equal(fetchedPayload.health.consecutiveFailures, 3)
-    assert.equal(fetchedPayload.history.length, 1)
-    assert.equal(fetchedPayload.history[0].status, "error")
-
-    const writesBeforeSpoof = writes.filter(item => item.sql.includes("INSERT INTO discord_alert_poll_health")).length
-    const spoofed = await worker.fetch(new Request("https://worker.test/api/me/discord-alert-poll-health", {
-      method: "POST", headers, body: JSON.stringify({ ...payload, discordUserId: "223456789012345678" })
-    }), { DB: db })
-    assert.equal(spoofed.status, 403, "a signed-in user cannot report health for another Discord account")
-    assert.equal(writes.filter(item => item.sql.includes("INSERT INTO discord_alert_poll_health")).length, writesBeforeSpoof)
+  await test("retired Discord poll-health telemetry returns not found while account linking remains", async () => {
+    const source = readFileSync(join(root, "src/worker/index.ts"), "utf8")
+    assert.doesNotMatch(source, /discordPollHealthPath|discord-alert-poll-health|discord_alert_poll_health|discord_alert_poll_history/)
+    assert.match(source, /const discordLinkPath = url\.pathname === "\/api\/me\/discord-link"/)
+    assert.match(source, /const discordLinkCodePath = url\.pathname === "\/api\/me\/discord-link-code"/)
+    assert.match(source, /const discordRedeemPath = url\.pathname === "\/api\/discord\/link\/redeem"/)
+    const response = await worker.fetch(new Request("https://worker.test/api/me/discord-alert-poll-health", { headers: { Origin: "https://naughtyfamily.pages.dev" } }), { DB: {}, ALLOWED_ORIGIN: "https://naughtyfamily.pages.dev" })
+    assert.equal(response.status, 404)
   })
 
   await test("session revocation routes are present", () => {
@@ -4577,11 +4471,12 @@ try {
   })
 
 
-  await test("Discord poll hot paths skip runtime DDL and use migration-managed link tables", () => {
+  await test("read-only private summary link checks skip runtime schema writes and telemetry tables are retired", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
     const migration = readFileSync(join(root, "migrations/auth/0011_discord_account_linking.sql"), "utf8")
-    assert.match(workerSource, /const skipAutomationSchemaBootstrap =[\s\S]*\(discordLinkPath && request\.method === "GET"\)[\s\S]*\(preferencesPath && request\.method === "GET"\)[\s\S]*discordPollHealthPath/)
+    assert.match(workerSource, /const skipAutomationSchemaBootstrap =[\s\S]*\(discordLinkPath && request\.method === "GET"\)[\s\S]*\(preferencesPath && request\.method === "GET"\)/)
     assert.match(workerSource, /if \(!skipAutomationSchemaBootstrap\) await ensureAutomationSchema\(env\)/)
+    assert.doesNotMatch(workerSource, /discordPollHealthPath|discord_alert_poll_health|discord_alert_poll_history/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS discord_account_links/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS discord_link_codes/)
   })
