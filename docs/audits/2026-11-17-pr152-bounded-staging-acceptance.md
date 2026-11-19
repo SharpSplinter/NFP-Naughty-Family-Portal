@@ -66,3 +66,20 @@ This record documents the bounded acceptance actually authorized and performed. 
 - **No production D1, Worker, Pages, Torn, or Queue resource was accessed.** This statement describes the staging acceptance scope; separate production release-preflight checks in the cutover review were read-only.
 
 This record replaces the earlier runtime SHA only for the current candidate's bounded acceptance. The earlier `f25c2980` record is retained above as historical evidence. This is not a claim that the complete `deploy-staging-acceptance.yml` feature suite ran.
+
+
+## 2026-11-19 snapshot-provenance and Queue-batching staging acceptance
+
+**Runtime source SHA: `1eee1c0bb161c0902abdb090bfd3a63530e4ec25`**  
+**Equivalent reviewed main application tree:** `3e2c3a964804be606d6e4867fb076d99ffb4b512` (the staging merge commit and reviewed PR #161 main commit have identical source trees).
+
+- Exact-source staging Worker deployment: [run #44428265647](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44428265647), `worker-build-artifact.yml`, completed successfully on `portal-rebuild`.
+- Staging Worker quality validation: locked dependency install, typecheck, complete backend regression suite, esbuild bundle, staging D1/KV/Queue/secret/origin binding preservation, and one read-only `/health` request all passed.
+- Staging Pages deployment: [run #44428082100](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44428082100), completed successfully for the same application tree. Type-check, frontend regression, staging API bundle build, target isolation, Pages deployment, and published bundle verification passed.
+- Staging Worker-only deployment: [run #44428033223](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/44428033223), completed successfully for the same tree. Health returned HTTP 200 with database and key-encryption checks passing.
+- Bounded staging D1 acceptance: `SELECT run_id FROM faction_member_stat_snapshots LIMIT 268`; **268 D1 rows read**, **0 D1 rows written**, and 0 changes. It used staging D1 `02cca699-1232-495f-8a0a-de525058b92a`.
+- Staging Queue acceptance: backlog was empty before the test. One empty JSON no-op message was sent only to `ncd-naughtyfamily-staging-collection` (queue ID `c76e58080af04766ab0cd5d3daf76416`). The staging Queue metrics endpoint subsequently reported **backlog_count: 0** and **backlog_bytes: 0**, confirming consumption/acknowledgement and no DLQ routing.
+- **3 billable Queue operations** are expected for this single message lifecycle (one write, one read, one successful delete). A per-queue GraphQL analytics query did not return an operation group in the queried interval, so this count is the standard lifecycle estimate, not claimed as a separate analytics confirmation for this run.
+- No migration or fixture seeding was run for this bounded acceptance.
+- The staging-only D1 and Queue activity above remained within the bounded acceptance scope. **No production D1 data, Worker, Pages, Torn, or Queue resource was changed or used for the acceptance.** Separate production D1 Insights/bookmark/ledger checks were read-only cutover-preflight evidence only.
+- The portal's production cutover reserve/hard stop remains enforced by the protected production workflow; this staging record does not itself authorize a production deployment.
