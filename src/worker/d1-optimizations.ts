@@ -34,8 +34,7 @@ export const SESSION_ACCESS_SQL = `
     maintenance.value_json AS maintenance_mode_json
   FROM sessions s
   JOIN players p ON p.player_id = s.player_id
-  LEFT JOIN administrators a
-    ON a.player_id = p.player_id AND a.revoked_at IS NULL
+  LEFT JOIN administrators a ON a.player_id = p.player_id AND a.revoked_at IS NULL
   LEFT JOIN dashboard_member_status st
     ON st.player_id = p.player_id
   LEFT JOIN admin_settings maintenance
