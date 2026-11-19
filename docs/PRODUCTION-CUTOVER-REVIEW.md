@@ -1009,3 +1009,5 @@ Read-only Cloudflare Queue inventory and production Worker settings were compare
 ### Current deployment state
 
 At the time of this evidence refresh, the production Worker has **not** been deployed by these evidence reads. Production D1, Queue, Worker settings and Time Travel were inspected read-only only. The guarded `worker-deploy.yml` remains the sole production deployment path; it must re-check under-15-minute account D1 usage, run the exact candidate-tree/migration equivalence preflight, retain the protected `production` Environment review, apply any pending migrations, deploy the Worker, and verify production `/health` and key-encryption readiness. No Pages publication is included in this Worker workflow.
+
+<!-- PR validation refresh: release facts above are unchanged. -->
