@@ -2232,7 +2232,7 @@ try {
     assert.ok(batchSource.includes("await removeDepartedFactionAccess(env, playerId)"))
     const authStart = workerSource.indexOf("async function authenticate")
     const authEnd = workerSource.indexOf("async function validateTornKey", authStart)
-    const authSource = workerSource.slice(authStart, authEnd)
+    const authSource = workerSource.slice(authStart, authEnd) + readFileSync(join(root, "src/worker/d1-optimizations.ts"), "utf8")
     assert.match(authSource, /p\.membership_check_attempted_at/)
     assert.ok(authSource.includes("attemptedRecently"), "request-time checks must honor a recent scheduled or request attempt")
     assert.ok(authSource.includes("membership_check_attempted_at IS NULL OR membership_check_attempted_at < ?"), "request-time checks must use an atomic claim instead of racing concurrent requests")
@@ -3352,10 +3352,9 @@ try {
 
   await test("administrator access uses active player-ID roles rather than password step-up", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
-    const authOptimizationSource = readFileSync(join(root, "src/worker/d1-optimizations.ts"), "utf8")
     const appSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
     const roleMigration = readFileSync(join(root, "migrations/auth/0012_administrator_registry.sql"), "utf8")
-    assert.match(authOptimizationSource, /LEFT JOIN administrators a ON a\.player_id = p\.player_id AND a\.revoked_at IS NULL/)
+    assert.match(workerSource, /LEFT JOIN administrators a ON a\.player_id = p\.player_id AND a\.revoked_at IS NULL/)
     assert.match(workerSource, /if \(session\.is_admin !== 1\)/)
     assert.match(workerSource, /INSERT INTO administrators \(player_id, granted_by, granted_at/)
     assert.match(workerSource, /administrator\.granted/)
