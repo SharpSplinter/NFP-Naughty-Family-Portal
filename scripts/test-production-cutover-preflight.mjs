@@ -37,7 +37,7 @@ assert.match(workflow, /confirm_target == 'naughtyfamily-api'/);
 
 const now = new Date("2026-11-17T04:00:00.000Z");
 const candidate = "a".repeat(40);
-const release = "a".repeat(40);
+const release = "f".repeat(40);
 const restoreCommitSha = "b".repeat(40);
 const treeSha = "c".repeat(40);
 const restoreTreeSha = "d".repeat(40);
