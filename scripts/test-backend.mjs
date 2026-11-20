@@ -943,7 +943,6 @@ try {
     const makeRow = (logId, timestamp, logTypeId, title, data) => ({
       logId,
       timestamp,
-      logTypeId,
       title,
       category: "Christmas town",
       logJson: JSON.stringify({

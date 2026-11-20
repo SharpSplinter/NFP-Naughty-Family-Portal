@@ -4,7 +4,6 @@ export type ChristmasTownEventLogRow = {
   title: string | null
   category: string | null
   logJson: string | null
-  logTypeId?: number | null
 }
 
 export type ChristmasTownGameMetric = { key: string; label: string; count: number }
@@ -136,7 +135,7 @@ function parseRow(row: ChristmasTownEventLogRow): LogData | null {
     const title = [row.title, details.title, raw.title].find(value => typeof value === "string" && value.trim()) as string | undefined ?? ""
     const category = [row.category, details.category, raw.category].find(value => typeof value === "string" && value.trim()) as string | undefined ?? ""
     const text = (title + " " + category + " " + JSON.stringify(data) + " " + JSON.stringify(params)).toLowerCase()
-    const logTypeId = numeric(row.logTypeId ?? details.id ?? raw.logTypeId)
+    const logTypeId = numeric(details.id ?? raw.logTypeId)
     return { raw, data, params, details, title, category, text, logTypeId: logTypeId === null ? null : Math.trunc(logTypeId) }
   } catch {
     return null
