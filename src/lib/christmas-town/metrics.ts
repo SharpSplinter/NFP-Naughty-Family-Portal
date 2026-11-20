@@ -4,6 +4,7 @@ export type ChristmasTownEventLogRow = {
   title: string | null
   category: string | null
   logJson: string | null
+  logTypeId?: number | null
 }
 
 export type ChristmasTownGameMetric = { key: string; label: string; count: number }
@@ -88,6 +89,7 @@ type LogData = {
   text: string
   title: string
   category: string
+  logTypeId: number | null
 }
 
 const GAME_DEFINITIONS = [
@@ -134,7 +136,8 @@ function parseRow(row: ChristmasTownEventLogRow): LogData | null {
     const title = [row.title, details.title, raw.title].find(value => typeof value === "string" && value.trim()) as string | undefined ?? ""
     const category = [row.category, details.category, raw.category].find(value => typeof value === "string" && value.trim()) as string | undefined ?? ""
     const text = (title + " " + category + " " + JSON.stringify(data) + " " + JSON.stringify(params)).toLowerCase()
-    return { raw, data, params, details, title, category, text }
+    const logTypeId = numeric(row.logTypeId ?? details.id ?? raw.logTypeId)
+    return { raw, data, params, details, title, category, text, logTypeId: logTypeId === null ? null : Math.trunc(logTypeId) }
   } catch {
     return null
   }
@@ -200,7 +203,9 @@ function itemsFromData(data: Record<string, unknown>, group: ChristmasTownItemMe
     const primary = data.item ?? data.item_id ?? data.itemId ?? data.reward_item
     if (primary !== undefined && primary !== null) {
       const item = record(primary)
-      found = Object.keys(item).length ? extractItems([item], group) : extractItems(primary, group)
+      found = Object.keys(item).length
+        ? extractItems([item], group)
+        : extractItems([{ id: primary, quantity: data.quantity ?? data.amount ?? data.count ?? 1 }], group)
     }
   }
   return found
@@ -269,7 +274,7 @@ export function calculateChristmasTownMetrics(
     maxTimestamps.push(timestamp)
     activeDays.add(new Date(timestamp * 1000).toISOString().slice(0, 10))
 
-    const isChestOpen = /open(?:ed)? .*chest/.test(text)
+    const isChestOpen = (parsed.logTypeId === 8938 || parsed.logTypeId === null) && /open(?:ed)? .*chest/.test(text)
     const chestDefinition = CHEST_DEFINITIONS.find(chest => chest.pattern.test(text))
     const group = logGroup(text)
     const items = itemsFromData(data, group)
@@ -308,11 +313,48 @@ export function calculateChristmasTownMetrics(
       if (/hat/i.test(item.itemName)) sumMap(hatNames, item.itemName, item.quantity)
     }
 
+    // Torn emits keys and ornaments as dedicated event types with numeric tier/ornament fields.
+    // They are not regular reward-item rows, so relying on item names silently returned zero.
+    if (parsed.logTypeId === 8931) {
+      const tier = String(data.key_color ?? "").trim().toLowerCase()
+      const quantity = numeric(data.quantity) ?? 1
+      if (tier === "bronze" || tier === "silver" || tier === "gold") keysFound[tier] += quantity
+    }
+    if (parsed.logTypeId === 8941 || parsed.logTypeId === 8935) {
+      const ornamentId = numeric(data.ornament)
+      if (ornamentId !== null) {
+        const name = "Ornament #" + Math.trunc(ornamentId)
+        sumMap(ornaments, name, 1)
+        if (parsed.logTypeId === 8935) ornamentsBought += 1
+        else ornamentsOther += 1
+      }
+    }
+
     const structuredBuckKey = Object.keys(data).find(key => /christmas.?bucks?(?:_gained|_received|_spent)?|bucks_(?:gained|received|spent)/i.test(key))
     const structuredBucks = structuredBuckKey ? numeric(data[structuredBuckKey]) : null
     const buckItems = items.filter(item => /christmas buck/i.test(item.itemName)).reduce((sum, item) => sum + item.quantity, 0)
     const buckTextAmount = text.match(/(\d+)\s*(?:x\s*)?christmas bucks?/i)
-    if (structuredBucks !== null) {
+    const rawBuckAmount = numeric(data.bucks)
+    const hasTypedBuckEvent = parsed.logTypeId === 8939 || parsed.logTypeId === 8934 || parsed.logTypeId === 8935
+    if (hasTypedBuckEvent) {
+      if (rawBuckAmount !== null) {
+        if (parsed.logTypeId === 8939) christmasBucksGained += rawBuckAmount
+        else christmasBucksSpent += rawBuckAmount
+      }
+      if (parsed.logTypeId === 8934) {
+        const purchasedItemId = data.item ?? data.item_id ?? data.itemId
+        const purchasedItem = record(purchasedItemId)
+        const itemId = typeof purchasedItemId === "object" && purchasedItemId !== null
+          ? purchasedItem.id ?? purchasedItem.item_id ?? purchasedItem.itemId
+          : purchasedItemId
+        if (itemId !== undefined && itemId !== null && /^\d+$/.test(String(itemId))) {
+          sumMap(bucksSpentByItem, "Item #" + String(itemId), numeric(data.quantity) ?? 1)
+        }
+      }
+      if (parsed.logTypeId === 8935 && numeric(data.ornament) !== null) {
+        sumMap(bucksSpentByItem, "Ornament #" + Math.trunc(numeric(data.ornament)!), 1)
+      }
+    } else if (structuredBucks !== null) {
       if (/spent|used|cost/i.test(actionText) || /spent/i.test(structuredBuckKey ?? "")) christmasBucksSpent += structuredBucks
       else christmasBucksGained += structuredBucks
     } else if (buckTextAmount) {
@@ -327,7 +369,8 @@ export function calculateChristmasTownMetrics(
     const couponAmount = numeric(data.prize_coupons ?? data.prizeCoupons ?? data.coupons_received)
     const couponItems = items.filter(item => /prize coupon/i.test(item.itemName)).reduce((sum, item) => sum + item.quantity, 0)
     const couponTextAmount = text.match(/(\d+)\s*(?:x\s*)?prize coupons?/i)
-    if (couponAmount !== null && couponAmount > 0) prizeCouponsGained += couponAmount
+    if (parsed.logTypeId === 8945) prizeCouponsGained += numeric(data.quantity ?? data.amount) ?? 1
+    else if (couponAmount !== null && couponAmount > 0) prizeCouponsGained += couponAmount
     else if (couponItems > 0) prizeCouponsGained += couponItems
     else if (couponTextAmount && /receive|received|gain|gained|won|awarded/.test(actionText)) prizeCouponsGained += Number(couponTextAmount[1])
 
@@ -373,12 +416,19 @@ export function calculateChristmasTownMetrics(
     }
 
     const couponExchangeMatch = text.match(/exchanged\s+(\d+)\s+(?:prize\s+)?coupons?/)
-    if (/exchange[d]? .*coupon|coupon exchange|exchanged .* coupons/.test(text)) {
+    const couponDataMatch = typeof data.coupons === "string" ? data.coupons.match(/(\d[\d,]*)/) : null
+    if (parsed.logTypeId === 8946) {
+      prizeCouponsExchanged += 1
+      const spentCoupons = numeric(data.prize_coupons_spent ?? data.prizeCouponsSpent ?? data.coupons_exchanged ?? data.coupons_spent ?? data.coupons)
+      if (spentCoupons !== null) prizeCouponsSpent += spentCoupons
+      else if (couponDataMatch) prizeCouponsSpent += Number(couponDataMatch[1].replace(/,/g, ""))
+    } else if (/exchange[d]? .*coupon|coupon exchange|exchanged .* coupons/.test(text)) {
       prizeCouponsExchanged += 1
       if (couponExchangeMatch) prizeCouponsSpent += Number(couponExchangeMatch[1])
       else {
-        const spentCoupons = numeric(data.prize_coupons_spent ?? data.prizeCouponsSpent ?? data.coupons_exchanged ?? data.coupons_spent)
+        const spentCoupons = numeric(data.prize_coupons_spent ?? data.prizeCouponsSpent ?? data.coupons_exchanged ?? data.coupons_spent ?? data.coupons)
         if (spentCoupons !== null) prizeCouponsSpent += spentCoupons
+        else if (couponDataMatch) prizeCouponsSpent += Number(couponDataMatch[1].replace(/,/g, ""))
       }
     }
     if (/exchanged .*coupon/.test(text) || /coupon exchange/.test(text)) {

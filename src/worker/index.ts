@@ -7269,7 +7269,7 @@ export default {
       const upperSeconds = Math.floor((toMs + 86400 * 1000) / 1000)
       const lowerSeconds = Math.floor(fromMs / 1000)
       const rows = await db.prepare(
-        "SELECT log_id AS logId, event_timestamp AS timestamp, title, category, log_json AS logJson FROM christmas_town_event_logs WHERE player_id = ? AND event_timestamp >= ? AND event_timestamp < ? ORDER BY event_timestamp, log_id",
+        "SELECT log_id AS logId, event_timestamp AS timestamp, log_type_id AS logTypeId, title, category, log_json AS logJson FROM christmas_town_event_logs WHERE player_id = ? AND event_timestamp >= ? AND event_timestamp < ? ORDER BY event_timestamp, log_id",
       ).bind(session.player_id, lowerSeconds, upperSeconds).all<ChristmasTownEventLogRow>()
       const baseMetrics = calculateChristmasTownMetrics(rows.results ?? [])
       const marketItemIds = {
