@@ -106,9 +106,10 @@ async function cloudflareGet(path, query, token) {
 
 function renderReport({ now, today, yesterday, rolling24, previousRolling24, queries }) {
   const status = classifyD1Usage(today);
-  const databaseNames = Object.fromEntries(
-    today.databases.map((row) => [row.databaseId, row.databaseName]),
-  );
+  const databaseNames = {
+    ...PRODUCTION_DATABASES,
+    ...Object.fromEntries(today.databases.map((row) => [row.databaseId, row.databaseName])),
+  };
   const rankedQueries = rankWriteQueries(queries, databaseNames).slice(0, 10);
   const unexpectedWriters = today.databases.filter(
     (row) => !Object.hasOwn(PRODUCTION_DATABASES, row.databaseId) && row.rowsWritten > 0,
