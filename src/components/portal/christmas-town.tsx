@@ -404,21 +404,12 @@ export function ChristmasTownWorkspace({
           <p className="christmas-town-provenance">{marketFreshness}. This estimate uses Torn's globally cached item-market average prices, not live player listings. Missing prices are excluded rather than treated as zero.</p>
 
           <section className="christmas-town-panel">
-            <div className="christmas-town-panel-heading"><div><div className="christmas-town-section-kicker">DAILY GAMES</div><h2>Minigames</h2></div><span>{formatCount(metrics.minigames.reduce((sum, game) => sum + game.count, 0))} recorded plays</span></div>
-            <div className="christmas-town-game-grid christmas-town-game-grid-daily">
-              {metrics.minigames.filter(game => ["present_pick", "spin_the_wheel"].includes(game.key)).map(game => (
-                <article className={"christmas-town-game-tile christmas-town-game-" + game.key} key={game.key}>
-                  <span className="christmas-town-game-art" aria-hidden="true">{christmasTownGameGlyph(game.key)}</span>
-                  <div className="christmas-town-game-copy"><small>{game.label.toUpperCase()}</small><strong>{formatCount(game.count)}</strong><span>{game.key === "spin_the_wheel" ? "spins" : "picks"}</span></div>
-                </article>
-              ))}
-            </div>
-            <div className="christmas-town-panel-heading christmas-town-subheading"><div><div className="christmas-town-section-kicker">OTHER GAMES</div><h3>Season activity</h3></div></div>
+            <div className="christmas-town-panel-heading"><div><div className="christmas-town-section-kicker">ALL SEASON GAMES</div><h2>Minigames</h2></div><span>{formatCount(metrics.minigames.reduce((sum, game) => sum + game.count, 0))} recorded plays</span></div>
             <div className="christmas-town-game-grid">
-              {metrics.minigames.filter(game => !["present_pick", "spin_the_wheel"].includes(game.key)).map(game => (
+              {metrics.minigames.map(game => (
                 <article className={"christmas-town-game-tile christmas-town-game-" + game.key} key={game.key}>
                   <span className="christmas-town-game-art" aria-hidden="true">{christmasTownGameGlyph(game.key)}</span>
-                  <div className="christmas-town-game-copy"><small>{game.label.toUpperCase()}</small><strong>{formatCount(game.count)}</strong><span>wins / plays</span></div>
+                  <div className="christmas-town-game-copy"><small>{game.label.toUpperCase()}</small><strong>{formatCount(game.count)}</strong><span>plays</span></div>
                 </article>
               ))}
             </div>
@@ -426,7 +417,7 @@ export function ChristmasTownWorkspace({
 
           <section className="christmas-town-overview-grid">
             <article className="christmas-town-panel">
-              <div className="christmas-town-section-kicker">HATS & DECORATION</div><h2>Hats</h2>
+              <div className="christmas-town-section-kicker">HAT COLLECTION</div><h2>Hats</h2>
               <div className="christmas-town-big-number"><strong>{formatCount(metrics.hatsAdded)}</strong><span>hats added</span></div>
               {Object.entries(metrics.hatNames).length
                 ? <div className="christmas-town-name-list">{Object.entries(metrics.hatNames).sort((a,b)=>b[1]-a[1]).map(([name,count])=><div key={name}><span>{name}</span><strong>{count}</strong></div>)}</div>
@@ -443,7 +434,7 @@ export function ChristmasTownWorkspace({
           <section className="christmas-town-collectibles-grid">
             <article className="christmas-town-panel christmas-town-ornament-panel">
               <div className="christmas-town-panel-heading">
-                <div><div className="christmas-town-section-kicker">ORNAMENT COLLECTION</div><h2>Decorations added</h2></div>
+                <div><div className="christmas-town-section-kicker">ORNAMENT COLLECTION</div><h2>Decorations</h2></div>
                 <span>{formatCount(metrics.ornamentsAdded)} added</span>
               </div>
               <div className="christmas-town-ornament-summary">
@@ -462,51 +453,34 @@ export function ChristmasTownWorkspace({
                   </div>
                 : <p className="christmas-town-muted">No ornament additions were identified in the selected logs.</p>}
             </article>
-            <article className="christmas-town-panel christmas-town-keys-panel">
-              <div className="christmas-town-section-kicker">CHEST KEYS</div><h2>Keys found</h2>
-              <div className="christmas-town-key-total">
-                <strong>{formatCount(metrics.keysFound.bronze + metrics.keysFound.silver + metrics.keysFound.gold)}</strong>
-                <span>keys found</span>
-              </div>
-              <div className="christmas-town-key-list">
-                {([
-                  ["bronze", "Bronze", "♙"],
-                  ["silver", "Silver", "⚿"],
-                  ["gold", "Gold", "🗝"],
-                ] as const).map(([key, label, glyph]) => (
-                  <div className={"christmas-town-key-row christmas-town-key-" + key} key={key}>
-                    <span aria-hidden="true">{glyph}</span><strong>{label}</strong><b>{formatCount(metrics.keysFound[key])}</b>
-                  </div>
-                ))}
-              </div>
-            </article>
           </section>
 
-          <section className="christmas-town-panel">
-            <div className="christmas-town-panel-heading"><div><div className="christmas-town-section-kicker">CHEST REWARDS</div><h2>Chests</h2></div><span>{formatCount(metrics.chests.reduce((sum,chest)=>sum+chest.opened,0))} opened</span></div>
-            <div className="christmas-town-chest-grid">
-              {metrics.chests.map(chest => (
-                <article className="christmas-town-chest-card" key={chest.key}>
-                  <div className="christmas-town-chest-heading"><div><small>{chest.label.toUpperCase()}</small><strong>{formatCount(chest.opened)} opened</strong></div><span>{formatCount(chest.items)} items</span></div>
-                  <div className="christmas-town-chest-value">{formatMoney(chest.estimatedValue)}</div>
-                  <div className="christmas-town-chest-rates"><span>{formatMoney(chest.valuePerChest)} / chest</span><span>{formatMoney(chest.valuePerItem)} / item</span></div>
-                  <div className="christmas-town-best-worst">
-                    {(["best","worst"] as const).map(kind => {
-                      const event = chest[kind]
-                      return <div key={kind}>
-                        <small>{kind.toUpperCase()}</small>
-                        {event ? <>
-                          <strong>{formatStamp(event.timestamp)}</strong>
-                          <b>{formatMoney(event.estimatedValue)}</b>
-                          <ul>{rewardLines(event.rewardsById,itemNames).map(item=><li key={item.id}>{item.name} <span>×{item.quantity}</span></li>)}</ul>
-                        </> : <span className="christmas-town-muted">No priced chest event available</span>}
-                      </div>
-                    })}
+          <section className="christmas-town-panel christmas-town-tier-panel">
+              <div className="christmas-town-panel-heading"><div><div className="christmas-town-section-kicker">MATCHED BY TIER</div><h2>Keys & chests</h2></div><span>{formatCount(metrics.keysFound.bronze + metrics.keysFound.silver + metrics.keysFound.gold)} keys · {formatCount(metrics.chests.reduce((sum,chest)=>sum+chest.opened,0))} chests</span></div>
+              <div className="christmas-town-tier-table" role="table" aria-label="Keys found and chests opened by tier">
+                <div className="christmas-town-tier-row christmas-town-tier-head" role="row">
+                  <span role="columnheader">Tier</span><span role="columnheader">Keys found</span><span role="columnheader">Chests opened</span><span role="columnheader">Items</span><span role="columnheader">Estimated value</span>
+                </div>
+                {([
+                  { key: "bronze", label: "Bronze", glyph: "♙" },
+                  { key: "silver", label: "Silver", glyph: "⚿" },
+                  { key: "gold", label: "Gold", glyph: "🗝" },
+                  { key: "combination", label: "Combination", glyph: "🔐" },
+                ] as const).map(tier => {
+                  const chest = metrics.chests.find(entry => entry.key === tier.key)
+                  return <div className={"christmas-town-tier-row christmas-town-tier-" + tier.key} role="row" key={tier.key}>
+                    <span className="christmas-town-tier-name" role="cell"><i aria-hidden="true">{tier.glyph}</i><strong>{tier.label}</strong></span>
+                    <strong role="cell">{tier.key === "combination" ? "—" : formatCount(metrics.keysFound[tier.key])}</strong>
+                    <strong role="cell">{formatCount(chest?.opened ?? 0)}</strong>
+                    <strong role="cell">{formatCount(chest?.items ?? 0)}</strong>
+                    <span className="christmas-town-tier-value" role="cell"><strong>{formatMoney(chest?.estimatedValue ?? null)}</strong><small>{formatMoney(chest?.valuePerChest ?? null)} / chest · {formatMoney(chest?.valuePerItem ?? null)} / item</small></span>
                   </div>
-                  <p className="christmas-town-footnote">Chest estimates exclude rewards with no usable market average. Ornaments and Christmas Bucks are shown separately where they can be identified.</p>
-                </article>
-              ))}
-            </div>
+                })}
+              </div>
+              <div className="christmas-town-tier-best-worst">
+                {metrics.chests.map(chest => <div key={chest.key}><strong>{chest.label}</strong><span>Best: {chest.best ? formatMoney(chest.best.estimatedValue) + " · " + formatStamp(chest.best.timestamp) : "—"}</span><span>Worst: {chest.worst ? formatMoney(chest.worst.estimatedValue) + " · " + formatStamp(chest.worst.timestamp) : "—"}</span></div>)}
+              </div>
+              <p className="christmas-town-footnote">Estimated values include only rewards with usable market averages. Ornament and Christmas Buck rewards are tallied separately.</p>
           </section>
 
           <section className="christmas-town-overview-grid christmas-town-currency-grid">

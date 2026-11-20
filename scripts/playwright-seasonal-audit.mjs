@@ -847,6 +847,21 @@ async function main() {
             const control = page.locator("#" + pageCase.selector);
             await control.selectOption(String(priorYear));
             await page.getByRole("heading", { name: "Minigames" }).waitFor({ state: "visible" });
+            const minigameLayout = await page.evaluate(() => ({
+              tiles: document.querySelectorAll(".christmas-town-panel .christmas-town-game-tile").length,
+              otherGamesLabels: [...document.querySelectorAll(".christmas-town-panel")].filter(panel => /other games/i.test(panel.textContent || "")).length,
+              gamesInOnePanel: (() => { const tiles = [...document.querySelectorAll(".christmas-town-game-tile")]; return tiles.length > 0 && tiles.every(tile => tile.closest(".christmas-town-panel") === tiles[0].closest(".christmas-town-panel")); })(),
+              santaCards: [...document.querySelectorAll(".christmas-town-panel")].filter(panel => /Santa visits/i.test(panel.textContent || "")).length,
+              tierRows: document.querySelectorAll(".christmas-town-tier-panel .christmas-town-tier-row:not(.christmas-town-tier-head)").length,
+              ornamentTiles: document.querySelectorAll(".christmas-town-ornament-tile").length,
+              bucks: document.querySelector(".christmas-town-currency-pair")?.textContent || "",
+              coupons: document.querySelector(".christmas-town-coupon-summary")?.textContent || "",
+            }));
+            recordAssertion("Christmas Town: all minigames share one compact card", minigameLayout.tiles === 10 && minigameLayout.gamesInOnePanel && minigameLayout.otherGamesLabels === 0, JSON.stringify(minigameLayout));
+            recordAssertion("Christmas Town: Santa remains a separate card", minigameLayout.santaCards === 1, JSON.stringify(minigameLayout));
+            recordAssertion("Christmas Town: keys and all chest tiers share one table", minigameLayout.tierRows === 4, JSON.stringify(minigameLayout));
+            recordAssertion("Christmas Town: ornament decorations render in collection tiles", minigameLayout.ornamentTiles === 3, JSON.stringify(minigameLayout));
+            recordAssertion("Christmas Town: season currency and coupons render nonzero metrics", /4,500/.test(minigameLayout.bucks) && /1,800/.test(minigameLayout.bucks) && /5/.test(minigameLayout.coupons) && /2/.test(minigameLayout.coupons), JSON.stringify(minigameLayout));
             await page.waitForFunction((expected) => {
               const select = document.querySelector("#christmas-town-year");
               return select && select.value === expected;

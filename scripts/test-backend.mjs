@@ -939,6 +939,50 @@ try {
     assert.equal(metrics.items.some(item => item.itemId === "108"), false, "Bucks-shop purchases are outgoing items, not received rewards")
   })
 
+  await test("Christmas Town metrics decode Torn event-type IDs for keys, ornaments, Bucks and coupon exchanges", () => {
+    const makeRow = (logId, timestamp, logTypeId, title, data) => ({
+      logId,
+      timestamp,
+      logTypeId,
+      title,
+      category: "Christmas town",
+      logJson: JSON.stringify({
+        id: logId,
+        timestamp,
+        details: { id: logTypeId, title, category: "Christmas town" },
+        data,
+      }),
+    })
+    const rows = [
+      makeRow("torn-key-bronze", 100, 8931, "Christmas town find key", { key_color: "Bronze" }),
+      makeRow("torn-key-silver", 101, 8931, "Christmas town find key", { key_color: "Silver" }),
+      makeRow("torn-key-gold", 102, 8931, "Christmas town find key", { key_color: "Gold" }),
+      makeRow("torn-chest-bronze", 103, 8938, "Christmas town items", { minigame: "opened a Bronze chest", items: { "101": 2 } }),
+      makeRow("torn-bucks-gained", 104, 8939, "Christmas town Bucks", { minigame: "completed Garland Assemble", bucks: 3 }),
+      makeRow("torn-item-purchase", 105, 8934, "Christmas town purchase item", { item: 702, quantity: 2, bucks: 4 }),
+      makeRow("torn-ornament-purchase", 106, 8935, "Christmas town purchase ornament", { ornament: 45, bucks: 30 }),
+      makeRow("torn-ornament-found", 107, 8941, "Christmas town ornament", { minigame: "opened a Bronze chest", ornament: 7 }),
+      makeRow("torn-coupon-gain", 108, 8945, "Christmas town coupon receive", { minigame: "completed Santa Claws" }),
+      makeRow("torn-coupon-exchange", 109, 8946, "Christmas town coupon exchange", { coupons: "65 coupons", items: { "202": 2 } }),
+    ]
+    const metrics = calculateChristmasTownMetrics(rows)
+    assert.deepEqual(metrics.keysFound, { bronze: 1, silver: 1, gold: 1 })
+    assert.equal(metrics.chests.find(chest => chest.key === "bronze")?.opened, 1)
+    assert.equal(metrics.christmasBucksGained, 3)
+    assert.equal(metrics.christmasBucksSpent, 34, "item and decoration purchases both spend Bucks")
+    assert.equal(metrics.purchasedItemsById["702"], 2, "purchase-item quantity is read from its scalar item payload")
+    assert.equal(metrics.ornamentsAdded, 2)
+    assert.equal(metrics.ornamentsBought, 1)
+    assert.equal(metrics.ornamentsOther, 1)
+    assert.equal(metrics.ornaments["Ornament #7"], 1)
+    assert.equal(metrics.ornaments["Ornament #45"], 1)
+    assert.equal(metrics.prizeCouponsGained, 1)
+    assert.equal(metrics.prizeCouponsSpent, 65)
+    assert.equal(metrics.prizeCouponsExchanged, 1)
+    assert.equal(metrics.prizeCouponItems, 2)
+    assert.equal(metrics.minigames.find(game => game.key === "santa_claws")?.count, 1)
+  })
+
   await test("Christmas Town market valuation enriches item names and excludes missing prices from totals", () => {
     const base = calculateChristmasTownMetrics([
       {
