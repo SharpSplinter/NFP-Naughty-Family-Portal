@@ -31,6 +31,8 @@ jobs:
         run: npm ci
       - name: Check administrator role registry contract
         run: node scripts/test-admin-role-registry.mjs
+      - name: Test Cloudflare D1 usage monitor calculations
+        run: node scripts/test-cloudflare-d1-usage-monitor.mjs
       - name: Type-check application
         run: npm run typecheck
       - name: Build production frontend
