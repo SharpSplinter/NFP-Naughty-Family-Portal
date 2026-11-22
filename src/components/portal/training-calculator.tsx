@@ -1255,6 +1255,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         {STAT_OPTIONS.map(option => {
           const amount = liveData?.battleStats?.[option.value]
           return <button type="button" key={option.value} className={"tc-profile-stat" + (selectedStat === option.value ? " is-selected" : "")}
+            aria-pressed={selectedStat === option.value}
             onClick={() => setSelectedStat(option.value)}>
             <span>{option.label}</span><strong>{amount === null || amount === undefined ? "—" : fmt(amount)}</strong>
             <small>{liveData ? "Live Torn stat" : "Awaiting API"}</small>
