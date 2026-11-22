@@ -75,24 +75,27 @@ const dailySupply = calculateDailyTrainingSupply({
   refillEnergyPerFhc: 150,
   cansPerDay: 2,
   energyPerCan: 20,
-  mcsEnabled: true,
+  refillsPerDay: 1,
+  energyPerRefill: 150,
+  mcsBlocks: 2,
 });
 assert.equal(dailySupply.naturalEnergy, 0, "daily supply must not depend on current Energy");
 assert.equal(dailySupply.xanaxEnergy, 250);
 assert.equal(dailySupply.fhcEnergy, 150);
 assert.equal(dailySupply.canEnergy, 40);
-assert.equal(dailySupply.baseEnergyPerDay, 440);
-assert.equal(dailySupply.weeklyMcsEnergy, 100);
-assert.ok(Math.abs(dailySupply.averageDailyEnergy - (440 + 100 / 7)) < 1e-10,
-  "MCS weekly energy must be displayed as a 100E/7-day average, not 100E/day");
+assert.equal(dailySupply.pointRefillEnergy, 150);
+assert.equal(dailySupply.baseEnergyPerDay, 590);
+assert.equal(dailySupply.weeklyMcsEnergy, 200);
+assert.ok(Math.abs(dailySupply.averageDailyEnergy - (590 + 200 / 7)) < 1e-10,
+  "two MCS blocks must contribute 200E per week, averaged for daily comparisons");
 
-const thirtyDayMcsEnergy = Array.from({ length: 30 }, (_, day) => getWeeklyStockEnergyBonus(day, true)).reduce((sum, value) => sum + value, 0);
-assert.equal(thirtyDayMcsEnergy, 400, "30 days should receive four 100E MCS stock blocks, on days 7/14/21/28");
-assert.equal(getWeeklyStockEnergyBonus(5, true), 0, "MCS must not pay out before day seven");
-assert.equal(getWeeklyStockEnergyBonus(6, true), 100, "MCS pays 100E on day seven");
-assert.equal(getWeeklyStockEnergyBonus(13, true), 100, "the next block pays on day fourteen");
-assert.equal(getWeeklyStockEnergyBonus(6, false), 0, "MCS is excluded when the user does not have the benefit");
-assert.equal(getWeeklyStockEnergyBonus(-1, true), 0, "invalid day indexes cannot create MCS energy");
+const thirtyDayMcsEnergy = Array.from({ length: 30 }, (_, day) => getWeeklyStockEnergyBonus(day, 1)).reduce((sum, value) => sum + value, 0);
+assert.equal(thirtyDayMcsEnergy, 400, "one MCS block pays four times in 30 days");
+assert.equal(getWeeklyStockEnergyBonus(5, 2), 0, "MCS must not pay out before day seven");
+assert.equal(getWeeklyStockEnergyBonus(6, 2), 200, "two MCS blocks pay 200E on day seven");
+assert.equal(getWeeklyStockEnergyBonus(13, 3), 300, "three MCS blocks stack to 300E on day fourteen");
+assert.equal(getWeeklyStockEnergyBonus(6, 0), 0, "MCS is excluded when no blocks are held");
+assert.equal(getWeeklyStockEnergyBonus(-1, 1), 0, "invalid day indexes cannot create MCS energy");
 
 assert.ok(calculator.includes('import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"'));
 assert.ok(calculator.includes('testId="training-train-count"'));
@@ -100,6 +103,15 @@ assert.ok(calculator.includes('testId="training-gym-xanax-per-day"'));
 assert.ok(calculator.includes('testId="training-gym-fhc-per-day"'));
 assert.ok(calculator.includes('testId="training-gym-can-per-day"'));
 assert.ok(calculator.includes('data-testid="training-gym-mcs"'));
+assert.ok(calculator.includes('data-testid="training-gym-refill"'));
+assert.ok(calculator.includes('data-testid="training-happy-mcs"'));
+assert.ok(calculator.includes('data-testid="training-happy-refill"'));
+assert.ok(calculator.includes('data-testid="training-projection-refill"'));
+assert.ok(calculator.includes('data-testid="training-energy-mcs-blocks"'));
+assert.ok(calculator.includes('data-testid="training-clear-config"'));
+assert.ok(calculator.includes('data-testid="training-tab-history"'));
+assert.ok(calculator.includes('selectedStatLogRows.slice(0, 12)'));
+assert.ok(calculator.includes('configSnapshotJson'));
 assert.ok(calculator.includes('testId="training-projection-xanax-per-day"'));
 assert.ok(calculator.includes('testId="training-projection-fhc-per-day"'));
 assert.ok(calculator.includes('testId="training-projection-can-count"'));
@@ -112,7 +124,7 @@ assert.ok(calculator.includes("const happyJump = useMemo"));
 assert.ok(calculator.includes("happyJumpStartingHappy") && calculator.includes("happyJumpXanaxCount"),
   "Happy Jump must calculate from its own projection state rather than Energy Supply state");
 assert.ok(calculator.includes("const longTermProjection = useMemo"));
-assert.ok(calculator.includes("getWeeklyStockEnergyBonus(day, projectionMcsEnabled)"),
+assert.ok(calculator.includes("getWeeklyStockEnergyBonus(day, projectionMcsBlocks)"),
   "Long-term Plan must add actual weekly MCS payouts to the day-by-day model");
 assert.ok(classifier.includes("const gymCategory ="));
 assert.ok(classifier.includes("const trainingSignal ="));
