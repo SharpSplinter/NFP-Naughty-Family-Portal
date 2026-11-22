@@ -81,7 +81,7 @@ type LiveData = {
 type TrainRow = { train: number; statBefore: number; happyBefore: number; gain: number; statAfter: number; happyAfter: number; energy: number }
 type SessionResult = { trains: number; energyUsed: number; statGain: number; endingStat: number; endingHappy: number; averageGain: number; rows: TrainRow[] }
 type HistoryLog = { logId: string; timestamp: number; title: string; category?: string; record?: Record<string, unknown> }
-type HistoryData = { collectionEnabled?: boolean; connected?: boolean; totalLogs?: number; logs?: HistoryLog[]; error?: string }
+type HistoryData = { collectionEnabled?: boolean; connected?: boolean; totalLogs?: number; latestSyncedAt?: string | null; latestSyncError?: string | null; logs?: HistoryLog[]; error?: string }
 type GymHistoryDetails = {
   title: string
   stat: StatKey | null
@@ -430,16 +430,149 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [dailyEnergyOverride, setDailyEnergyOverride] = useState("")
   const [priceOverrides, setPriceOverrides] = useState<Record<string, string>>({})
   const calibrationStorageKey = gymGainCalibrationStorageKey(playerName)
+  const configStorageKey = "ncd:training-calculator-config:v1:" + playerName.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
   const [calibrationProfile, setCalibrationProfile] = useState<GymGainCalibrationProfile>(
     () => readGymGainCalibrationProfile(calibrationStorageKey),
   )
   const [calibrationLogId, setCalibrationLogId] = useState("")
   const [calibrationStartingHappy, setCalibrationStartingHappy] = useState("")
   const [calibrationMessage, setCalibrationMessage] = useState("")
+  const [configHydrated, setConfigHydrated] = useState(false)
   useEffect(() => {
     if (!calibrationStorageKey) return
     try { window.localStorage.setItem(calibrationStorageKey, JSON.stringify(calibrationProfile)) } catch { /* Browser storage may be unavailable. */ }
   }, [calibrationStorageKey, calibrationProfile])
+
+  const configSnapshotJson = JSON.stringify({
+    version: 1,
+    selectedStat, selectedGymId, gymTrainGymId, gymTrainCount, gymTrainMcsBlocks, gymTrainRefillIncluded,
+    gymTrainXanaxPerDay, gymTrainFhcPerDay, gymTrainCanPerDay, gymTrainCanId,
+    happyJumpGymId, happyJumpTrainCount, happyJumpGymModifier, happyJumpRefillIncluded, happyJumpMcsBlocks,
+    happyJumpStartingHappy, happyJumpXanaxCount, happyJumpFhcCount, happyJumpDvdCount, happyJumpDvdHappy,
+    happyJumpYellowEggCount, happyJumpMistletoeCount, happyJumpTargetHappy, happyJumpOtherHappy,
+    happyJumpEcstasy, happyJumpPriceOverrides,
+    projectionGymId, projectionDays, projectionXanaxPerDay, projectionFhcPerDay, projectionCanPerDay,
+    projectionCanId, projectionMcsBlocks, projectionRefillIncluded,
+    manualStats, manualHappy, manualEnergy, manualModifier, manualModifierEnabled, gymBookChoice,
+    waitHours, xanaxCount, fhcCount, canId, canCount, greenEggCount, pointRefillIncluded, energyMcsBlocks,
+    otherEnergy, bookChoice, factionVoracity, eventDrinkBonus, dvdCount, manualDvdHappy, yellowEggCount,
+    mistletoeCount, mistletoeTargetHappy, otherHappy, ecstasy, seQuantity, seTargetStat, jobPointQuantity,
+    pressPassQuantity, permanentStatBooks, dailyEnergyOverride, priceOverrides,
+  })
+
+  useEffect(() => {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(configStorageKey) || "null")
+      if (saved && typeof saved === "object" && !Array.isArray(saved) && (saved as Record<string, unknown>).version === 1) {
+        const value = saved as Record<string, unknown>
+        const restoreNumber = (key: string, setter: (value: number) => void, min = 0, max = 100000) => {
+          const item = value[key]
+          if (typeof item === "number" && Number.isFinite(item)) setter(clamp(item, min, max))
+        }
+        const restoreBoolean = (key: string, setter: (value: boolean) => void) => {
+          const item = value[key]
+          if (typeof item === "boolean") setter(item)
+        }
+        const restoreString = (key: string, setter: (value: string) => void) => {
+          const item = value[key]
+          if (typeof item === "string") setter(item)
+        }
+
+        if (STAT_OPTIONS.some(option => option.value === value.selectedStat)) setSelectedStat(value.selectedStat as StatKey)
+        if (STAT_OPTIONS.some(option => option.value === value.seTargetStat)) setSeTargetStat(value.seTargetStat as StatKey)
+        restoreString("selectedGymId", setSelectedGymId)
+        restoreString("gymTrainGymId", setGymTrainGymId)
+        restoreNumber("gymTrainCount", setGymTrainCount, 0, 20000)
+        restoreNumber("gymTrainMcsBlocks", setGymTrainMcsBlocks, 0, 100)
+        restoreBoolean("gymTrainRefillIncluded", setGymTrainRefillIncluded)
+        restoreNumber("gymTrainXanaxPerDay", setGymTrainXanaxPerDay, 0, 20)
+        restoreNumber("gymTrainFhcPerDay", setGymTrainFhcPerDay, 0, 20)
+        restoreNumber("gymTrainCanPerDay", setGymTrainCanPerDay, 0, 64)
+        restoreString("gymTrainCanId", setGymTrainCanId)
+        restoreString("happyJumpGymId", setHappyJumpGymId)
+        restoreNumber("happyJumpTrainCount", setHappyJumpTrainCount, 0, 20000)
+        restoreNumber("happyJumpGymModifier", setHappyJumpGymModifier, 0.0001, 100)
+        restoreBoolean("happyJumpRefillIncluded", setHappyJumpRefillIncluded)
+        restoreNumber("happyJumpMcsBlocks", setHappyJumpMcsBlocks, 0, 100)
+        restoreNumber("happyJumpStartingHappy", setHappyJumpStartingHappy, 0, HAPPY_CAP)
+        restoreNumber("happyJumpXanaxCount", setHappyJumpXanaxCount, 0, 20)
+        restoreNumber("happyJumpFhcCount", setHappyJumpFhcCount, 0, 20)
+        restoreNumber("happyJumpDvdCount", setHappyJumpDvdCount, 0, 20)
+        restoreNumber("happyJumpDvdHappy", setHappyJumpDvdHappy, 2500, 5000)
+        restoreNumber("happyJumpYellowEggCount", setHappyJumpYellowEggCount, 0, 20)
+        restoreNumber("happyJumpMistletoeCount", setHappyJumpMistletoeCount, 0, 100)
+        restoreNumber("happyJumpTargetHappy", setHappyJumpTargetHappy, 0, HAPPY_CAP)
+        restoreNumber("happyJumpOtherHappy", setHappyJumpOtherHappy, 0, HAPPY_CAP)
+        restoreBoolean("happyJumpEcstasy", setHappyJumpEcstasy)
+        restoreString("projectionGymId", setProjectionGymId)
+        restoreNumber("projectionDays", setProjectionDays, 1, 3650)
+        restoreNumber("projectionXanaxPerDay", setProjectionXanaxPerDay, 0, 20)
+        restoreNumber("projectionFhcPerDay", setProjectionFhcPerDay, 0, 20)
+        restoreNumber("projectionCanPerDay", setProjectionCanPerDay, 0, 64)
+        restoreString("projectionCanId", setProjectionCanId)
+        restoreNumber("projectionMcsBlocks", setProjectionMcsBlocks, 0, 100)
+        restoreBoolean("projectionRefillIncluded", setProjectionRefillIncluded)
+        if (value.manualStats && typeof value.manualStats === "object") {
+          const savedStats = value.manualStats as Record<string, unknown>
+          setManualStats(current => ({
+            strength: typeof savedStats.strength === "string" ? savedStats.strength : current.strength,
+            defense: typeof savedStats.defense === "string" ? savedStats.defense : current.defense,
+            speed: typeof savedStats.speed === "string" ? savedStats.speed : current.speed,
+            dexterity: typeof savedStats.dexterity === "string" ? savedStats.dexterity : current.dexterity,
+          }))
+        }
+        restoreString("manualHappy", setManualHappy)
+        restoreString("manualEnergy", setManualEnergy)
+        restoreString("manualModifier", setManualModifier)
+        restoreBoolean("manualModifierEnabled", setManualModifierEnabled)
+        restoreString("gymBookChoice", setGymBookChoice)
+        restoreNumber("waitHours", setWaitHours, 0, 168)
+        restoreNumber("xanaxCount", setXanaxCount, 0, 20)
+        restoreNumber("fhcCount", setFhcCount, 0, 8)
+        restoreString("canId", setCanId)
+        restoreNumber("canCount", setCanCount, 0, 64)
+        restoreNumber("greenEggCount", setGreenEggCount, 0, 8)
+        restoreBoolean("pointRefillIncluded", setPointRefillIncluded)
+        restoreNumber("energyMcsBlocks", setEnergyMcsBlocks, 0, 100)
+        restoreNumber("otherEnergy", setOtherEnergy, 0, 100000)
+        restoreString("bookChoice", setBookChoice)
+        restoreBoolean("factionVoracity", setFactionVoracity)
+        restoreBoolean("eventDrinkBonus", setEventDrinkBonus)
+        restoreNumber("dvdCount", setDvdCount, 0, 8)
+        if (value.manualDvdHappy === null || typeof value.manualDvdHappy === "number") setManualDvdHappy(value.manualDvdHappy as number | null)
+        restoreNumber("yellowEggCount", setYellowEggCount, 0, 8)
+        restoreNumber("mistletoeCount", setMistletoeCount, 0, 100)
+        restoreNumber("mistletoeTargetHappy", setMistletoeTargetHappy, 0, HAPPY_CAP)
+        restoreNumber("otherHappy", setOtherHappy, 0, HAPPY_CAP)
+        restoreBoolean("ecstasy", setEcstasy)
+        restoreNumber("seQuantity", setSeQuantity, 0, 8)
+        restoreNumber("jobPointQuantity", setJobPointQuantity, 0, 100000)
+        restoreNumber("pressPassQuantity", setPressPassQuantity, 0, 100000)
+        restoreString("dailyEnergyOverride", setDailyEnergyOverride)
+        if (value.permanentStatBooks && typeof value.permanentStatBooks === "object") {
+          const savedBooks = value.permanentStatBooks as Record<string, unknown>
+          setPermanentStatBooks({
+            strength: savedBooks.strength === true,
+            defense: savedBooks.defense === true,
+            speed: savedBooks.speed === true,
+            dexterity: savedBooks.dexterity === true,
+          })
+        }
+        const stringRecord = (item: unknown): Record<string, string> => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return {}
+          return Object.fromEntries(Object.entries(item).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+        }
+        setPriceOverrides(stringRecord(value.priceOverrides))
+        setHappyJumpPriceOverrides(stringRecord(value.happyJumpPriceOverrides))
+      }
+    } catch { /* Browser storage can be disabled or contain invalid JSON. */ }
+    setConfigHydrated(true)
+  }, [configStorageKey])
+
+  useEffect(() => {
+    if (!configHydrated || !configStorageKey) return
+    try { window.localStorage.setItem(configStorageKey, configSnapshotJson) } catch { /* Browser storage can be unavailable. */ }
+  }, [configHydrated, configStorageKey, configSnapshotJson])
 
   useEffect(() => {
     const refreshInterval = window.setInterval(() => setRefreshKey(value => value + 1), 5 * 60 * 1000)
@@ -1018,6 +1151,79 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   }
   const canRefresh = !loading && Boolean(apiBase && sessionToken)
   const setPriceOverride = (key: string, value: string) => setPriceOverrides(current => ({ ...current, [key]: value }))
+  const clearCalculatorConfig = () => {
+    setActiveTab("session")
+    setSelectedStat("strength")
+    setSelectedGymId("")
+    setGymTrainGymId("")
+    setGymTrainCount(10)
+    setGymTrainMcsBlocks(0)
+    setGymTrainRefillIncluded(false)
+    setGymTrainXanaxPerDay(0)
+    setGymTrainFhcPerDay(0)
+    setGymTrainCanPerDay(0)
+    setGymTrainCanId("munster")
+    setHappyJumpGymId("georges")
+    setHappyJumpTrainCount(10)
+    setHappyJumpGymModifier(1)
+    setHappyJumpRefillIncluded(false)
+    setHappyJumpMcsBlocks(0)
+    setHappyJumpStartingHappy(0)
+    setHappyJumpXanaxCount(0)
+    setHappyJumpFhcCount(0)
+    setHappyJumpDvdCount(0)
+    setHappyJumpDvdHappy(2500)
+    setHappyJumpYellowEggCount(0)
+    setHappyJumpMistletoeCount(0)
+    setHappyJumpTargetHappy(0)
+    setHappyJumpOtherHappy(0)
+    setHappyJumpEcstasy(false)
+    setHappyJumpPriceOverrides({})
+    setProjectionGymId("")
+    setProjectionDays(30)
+    setProjectionXanaxPerDay(0)
+    setProjectionFhcPerDay(0)
+    setProjectionCanPerDay(0)
+    setProjectionCanId("munster")
+    setProjectionMcsBlocks(0)
+    setProjectionRefillIncluded(false)
+    setManualStats({ strength: "", defense: "", speed: "", dexterity: "" })
+    setManualHappy("")
+    setManualEnergy("")
+    setManualModifier("")
+    setManualModifierEnabled(false)
+    setGymBookChoice("auto")
+    setWaitHours(0)
+    setXanaxCount(0)
+    setFhcCount(0)
+    setCanId("munster")
+    setCanCount(0)
+    setGreenEggCount(0)
+    setPointRefillIncluded(false)
+    setEnergyMcsBlocks(0)
+    setOtherEnergy(0)
+    setBookChoice("auto")
+    setFactionVoracity(false)
+    setEventDrinkBonus(false)
+    setDvdCount(0)
+    setManualDvdHappy(null)
+    setYellowEggCount(0)
+    setMistletoeCount(0)
+    setMistletoeTargetHappy(0)
+    setOtherHappy(0)
+    setEcstasy(false)
+    setSeQuantity(0)
+    setSeTargetStat("strength")
+    setJobPointQuantity(0)
+    setPressPassQuantity(0)
+    setPermanentStatBooks({ strength: false, defense: false, speed: false, dexterity: false })
+    setDailyEnergyOverride("")
+    setPriceOverrides({})
+    setCalibrationLogId("")
+    setCalibrationStartingHappy("")
+    setCalibrationMessage("")
+    try { window.localStorage.removeItem(configStorageKey) } catch { /* Browser storage can be unavailable. */ }
+  }
 
   return (
     <div className="training-calculator-page">
@@ -1035,7 +1241,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           <span>LIVE TORN CONNECTION</span>
           <strong>{loading ? "Syncing profile…" : liveData ? "Connected · " + currentStatLabel : "Manual planning mode"}</strong>
           <small>{liveData?.fetchedAt ? "Updated " + new Date(liveData.fetchedAt).toLocaleTimeString() + " · auto-refresh every 5 min" : apiError || "Connect your Torn key to load live values."}</small>
-          <button className="tc-refresh-button" onClick={() => setRefreshKey(value => value + 1)} disabled={!canRefresh}>↻ Refresh live data</button>
+          <div className="tc-header-actions">
+            <button className="tc-refresh-button" onClick={() => setRefreshKey(value => value + 1)} disabled={!canRefresh}>↻ Refresh live data</button>
+            <button type="button" className="tc-clear-config" data-testid="training-clear-config" onClick={clearCalculatorConfig}>Clear config</button>
+          </div>
         </div>
       </header>
 
