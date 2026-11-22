@@ -446,6 +446,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const configSnapshotJson = JSON.stringify({
     version: 1,
     selectedStat, selectedGymId, gymTrainGymId, gymTrainCount, gymTrainMcsBlocks, gymTrainRefillIncluded,
+    calibrationLogId, calibrationStartingHappy,
     gymTrainXanaxPerDay, gymTrainFhcPerDay, gymTrainCanPerDay, gymTrainCanId,
     happyJumpGymId, happyJumpTrainCount, happyJumpGymModifier, happyJumpRefillIncluded, happyJumpMcsBlocks,
     happyJumpStartingHappy, happyJumpXanaxCount, happyJumpFhcCount, happyJumpDvdCount, happyJumpDvdHappy,
@@ -533,6 +534,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         restoreNumber("canCount", setCanCount, 0, 64)
         restoreNumber("greenEggCount", setGreenEggCount, 0, 8)
         restoreBoolean("pointRefillIncluded", setPointRefillIncluded)
+        restoreString("calibrationLogId", setCalibrationLogId)
+        restoreString("calibrationStartingHappy", setCalibrationStartingHappy)
         restoreNumber("energyMcsBlocks", setEnergyMcsBlocks, 0, 100)
         restoreNumber("otherEnergy", setOtherEnergy, 0, 100000)
         restoreString("bookChoice", setBookChoice)
@@ -785,7 +788,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const pointRefillAvailable = liveData?.refills?.energy === true
   const pointRefillCount = pointRefillIncluded ? 1 : 0
   const energyFromRefills = pointRefillCount * refillBarMaximum
-  const energyFromMcs = energyMcsBlocks * 100
+  const energyFromMcs = energyMcsBlocks * 100 * clamp(waitHours, 0, 168) / 168
   const energyFromFhcs = fhcCount * refillBarMaximum
   const energyFromXanax = xanaxCount * 250
   const energyFromGreenEggs = greenEggCount * 500
@@ -1382,10 +1385,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint="Manual addition for energy not listed above. Maximum 100,000E per plan." testId="training-other-energy" />
               <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded}
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
-                <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Torn currently reports this refill as available." : "Torn reports this refill as used or unavailable. Keep it selected to model a future refill."} Adds {fmt(refillBarMaximum)}E when included.</small></span>
+                <span><strong>Include one 25-point Energy refill</strong><small>{pointRefillAvailable ? "Torn currently reports this refill as available." : "Torn reports this refill as used or unavailable. Keep it selected to model a planned refill."} Adds {fmt(refillBarMaximum)}E to this training window.</small></span>
               </label>
               <NumberField label="MCS benefit blocks held" value={energyMcsBlocks} onChange={setEnergyMcsBlocks} min={0} max={100}
-                hint="Each block adds 100E per week. Held blocks stack; the weekly total is included in this plan." testId="training-energy-mcs-blocks" />
+                hint="Each block contributes 100E per 168 hours. The estimate accrues the time-weighted amount across your wait window." testId="training-energy-mcs-blocks" />
               <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
                 <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Models the maximum +50% energy-drink branch."}</small></span>
@@ -1411,7 +1414,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-condition-list">
               <div><span>Current energy + natural regen</span><strong>{fmt(energyAfterNatural)}E</strong></div>
               <div><span>Daily point refill</span><strong>{fmt(energyFromRefills)}E</strong></div>
-              <div><span>MCS weekly stock benefit</span><strong>{fmt(energyFromMcs)}E ({fmt(energyMcsBlocks)} block(s) x 100E)</strong></div>
+              <div><span>MCS accrued by train time</span><strong>{fmt(energyFromMcs)}E</strong></div>
               <div><span>FHC full-bar refills</span><strong>{fmt(energyFromFhcs)}E</strong></div>
               <div><span>Xanax</span><strong>{fmt(energyFromXanax)}E</strong></div>
               <div><span>Energy drinks</span><strong>{fmt(energyFromCans, 1)}E</strong></div>
