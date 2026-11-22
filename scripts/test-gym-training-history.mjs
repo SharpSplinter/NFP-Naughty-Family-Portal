@@ -109,7 +109,7 @@ assert.ok(calculator.includes('data-testid="training-happy-refill"'));
 assert.ok(calculator.includes('data-testid="training-projection-refill"'));
 assert.ok(calculator.includes('testId="training-energy-mcs-blocks"'));
 assert.ok(calculator.includes('data-testid="training-clear-config"'));
-assert.ok(calculator.includes('data-testid="training-tab-history"'));
+assert.ok(calculator.includes('testId="training-tab-history"'));
 assert.ok(calculator.includes('selectedStatLogRows.slice(0, 12)'));
 assert.ok(calculator.includes('configSnapshotJson'));
 assert.ok(calculator.includes('testId="training-projection-xanax-per-day"'));
