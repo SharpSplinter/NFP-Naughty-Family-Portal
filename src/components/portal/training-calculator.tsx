@@ -961,8 +961,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const modifierBonuses = liveData?.gymModifiers?.[selectedStat]?.bonuses || []
   const currentMarketTimestamp = liveData?.marketUpdatedAt ? new Date(liveData.marketUpdatedAt * 1000).toLocaleString() : ""
   const logRows = history?.logs || []
+  const selectedStatLogRows = logRows.filter(log => parseGymHistoryLog(log).stat === selectedStat)
   const historyConnected = history?.connected === true
-  const calibrationCandidates = historyConnected ? logRows.map(log => ({
+  const calibrationCandidates = historyConnected ? selectedStatLogRows.map(log => ({
     log,
     details: parseGymHistoryLog(log),
   })).filter(item => item.details.stat === selectedStat
@@ -1065,6 +1066,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           { key: "happy", testId: "training-tab-happy", label: <><span>03</span>99K Happy Jump</> },
           { key: "enhancers", testId: "training-tab-enhancers", label: <><span>04</span>Stat enhancers</> },
           { key: "projection", testId: "training-tab-projection", label: <><span>05</span>Long-term plan</> },
+          { key: "history", testId: "training-tab-history", label: <><span>06</span>History & calibration</> },
         ]}
         activeKey={activeTab}
         onChange={key => setActiveTab(key as TabKey)}
@@ -1454,10 +1456,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         </aside>
       </main>}
 
-      <section className="tc-history-panel">
-        <div className="tc-history-heading"><div><span>YOUR TORN ACTIVITY</span><h2>Gym training history</h2></div><span>{historyLoading ? "Syncing…" : historyConnected ? fmt(history?.totalLogs || logRows.length) + " records collected" : "Not connected"}</span></div>
-        {historyLoading ? <p className="tc-muted">Loading your saved gym-training history…</p> : historyConnected && logRows.length > 0 ? (
-          <div className="tc-log-list">{logRows.slice(0, 6).map(log => {
+      {activeTab === "history" && <section className="tc-history-panel">
+        <div className="tc-history-heading"><div><span>YOUR TORN ACTIVITY</span><h2>Training history & calibration</h2><small>Showing {currentStatLabel} records only</small></div><span>{historyLoading ? "Syncing…" : historyConnected ? fmt(history?.totalLogs || logRows.length) + " archived records" : "Not connected"}</span></div>
+        {historyLoading ? <p className="tc-muted">Loading your saved gym-training history…</p> : historyConnected && selectedStatLogRows.length > 0 ? (
+          <div className="tc-log-list">{selectedStatLogRows.slice(0, 12).map(log => {
             const details = parseGymHistoryLog(log)
             const statLabel = details.stat ? STAT_OPTIONS.find(option => option.value === details.stat)?.label || details.stat : "Battle stat"
             return <div className="tc-log-row" key={log.logId}>
@@ -1471,15 +1473,20 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </div>
             </div>
           })}</div>
-        ) : historyConnected ? <p className="tc-muted">Your log collection is connected. No gym-training records have been collected yet.</p> : (
+        ) : historyConnected ? <p className="tc-muted">No {currentStatLabel} training records are available in the current Torn history window.</p> : (
           <div className="tc-history-empty"><p>{history?.error || (history?.collectionEnabled ? "Your main portal consent is enabled, but Gym Training history still needs its User → Log key connection." : "Gym-training history is private. Enable historical collection and connect a key with User → Log access in Account Settings.")}</p>
             <button className="tc-secondary-button" onClick={() => onNavigate("/settings")}>Open Account Settings →</button>
           </div>
         )}
+        {history?.latestSyncError && <p className="tc-inline-warning" role="status">{history.latestSyncError}</p>}
+        <div className="tc-history-panel-actions">
+          <button className="tc-secondary-button" type="button" data-testid="training-history-refresh" onClick={() => setRefreshKey(value => value + 1)} disabled={historyLoading}>Refresh latest Torn logs</button>
+          <small>{history?.latestSyncedAt ? "Latest Torn log sync: " + prettyDate(Math.floor(Date.parse(history.latestSyncedAt) / 1000)) : "Live log sync appears when User → Log history is connected."}</small>
+        </div>
         <div className="tc-calibration-panel">
           <div className="tc-history-heading"><div><span>PLAYER-SPECIFIC MODEL CORRECTION</span><h2>Calibrate against a verified Torn log</h2></div>
             <span>{gymTrainCalibration.sampleCount ? "Active for this Gym Trains setup" : "No matching calibration"}</span></div>
-          <p className="tc-muted">Choose a stored Torn training log matching the Gym Trains stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
+          <p className="tc-muted">Choose a stored or live Torn training log matching the selected stat and gym, then enter the happiness immediately before that session. The calibration is kept locally in this browser for this player. It does not change the displayed faction or education perks and does not write to portal D1.</p>
           <div className="tc-form-grid">
             <label className="tc-field"><span>Verified Torn training log</span>
               <select data-testid="training-calibration-log" value={selectedCalibrationCandidate?.log.logId || ""}
@@ -1490,7 +1497,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                     </option>)
                   : <option value="">No matching verified log available</option>}
               </select>
-              <small className="tc-hint">Only complete Torn history records matching {gymTrainStatLabel.toLowerCase()}, {gymTrainGym.name}, and {fmt(gymTrainGym.energyCost)}E per train are eligible.</small>
+              <small className="tc-hint">Only complete Torn history records matching {currentStatLabel.toLowerCase()}, {gymTrainGym.name}, and {fmt(gymTrainGym.energyCost)}E per train are eligible.</small>
             </label>
             <TextNumberField label="Starting happiness before that log" value={calibrationStartingHappy} fallbackValue={null}
               onChange={setCalibrationStartingHappy} max={HAPPY_CAP}
@@ -1514,7 +1521,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           {!historyConnected && <p className="tc-muted">Connect Gym Training history in Account Settings to select verified Torn logs here.</p>}
           {calibrationMessage && <p className="tc-inline-note" role="status">{calibrationMessage}</p>}
         </div>
-      </section>
+      </section>}
       {liveData?.errors && Object.keys(liveData.errors).length > 0 && <details className="tc-data-warnings"><summary>Live data fields that could not be refreshed ({Object.keys(liveData.errors).length})</summary>
         {Object.entries(liveData.errors).map(([key, message]) => <p key={key}><strong>{key}:</strong> {message}</p>)}
       </details>}
