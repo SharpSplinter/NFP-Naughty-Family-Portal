@@ -1494,7 +1494,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </label>
               <NumberField label="MCS benefit blocks held" value={happyJumpMcsBlocks} onChange={setHappyJumpMcsBlocks} min={0} max={100}
                 hint="Each block adds 100E every week. Multiple blocks stack." testId="training-happy-mcs" />
-              <div className="tc-readout-field"><span>Selected refill + MCS energy</span><strong>{fmt(happyJumpBonusEnergy)}E</strong><small>{happyJumpRefillIncluded ? "Includes one point refill" : "No point refill"} · {fmt(happyJumpMcsBlocks * 100)}E MCS weekly stack</small></div>
+              <div className="tc-readout-field"><span>Selected refill + one-week MCS benefit</span><strong>{fmt(happyJumpBonusEnergy)}E</strong><small>{happyJumpRefillIncluded ? "Includes one point refill" : "No point refill"} · {fmt(happyJumpMcsBlocks * 100)}E MCS weekly stack</small></div>
               <div className="tc-readout-field"><span>Energy required for planned trains</span><strong>{fmt(happyJumpRequiredEnergy)}E</strong><small>Energy sources are a planning check; your exact train count stays fixed.</small></div>
               <div className="tc-readout-field"><span>Live {happyJumpStatLabel} battle stat</span><strong>{fmt(happyJumpStartingStat, 2)}</strong><small>The only live profile value used by this gain forecast</small></div>
               <div className="tc-readout-field"><span>Static gym efficiency</span><strong>{fmt(happyJumpDots, 2)} dots</strong><small>{happyJumpGym.name} · {fmt(happyJumpGym.energyCost)}E per train</small></div>
