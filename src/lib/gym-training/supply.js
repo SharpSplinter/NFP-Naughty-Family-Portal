@@ -16,7 +16,9 @@ export function calculateDailyTrainingSupply({
   cansPerDay,
   energyPerCan,
   canEnergyMultiplier = 1,
-  mcsEnabled = false,
+  refillsPerDay = 0,
+  energyPerRefill = 0,
+  mcsBlocks = 0,
 }) {
   const naturalEnergy = nonNegative(naturalEnergyPerDay);
   const xanaxEnergy = nonNegative(xanaxPerDay) * 250;
@@ -24,14 +26,16 @@ export function calculateDailyTrainingSupply({
   const canEnergy = nonNegative(cansPerDay)
     * nonNegative(energyPerCan)
     * Math.max(0, Number.isFinite(canEnergyMultiplier) ? canEnergyMultiplier : 1);
-  const baseEnergyPerDay = naturalEnergy + xanaxEnergy + fhcEnergy + canEnergy;
-  const weeklyMcsEnergy = mcsEnabled ? WEEKLY_MCS_STOCK_ENERGY : 0;
+  const pointRefillEnergy = nonNegative(refillsPerDay) * nonNegative(energyPerRefill);
+  const baseEnergyPerDay = naturalEnergy + xanaxEnergy + fhcEnergy + canEnergy + pointRefillEnergy;
+  const weeklyMcsEnergy = Math.floor(nonNegative(mcsBlocks)) * WEEKLY_MCS_STOCK_ENERGY;
 
   return {
     naturalEnergy,
     xanaxEnergy,
     fhcEnergy,
     canEnergy,
+    pointRefillEnergy,
     baseEnergyPerDay,
     weeklyMcsEnergy,
     averageMcsEnergyPerDay: weeklyMcsEnergy / 7,
@@ -40,13 +44,13 @@ export function calculateDailyTrainingSupply({
 }
 
 /**
- * Add the MCS stock block's single 100E benefit every seven projected days.
- * The daily average is for display only; this function preserves the weekly
- * payout timing in the long-range simulation.
+ * Add every held MCS benefit block's 100E payout every seven projected days.
+ * The daily average is for display only; this function preserves payout timing.
  */
-export function getWeeklyStockEnergyBonus(dayIndex, mcsEnabled) {
-  if (!mcsEnabled || !Number.isInteger(dayIndex) || dayIndex < 0) return 0;
-  return (dayIndex + 1) % 7 === 0 ? WEEKLY_MCS_STOCK_ENERGY : 0;
+export function getWeeklyStockEnergyBonus(dayIndex, mcsBlocks) {
+  const blocks = Math.floor(nonNegative(mcsBlocks));
+  if (!blocks || !Number.isInteger(dayIndex) || dayIndex < 0) return 0;
+  return (dayIndex + 1) % 7 === 0 ? blocks * WEEKLY_MCS_STOCK_ENERGY : 0;
 }
 
 export { WEEKLY_MCS_STOCK_ENERGY };
