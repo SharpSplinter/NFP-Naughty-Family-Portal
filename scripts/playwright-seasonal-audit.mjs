@@ -389,9 +389,20 @@ async function installApiFixtures(page, state) {
         logs: [{
           logId: "fixture-gym-log-1",
           timestamp,
-          title: "Gym Training",
+          title: "Gym train strength",
           category: "Gym",
-          record: { details: { title: "Gym Training" }, data: { strength: 1234, energy_used: 100 } },
+          record: {
+            details: { title: "Gym train strength", category: "Gym" },
+            data: {
+              stat: "strength",
+              strength_before: 1000000,
+              strength_after: 1001234,
+              strength_increased: 1234,
+              energy_used: 100,
+              trains: 10,
+              happy_used: 2500,
+            },
+          },
         }],
       };
     } else if (url.pathname === "/api/me/companies") {
@@ -672,6 +683,10 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   recordAssertion("Training Calculator " + viewportName + ": empty Energy Supply fields do not inject a zero",
     blankOtherEnergy === "", JSON.stringify(blankOtherEnergy));
   await page.getByTestId("training-energy-wait-hours").fill("18");
+  await page.getByTestId("training-energy-mcs-blocks").fill("2");
+  const mcsAccrued = Number((await page.locator(".tc-condition-list").filter({ hasText: "MCS accrued by train time" }).locator("strong").innerText()).replaceAll(",", "").replace(/E$/i, ""));
+  recordAssertion("Training Calculator " + viewportName + ": Energy Supply time-weights two weekly MCS blocks over the wait window",
+    mcsAccrued > 0 && mcsAccrued < 200, String(mcsAccrued) + "E over 18 hours");
   await page.getByTestId("training-xanax-count").fill("1");
   await page.getByTestId("training-can-type").selectOption("red-cow");
   await page.getByTestId("training-can-count").fill("2");
