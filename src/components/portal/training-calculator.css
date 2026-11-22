@@ -142,3 +142,11 @@
 
 /* Shared keyboard-focus treatment for the calculator's custom dark controls. */
 .training-calculator-page :is(button,a,input,select,textarea,[role="tab"],[tabindex="0"]):focus-visible{outline:2px solid #b7adff;outline-offset:3px}
+
+.tc-header-actions{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.tc-clear-config{display:inline-flex;align-items:center;justify-content:center;margin-top:9px;padding:6px 9px;border:1px solid #46536e;border-radius:6px;background:#111a2d;color:#d9e1f5;font-size:9px;cursor:pointer}
+.tc-clear-config:hover{border-color:#9b8cff;background:#1b2440}
+.tc-profile-stat{cursor:pointer}
+.tc-history-panel-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}
+.tc-history-panel-actions .tc-secondary-button{width:auto;flex:0 0 auto;margin:0}
+@media(max-width:600px){.tc-history-panel-actions{align-items:stretch;flex-direction:column}.tc-history-panel-actions .tc-secondary-button{width:100%}.tc-header-actions{justify-content:flex-end}}
