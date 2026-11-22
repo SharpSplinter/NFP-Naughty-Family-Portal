@@ -6,7 +6,9 @@ export type DailyTrainingSupplyInput = {
   cansPerDay: number;
   energyPerCan: number;
   canEnergyMultiplier?: number;
-  mcsEnabled?: boolean;
+  refillsPerDay?: number;
+  energyPerRefill?: number;
+  mcsBlocks?: number;
 };
 
 export type DailyTrainingSupply = {
@@ -14,6 +16,7 @@ export type DailyTrainingSupply = {
   xanaxEnergy: number;
   fhcEnergy: number;
   canEnergy: number;
+  pointRefillEnergy: number;
   baseEnergyPerDay: number;
   weeklyMcsEnergy: number;
   averageMcsEnergyPerDay: number;
@@ -21,5 +24,5 @@ export type DailyTrainingSupply = {
 };
 
 export function calculateDailyTrainingSupply(input: DailyTrainingSupplyInput): DailyTrainingSupply;
-export function getWeeklyStockEnergyBonus(dayIndex: number, mcsEnabled: boolean): number;
+export function getWeeklyStockEnergyBonus(dayIndex: number, mcsBlocks: number): number;
 export const WEEKLY_MCS_STOCK_ENERGY: 100;
