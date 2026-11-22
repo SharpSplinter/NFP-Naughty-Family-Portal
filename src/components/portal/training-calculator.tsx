@@ -7,7 +7,7 @@ import { createGymGainCalibrationSample, getGymGainCalibrationSummary } from "..
 import { calculateDailyTrainingSupply, getWeeklyStockEnergyBonus } from "../../lib/gym-training/supply.js"
 
 type StatKey = "strength" | "defense" | "speed" | "dexterity"
-type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection"
+type TabKey = "session" | "happy" | "energy" | "enhancers" | "projection" | "history"
 type GymPreset = { id: string; name: string; energyCost: number; dots: Record<StatKey, number | null>; note?: string; available?: boolean }
 type MarketPrice = { itemId: string; name: string; averagePrice: number | null; cacheTimestamp: number | null; fetchedAt: number }
 type EnergyBar = { current: number; maximum: number; increment: number; interval: number; tickTime: number; fullTime: number } | null
@@ -357,18 +357,19 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [selectedStat, setSelectedStat] = useState<StatKey>("strength")
   const [selectedGymId, setSelectedGymId] = useState("")
   // Each planning surface owns its own inputs. No tab reads another tab's scenario values.
-  const [gymTrainStat, setGymTrainStat] = useState<StatKey>("strength")
   const [gymTrainGymId, setGymTrainGymId] = useState("")
   const [gymTrainCount, setGymTrainCount] = useState(10)
-  const [gymTrainMcsEnabled, setGymTrainMcsEnabled] = useState(false)
+  const [gymTrainMcsBlocks, setGymTrainMcsBlocks] = useState(0)
+  const [gymTrainRefillIncluded, setGymTrainRefillIncluded] = useState(false)
   const [gymTrainXanaxPerDay, setGymTrainXanaxPerDay] = useState(0)
   const [gymTrainFhcPerDay, setGymTrainFhcPerDay] = useState(0)
   const [gymTrainCanPerDay, setGymTrainCanPerDay] = useState(0)
   const [gymTrainCanId, setGymTrainCanId] = useState("munster")
-  const [happyJumpStat, setHappyJumpStat] = useState<StatKey>("strength")
   const [happyJumpGymId, setHappyJumpGymId] = useState("georges")
   const [happyJumpTrainCount, setHappyJumpTrainCount] = useState(10)
   const [happyJumpGymModifier, setHappyJumpGymModifier] = useState(1)
+  const [happyJumpRefillIncluded, setHappyJumpRefillIncluded] = useState(false)
+  const [happyJumpMcsBlocks, setHappyJumpMcsBlocks] = useState(0)
   const [happyJumpStartingHappy, setHappyJumpStartingHappy] = useState(0)
   const [happyJumpXanaxCount, setHappyJumpXanaxCount] = useState(0)
   const [happyJumpFhcCount, setHappyJumpFhcCount] = useState(0)
@@ -380,13 +381,13 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [happyJumpOtherHappy, setHappyJumpOtherHappy] = useState(0)
   const [happyJumpEcstasy, setHappyJumpEcstasy] = useState(false)
   const [happyJumpPriceOverrides, setHappyJumpPriceOverrides] = useState<Record<string, string>>({})
-  const [projectionStat, setProjectionStat] = useState<StatKey>("strength")
   const [projectionGymId, setProjectionGymId] = useState("")
   const [projectionXanaxPerDay, setProjectionXanaxPerDay] = useState(0)
   const [projectionFhcPerDay, setProjectionFhcPerDay] = useState(0)
   const [projectionCanPerDay, setProjectionCanPerDay] = useState(0)
   const [projectionCanId, setProjectionCanId] = useState("munster")
-  const [projectionMcsEnabled, setProjectionMcsEnabled] = useState(false)
+  const [projectionMcsBlocks, setProjectionMcsBlocks] = useState(0)
+  const [projectionRefillIncluded, setProjectionRefillIncluded] = useState(false)
   const [liveData, setLiveData] = useState<LiveData | null>(null)
   const [history, setHistory] = useState<HistoryData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -406,6 +407,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const [canCount, setCanCount] = useState(0)
   const [greenEggCount, setGreenEggCount] = useState(0)
   const [pointRefillIncluded, setPointRefillIncluded] = useState(false)
+  const [energyMcsBlocks, setEnergyMcsBlocks] = useState(0)
   const [otherEnergy, setOtherEnergy] = useState(0)
   const [bookChoice, setBookChoice] = useState("auto")
   const [factionVoracity, setFactionVoracity] = useState(false)
@@ -527,33 +529,33 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const gymTrainResolvedGymId = gymTrainGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
   const gymTrainGym = gyms.find(gym => String(gym.id) === gymTrainResolvedGymId)
     || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
-  const gymTrainStatLabel = STAT_OPTIONS.find(option => option.value === gymTrainStat)?.label || "Strength"
-  const gymTrainStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[gymTrainStat]))
-  const gymTrainDots = safeNumber(gymTrainGym.dots[gymTrainStat])
-  const gymTrainModifierProfile = liveData?.gymModifiers?.[gymTrainStat]
+  const gymTrainStatLabel = STAT_OPTIONS.find(option => option.value === selectedStat)?.label || "Strength"
+  const gymTrainStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[selectedStat]))
+  const gymTrainDots = safeNumber(gymTrainGym.dots[selectedStat])
+  const gymTrainModifierProfile = liveData?.gymModifiers?.[selectedStat]
   const gymTrainModifierBonuses = gymTrainModifierProfile?.bonuses ?? []
   const gymTrainAutoModifier = safeNumber(gymTrainModifierProfile?.multiplier, 1)
-  const gymTrainCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[gymTrainStat] || [], {
+  const gymTrainCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[selectedStat] || [], {
     gymId: gymTrainGym.id, dots: gymTrainDots, modifier: gymTrainAutoModifier,
   })
   const gymTrainEffectiveModifier = gymTrainAutoModifier * gymTrainCalibration.factor
   const projectionResolvedGymId = projectionGymId || String(activeGym?.id || liveData?.gym?.id || "georges")
   const projectionGym = gyms.find(gym => String(gym.id) === projectionResolvedGymId)
     || activeGym || FALLBACK_GYMS.find(gym => gym.id === "georges")!
-  const projectionStatLabel = STAT_OPTIONS.find(option => option.value === projectionStat)?.label || "Strength"
-  const projectionStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[projectionStat]))
-  const projectionDots = safeNumber(projectionGym.dots[projectionStat])
-  const projectionModifierProfile = liveData?.gymModifiers?.[projectionStat]
+  const projectionStatLabel = STAT_OPTIONS.find(option => option.value === selectedStat)?.label || "Strength"
+  const projectionStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[selectedStat]))
+  const projectionDots = safeNumber(projectionGym.dots[selectedStat])
+  const projectionModifierProfile = liveData?.gymModifiers?.[selectedStat]
   const projectionAutoModifier = safeNumber(projectionModifierProfile?.multiplier, 1)
-  const projectionCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[projectionStat] || [], {
+  const projectionCalibration = getGymGainCalibrationSummary(calibrationProfile.samples[selectedStat] || [], {
     gymId: projectionGym.id, dots: projectionDots, modifier: projectionAutoModifier,
   })
   const projectionEffectiveModifier = projectionAutoModifier * projectionCalibration.factor
   const happyJumpGym = FALLBACK_GYMS.find(gym => gym.id === happyJumpGymId)
     || FALLBACK_GYMS.find(gym => gym.id === "georges")!
-  const happyJumpStatLabel = STAT_OPTIONS.find(option => option.value === happyJumpStat)?.label || "Strength"
-  const happyJumpStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[happyJumpStat]))
-  const happyJumpDots = safeNumber(happyJumpGym.dots[happyJumpStat])
+  const happyJumpStatLabel = STAT_OPTIONS.find(option => option.value === selectedStat)?.label || "Strength"
+  const happyJumpStartingStat = Math.max(0, safeNumber(liveData?.battleStats?.[selectedStat]))
+  const happyJumpDots = safeNumber(happyJumpGym.dots[selectedStat])
   const liveStatValue = liveData?.battleStats?.[selectedStat] ?? null
   const statOverride = manualStats[selectedStat]
   const currentStat = statOverride.trim() === "" ? safeNumber(liveStatValue) : Math.max(0, safeNumber(statOverride))
@@ -611,28 +613,30 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     cansPerDay: gymTrainCanPerDay,
     energyPerCan: gymTrainDailyCan.energy,
     canEnergyMultiplier: projectedCanEnergyMultiplier,
-    mcsEnabled: gymTrainMcsEnabled,
+    refillsPerDay: gymTrainRefillIncluded ? 1 : 0,
+    energyPerRefill: projectedRefillEnergy,
+    mcsBlocks: gymTrainMcsBlocks,
   })
   const gymTrainSession = useMemo(() => estimateGymSession({
     stat: gymTrainStartingStat,
-    statKey: gymTrainStat,
+    statKey: selectedStat,
     happy: currentHappyFromApi,
     energy: clamp(gymTrainCount, 0, 20000) * gymTrainGym.energyCost,
     dots: gymTrainDots,
     energyPerTrain: gymTrainGym.energyCost,
     modifier: gymTrainEffectiveModifier,
     happyLossRate: happyLossPercent / 100,
-  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainCount, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
+  }), [gymTrainStartingStat, selectedStat, currentHappyFromApi, gymTrainCount, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
   const gymTrainOne = useMemo(() => estimateGymSession({
     stat: gymTrainStartingStat,
-    statKey: gymTrainStat,
+    statKey: selectedStat,
     happy: currentHappyFromApi,
     energy: gymTrainGym.energyCost,
     dots: gymTrainDots,
     energyPerTrain: gymTrainGym.energyCost,
     modifier: gymTrainEffectiveModifier,
     happyLossRate: happyLossPercent / 100,
-  }), [gymTrainStartingStat, gymTrainStat, currentHappyFromApi, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
+  }), [gymTrainStartingStat, selectedStat, currentHappyFromApi, gymTrainGym.energyCost, gymTrainDots, gymTrainEffectiveModifier, happyLossPercent])
   const cooldownCapHours = Math.min(48, 24 + Math.max(0, safeNumber(liveData?.factionBonuses?.boosterCooldownBonusHours)))
   const currentBoosterCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.booster) / 3600)
   const boosterBudgetHours = Math.max(0, cooldownCapHours - currentBoosterCooldownHours)
@@ -646,12 +650,13 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const drinkMultiplier = (1 + energyDrinkBonusPercent / 100) * (plannedEnergyBooks.has("fuelling") ? 2 : 1) * (eventDrinkBonus ? 2 : 1)
   const energyFromCans = canCount * drink.energy * drinkMultiplier
   const pointRefillAvailable = liveData?.refills?.energy === true
-  const pointRefillCount = pointRefillIncluded && pointRefillAvailable ? 1 : 0
+  const pointRefillCount = pointRefillIncluded ? 1 : 0
   const energyFromRefills = pointRefillCount * refillBarMaximum
+  const energyFromMcs = energyMcsBlocks * 100
   const energyFromFhcs = fhcCount * refillBarMaximum
   const energyFromXanax = xanaxCount * 250
   const energyFromGreenEggs = greenEggCount * 500
-  const usableEnergy = energyAfterNatural + energyFromRefills + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
+  const usableEnergy = energyAfterNatural + energyFromRefills + energyFromMcs + energyFromFhcs + energyFromXanax + energyFromCans + energyFromGreenEggs + otherEnergy
   const cooldownUsedHours = canCount * 2 * canCooldownFactor + (fhcCount + greenEggCount + dvdCount + yellowEggCount + seQuantity) * 6
   const cooldownRemainingHours = Math.max(0, boosterBudgetHours - cooldownUsedHours)
   const currentDrugCooldownHours = Math.max(0, safeNumber(liveData?.cooldowns?.drug) / 3600)
@@ -720,14 +725,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
 
   const happyJumpSession = useMemo(() => estimateGymSession({
     stat: happyJumpStartingStat,
-    statKey: happyJumpStat,
+    statKey: selectedStat,
     happy: happyJump.finalHappy,
     energy: clamp(happyJumpTrainCount, 0, 20000) * happyJumpGym.energyCost,
     dots: happyJumpDots,
     energyPerTrain: happyJumpGym.energyCost,
     modifier: clamp(happyJumpGymModifier, 0.0001, 100),
     happyLossRate: 0.5,
-  }), [happyJumpStartingStat, happyJumpStat, happyJump.finalHappy, happyJumpTrainCount, happyJumpGym.energyCost,
+  }), [happyJumpStartingStat, selectedStat, happyJump.finalHappy, happyJumpTrainCount, happyJumpGym.energyCost,
     happyJumpDots, happyJumpGymModifier])
 
   const session = useMemo(() => estimateGymSession({
@@ -739,6 +744,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     energyPerTrain: selectedGym.energyCost, modifier: calibratedModifier, happyLossRate: happyLossPercent / 100,
   }), [currentStat, selectedStat, startingHappy, selectedDots, selectedGym.energyCost, calibratedModifier, happyLossPercent])
   const happySession = happyJumpSession
+  const happyJumpBonusEnergy = (happyJumpRefillIncluded ? refillBarMaximum : 0) + happyJumpMcsBlocks * 100
+  const happyJumpRequiredEnergy = clamp(happyJumpTrainCount, 0, 20000) * happyJumpGym.energyCost
 
   const jobPointSpecial = (() => {
     if (currentJob?.type !== "company") return null
@@ -826,7 +833,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     cansPerDay: projectionCanPerDay,
     energyPerCan: projectionDailyCan.energy,
     canEnergyMultiplier: projectedCanEnergyMultiplier,
-    mcsEnabled: projectionMcsEnabled,
+    refillsPerDay: projectionRefillIncluded ? 1 : 0,
+    energyPerRefill: projectedRefillEnergy,
+    mcsBlocks: projectionMcsBlocks,
   })
   const longTermProjection = useMemo(() => {
     let stat = projectionStartingStat
@@ -836,13 +845,13 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
     let totalTrains = 0
     const days = clamp(projectionDays, 1, 3650)
     for (let day = 0; day < days; day++) {
-      const mcsEnergy = getWeeklyStockEnergyBonus(day, projectionMcsEnabled)
+      const mcsEnergy = getWeeklyStockEnergyBonus(day, projectionMcsBlocks)
       const energyForDay = projectionDailySupply.baseEnergyPerDay + mcsEnergy
       const happyBeforeTraining = Math.min(HAPPY_CAP,
         happy + projectionXanaxPerDay * 75 + projectionFhcPerDay * 500)
       const result = estimateGymSession({
         stat,
-        statKey: projectionStat,
+        statKey: selectedStat,
         happy: happyBeforeTraining,
         energy: energyForDay,
         dots: projectionDots,
@@ -862,10 +871,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       totalGain += result.statGain
     }
     return { stat, totalGain, energy: totalEnergy, trains: totalTrains, days }
-  }, [projectionStartingStat, currentHappyFromApi, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsEnabled,
-    projectionStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
+  }, [projectionStartingStat, currentHappyFromApi, projectionDays, projectionDailySupply.baseEnergyPerDay, projectionMcsBlocks,
+    selectedStat, projectionDots, projectionGym.energyCost, projectionEffectiveModifier, happyLossPercent,
     projectionXanaxPerDay, projectionFhcPerDay, naturalHappyPerDay, dailyHappyBarMaximum])
-  const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillAvailable ? refillBarMaximum : 0))
+  const dailyEnergyDefault = Math.round(naturalEnergyPerDay + (pointRefillIncluded ? refillBarMaximum : 0) + energyMcsBlocks * 100 / 7)
   const dailyEnergy = dailyEnergyOverride.trim() === "" ? dailyEnergyDefault : clamp(safeNumber(dailyEnergyOverride), 0, 100000)
   const projection = useMemo(() => {
     let stat = currentStat
@@ -956,14 +965,14 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const calibrationCandidates = historyConnected ? logRows.map(log => ({
     log,
     details: parseGymHistoryLog(log),
-  })).filter(item => item.details.stat === gymTrainStat
+  })).filter(item => item.details.stat === selectedStat
     && item.details.energy !== null && item.details.trains !== null && item.details.trains > 0
     && item.details.statBefore !== null && item.details.statAfter !== null && item.details.gain !== null
     && item.details.gym !== null && String(item.details.gym) === String(gymTrainGym.id)
     && Math.abs(item.details.energy / item.details.trains - gymTrainGym.energyCost) < 0.0001) : []
   const selectedCalibrationCandidate = calibrationCandidates.find(item => item.log.logId === calibrationLogId)
     || calibrationCandidates[0] || null
-  const selectedStatCalibrationSamples = calibrationProfile.samples[gymTrainStat] || []
+  const selectedStatCalibrationSamples = calibrationProfile.samples[selectedStat] || []
   const applyGymCalibration = () => {
     if (!selectedCalibrationCandidate) {
       setCalibrationMessage("No complete Torn log matches the Gym Trains stat and gym.")
@@ -989,9 +998,9 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
       return
     }
     setCalibrationProfile(current => {
-      const prior = current.samples[gymTrainStat] || []
+      const prior = current.samples[selectedStat] || []
       const next = [...prior.filter(sample => sample.logId !== result.sample.logId), result.sample].slice(-8)
-      return { version: 1, samples: { ...current.samples, [gymTrainStat]: next } }
+      return { version: 1, samples: { ...current.samples, [selectedStat]: next } }
     })
     setCalibrationMessage(
       "Saved calibration from Torn log #" + result.sample.logId + ": " + fmt(result.sample.correctionFactor, 6)
@@ -1001,10 +1010,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
   const resetGymCalibration = () => {
     setCalibrationProfile(current => {
       const samples = { ...current.samples }
-      delete samples[gymTrainStat]
+      delete samples[selectedStat]
       return { version: 1, samples }
     })
-    setCalibrationMessage("Removed this browser's " + gymTrainStat + " calibration.")
+    setCalibrationMessage("Removed this browser's " + selectedStat + " calibration.")
   }
   const canRefresh = !loading && Boolean(apiBase && sessionToken)
   const setPriceOverride = (key: string, value: string) => setPriceOverrides(current => ({ ...current, [key]: value }))
@@ -1065,7 +1074,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         <div className="tc-results-column">
           <Panel title="Gym training forecast" eyebrow="YOUR TRAINING SCENARIO" description="Choose a battle stat, gym and exact number of individual trains. The forecast works even when your live Torn Energy bar is empty.">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={gymTrainStat} onChange={event => setGymTrainStat(event.target.value as StatKey)}>
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-stat-select" value={selectedStat} onChange={event => setSelectedStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
               <label className="tc-field"><span>Gym</span><select data-testid="training-gym-select" value={gymTrainResolvedGymId} onChange={event => setGymTrainGymId(event.target.value)}>
@@ -1073,7 +1082,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </select></label>
               <NumberField label="Number of individual trains" value={gymTrainCount} onChange={setGymTrainCount} min={0} max={20000}
                 hint="The calculator runs this exact number of trains. It does not require current Energy or an Energy Supply plan." testId="training-train-count" />
-              <div className="tc-readout-field"><span>Live {gymTrainStatLabel} stat</span><strong>{fmt(gymTrainStartingStat, 2)}</strong><small>{liveData?.battleStats?.[gymTrainStat] === null || liveData?.battleStats?.[gymTrainStat] === undefined ? "Battle stat not returned by Torn" : "From live battle stats"}</small></div>
+              <div className="tc-readout-field"><span>Live {gymTrainStatLabel} stat</span><strong>{fmt(gymTrainStartingStat, 2)}</strong><small>{liveData?.battleStats?.[selectedStat] === null || liveData?.battleStats?.[selectedStat] === undefined ? "Battle stat not returned by Torn" : "From live battle stats"}</small></div>
               <div className="tc-readout-field"><span>Selected gym efficiency</span><strong>{gymTrainDots ? fmt(gymTrainDots, 2) + " dots" : "Unavailable"}</strong><small data-testid="training-gym-energy">{fmt(gymTrainGym.energyCost)}E per individual train</small></div>
               <div className="tc-readout-field"><span>Live gym-gain modifier</span><strong data-testid="training-effective-modifier">{fmt(gymTrainEffectiveModifier, 6)}×</strong><small>{gymTrainCalibration.sampleCount ? "Includes " + gymTrainCalibration.sampleCount + " matching player calibration sample(s)" : "Live Torn faction, education and book bonuses"}</small></div>
               <div className="tc-readout-field"><span>Estimated happy lost per energy</span><strong data-testid="training-happy-loss-per-energy">{fmt(happyLossPercent, 2)}%</strong><small>Midpoint estimate after verified company happy-loss reductions</small></div>
@@ -1082,8 +1091,10 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           </Panel>
           <Panel title="Gym-session daily supply estimate" eyebrow="GYM SCENARIO · SEPARATE DAILY MODEL" description="This recurring daily supply estimate belongs to the Gym Trains scenario. It is independent of the exact train count and separate from the Long-term Plan tab, which has its own stat, gym, duration and supply inputs. Current Energy is deliberately excluded.">
             <div className="tc-form-grid">
-              <label className="tc-check-field"><input type="checkbox" data-testid="training-gym-mcs" checked={gymTrainMcsEnabled} onChange={event => setGymTrainMcsEnabled(event.target.checked)} />
-                <span><strong>MCS stock block benefit</strong><small>100E once per week, equivalent to 14.29E/day on average.</small></span>
+              <NumberField label="MCS benefit blocks held" value={gymTrainMcsBlocks} onChange={setGymTrainMcsBlocks} min={0} max={100}
+                hint="Each block contributes another 100E every 7 days. Multiple blocks stack together." testId="training-gym-mcs" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-gym-refill" checked={gymTrainRefillIncluded} onChange={event => setGymTrainRefillIncluded(event.target.checked)} />
+                <span><strong>Include daily 25-point Energy refill</strong><small>Scenario toggle: adds one full bar ({fmt(projectedRefillEnergy)}E) per day, even when the live refill is currently used.</small></span>
               </label>
               <NumberField label="Projected Xanax per day" value={gymTrainXanaxPerDay} onChange={setGymTrainXanaxPerDay} min={0} max={20} step={0.1}
                 hint="Each Xanax supplies 250E." testId="training-gym-xanax-per-day" />
@@ -1100,7 +1111,8 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Xanax supply</span><strong>{fmt(gymTrainDailySupply.xanaxEnergy)}E/day</strong></div>
               <div><span>FHC supply</span><strong>{fmt(gymTrainDailySupply.fhcEnergy)}E/day</strong></div>
               <div><span>Energy cans</span><strong>{fmt(gymTrainDailySupply.canEnergy, 1)}E/day</strong></div>
-              <div><span>MCS weekly benefit</span><strong>{gymTrainMcsEnabled ? "100E / 7 days" : "Not included"}</strong></div>
+              <div><span>25-point refills</span><strong>{fmt(gymTrainDailySupply.pointRefillEnergy)}E/day</strong></div>
+              <div><span>MCS weekly benefit</span><strong>{gymTrainMcsBlocks ? fmt(gymTrainDailySupply.weeklyMcsEnergy) + "E / 7 days" : "Not included"}</strong></div>
             </div>
             <div className="tc-result-total"><span>Average daily energy supply</span><strong data-testid="training-gym-daily-energy">{fmt(gymTrainDailySupply.averageDailyEnergy, 2)}E</strong></div>
             <div className="tc-inline-note">At {fmt(gymTrainGym.energyCost)}E per train, this averages about {fmt(gymTrainDailySupply.averageDailyEnergy / Math.max(1, gymTrainGym.energyCost), 2)} trains per day. This supply estimate does not limit the train count you entered above.</div>
@@ -1157,10 +1169,12 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint={"Each gives +500E and adds 6 hours of booster cooldown. Maximum " + maximumYellowEggCount + " at the current cooldown budget."} testId="training-green-egg-count" />
               <NumberField label="Other energy sources" value={otherEnergy} onChange={setOtherEnergy} min={0} max={100000}
                 hint="Manual addition for energy not listed above. Maximum 100,000E per plan." testId="training-other-energy" />
-              <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded} disabled={!pointRefillAvailable}
+              <label className="tc-check-field"><input data-testid="training-point-refill" type="checkbox" checked={pointRefillIncluded}
                 onChange={event => setPointRefillIncluded(event.target.checked)} />
-                <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Available now. Refills the bar to " + fmt(refillBarMaximum) + "E." : "Torn reports this daily energy refill as unavailable or already used."}</small></span>
+                <span><strong>Include daily 25-point energy refill</strong><small>{pointRefillAvailable ? "Torn currently reports this refill as available." : "Torn reports this refill as used or unavailable. Keep it selected to model a future refill."} Adds {fmt(refillBarMaximum)}E when included.</small></span>
               </label>
+              <NumberField label="MCS benefit blocks held" value={energyMcsBlocks} onChange={setEnergyMcsBlocks} min={0} max={100}
+                hint="Each block adds 100E per week. Held blocks stack; the weekly total is included in this plan." testId="training-energy-mcs-blocks" />
               <label className="tc-check-field"><input data-testid="training-faction-voracity" type="checkbox" checked={factionVoracity || activeVoracity} disabled={activeVoracity}
                 onChange={event => setFactionVoracity(event.target.checked)} />
                 <span><strong>Faction Voracity</strong><small>{activeVoracity ? "Detected from your live faction perks: +" + fmt(activeEnergyDrinkBonus) + "% energy per can." : "Scenario toggle. Models the maximum +50% energy-drink branch."}</small></span>
@@ -1186,6 +1200,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
             <div className="tc-condition-list">
               <div><span>Current energy + natural regen</span><strong>{fmt(energyAfterNatural)}E</strong></div>
               <div><span>Daily point refill</span><strong>{fmt(energyFromRefills)}E</strong></div>
+              <div><span>MCS weekly stock benefit</span><strong>{fmt(energyFromMcs)}E ({fmt(energyMcsBlocks)} block(s) x 100E)</strong></div>
               <div><span>FHC full-bar refills</span><strong>{fmt(energyFromFhcs)}E</strong></div>
               <div><span>Xanax</span><strong>{fmt(energyFromXanax)}E</strong></div>
               <div><span>Energy drinks</span><strong>{fmt(energyFromCans, 1)}E</strong></div>
@@ -1249,7 +1264,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
           </Panel>
           <Panel title="Post-jump training scenario" eyebrow="STAT GAIN PROJECTION">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Battle stat</span><select data-testid="training-happy-stat-select" value={happyJumpStat} onChange={event => setHappyJumpStat(event.target.value as StatKey)}>
+              <label className="tc-field"><span>Battle stat</span><select data-testid="training-happy-stat-select" value={selectedStat} onChange={event => setSelectedStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
               <label className="tc-field"><span>Gym</span><select data-testid="training-happy-gym-select" value={happyJumpGymId} onChange={event => setHappyJumpGymId(event.target.value)}>
@@ -1259,6 +1274,13 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
                 hint="Enter the number of trains you expect to perform after the jump." testId="training-happy-train-count" />
               <NumberField label="Projected gym-gain modifier" value={happyJumpGymModifier} onChange={setHappyJumpGymModifier} min={0.0001} max={100} step={0.0001}
                 hint="Scenario input only. Enter your expected combined gym/perk multiplier." testId="training-happy-gym-modifier" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-happy-refill" checked={happyJumpRefillIncluded} onChange={event => setHappyJumpRefillIncluded(event.target.checked)} />
+                <span><strong>Include daily 25-point Energy refill</strong><small>Planning assumption. Adds {fmt(refillBarMaximum)}E to the selected post-jump supply.</small></span>
+              </label>
+              <NumberField label="MCS benefit blocks held" value={happyJumpMcsBlocks} onChange={setHappyJumpMcsBlocks} min={0} max={100}
+                hint="Each block adds 100E every week. Multiple blocks stack." testId="training-happy-mcs" />
+              <div className="tc-readout-field"><span>Selected refill + MCS energy</span><strong>{fmt(happyJumpBonusEnergy)}E</strong><small>{happyJumpRefillIncluded ? "Includes one point refill" : "No point refill"} · {fmt(happyJumpMcsBlocks * 100)}E MCS weekly stack</small></div>
+              <div className="tc-readout-field"><span>Energy required for planned trains</span><strong>{fmt(happyJumpRequiredEnergy)}E</strong><small>Energy sources are a planning check; your exact train count stays fixed.</small></div>
               <div className="tc-readout-field"><span>Live {happyJumpStatLabel} battle stat</span><strong>{fmt(happyJumpStartingStat, 2)}</strong><small>The only live profile value used by this gain forecast</small></div>
               <div className="tc-readout-field"><span>Static gym efficiency</span><strong>{fmt(happyJumpDots, 2)} dots</strong><small>{happyJumpGym.name} · {fmt(happyJumpGym.energyCost)}E per train</small></div>
             </div>
@@ -1381,7 +1403,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
         <div className="tc-results-column">
           <Panel title="Long-term training plan" eyebrow="INDEPENDENT DAILY SUPPLY PROJECTION" description="Set the sustainable consumable usage you expect each day. This plan has its own gym, stat and energy assumptions and does not reuse the Gym Trains tab's daily supply inputs.">
             <div className="tc-form-grid">
-              <label className="tc-field"><span>Projection stat</span><select data-testid="training-projection-stat" value={projectionStat} onChange={event => setProjectionStat(event.target.value as StatKey)}>
+              <label className="tc-field"><span>Projection stat</span><select data-testid="training-projection-stat" value={selectedStat} onChange={event => setSelectedStat(event.target.value as StatKey)}>
                 {STAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
               <label className="tc-field"><span>Projection gym</span><select data-testid="training-projection-gym" value={projectionResolvedGymId} onChange={event => setProjectionGymId(event.target.value)}>
@@ -1398,16 +1420,18 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               </select></label>
               <NumberField label="Projected energy cans per day" value={projectionCanPerDay} onChange={setProjectionCanPerDay} min={0} max={64} step={0.1}
                 hint="Includes live Voracity and Fuelling energy bonuses when returned by Torn." testId="training-projection-can-count" />
-              <label className="tc-check-field"><input type="checkbox" data-testid="training-projection-mcs" checked={projectionMcsEnabled} onChange={event => setProjectionMcsEnabled(event.target.checked)} />
-                <span><strong>MCS stock block benefit</strong><small>One 100E benefit every seven days, not 100E every day.</small></span>
+              <NumberField label="MCS benefit blocks held" value={projectionMcsBlocks} onChange={setProjectionMcsBlocks} min={0} max={100}
+                hint="Each block contributes another 100E every 7 days. Multiple blocks stack." testId="training-projection-mcs" />
+              <label className="tc-check-field"><input type="checkbox" data-testid="training-projection-refill" checked={projectionRefillIncluded} onChange={event => setProjectionRefillIncluded(event.target.checked)} />
+                <span><strong>Include daily 25-point Energy refill</strong><small>Scenario toggle: adds one full bar ({fmt(projectedRefillEnergy)}E) per day.</small></span>
               </label>
               <div className="tc-readout-field"><span>Natural Energy regeneration</span><strong>{fmt(projectedNaturalEnergyPerDay)}E/day</strong><small>Uses the live regeneration rate, not current Energy.</small></div>
               <div className="tc-readout-field"><span>FHC refill amount used</span><strong>{fmt(projectedRefillEnergy)}E each</strong><small>Based on your refill capacity.</small></div>
-              <div className="tc-readout-field"><span>MCS energy</span><strong>{projectionMcsEnabled ? "100E / 7 days" : "Not included"}</strong><small>{projectionMcsEnabled ? "Equivalent to 14.29E/day for average supply comparisons." : "Toggle on to include weekly payouts."}</small></div>
+              <div className="tc-readout-field"><span>MCS energy</span><strong>{projectionMcsBlocks ? fmt(projectionMcsBlocks * 100) + "E / 7 days" : "Not included"}</strong><small>{projectionMcsBlocks ? "Equivalent to " + fmt(projectionMcsBlocks * 100 / 7, 2) + "E/day for average supply comparisons." : "Add blocks to include weekly payouts."}</small></div>
               <div className="tc-readout-field"><span>Average daily energy supply</span><strong data-testid="training-projection-daily-energy">{fmt(projectionDailySupply.averageDailyEnergy, 2)}E</strong><small>Natural energy + projected daily Xanax/FHC/cans + weekly MCS average.</small></div>
               <div className="tc-readout-field"><span>Natural happy regeneration</span><strong>+{fmt(naturalHappyPerDay)} / day</strong><small>Daily projected Xanax and FHC happy is also added.</small></div>
             </div>
-            <div className="tc-inline-note">The forecast adds the MCS 100E payout on projected days 7, 14, 21, 28, etc. The displayed daily average is for comparison only. This planner does not use current Energy or values entered on Gym Trains, Energy Supply or Happy Jump.</div>
+            <div className="tc-inline-note">The forecast adds the selected MCS stack on projected days 7, 14, 21, 28, etc. Each held block contributes 100E per week. The displayed daily average is for comparison only. This planner does not use current Energy or values entered on Gym Trains, Energy Supply or Happy Jump.</div>
           </Panel>
         </div>
         <aside className="tc-results-column">
@@ -1416,7 +1440,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <Metric label="Projected stat gain" value={"+" + fmt(longTermProjection.totalGain, 2)} detail={longTermProjection.trains + " individual trains over " + longTermProjection.days + " days"} tone="green" />
               <Metric label="Projected ending stat" value={fmt(longTermProjection.stat, 2)} detail={projectionStatLabel + " · " + projectionGym.name} />
               <Metric label="Total projected energy" value={fmt(longTermProjection.energy) + "E"} detail={fmt(longTermProjection.energy / Math.max(1, longTermProjection.days), 2) + "E/day average"} tone="blue" />
-              <Metric label="Average daily supply" value={fmt(projectionDailySupply.averageDailyEnergy, 2) + "E"} detail={projectionMcsEnabled ? "Includes 100E MCS every 7 days" : "MCS not included"} />
+              <Metric label="Average daily supply" value={fmt(projectionDailySupply.averageDailyEnergy, 2) + "E"} detail={projectionMcsBlocks ? "Includes " + fmt(projectionMcsBlocks * 100) + "E MCS every 7 days" : "MCS not included"} />
             </div>
           </Panel>
           <Panel title="Projection assumptions" eyebrow="TRANSPARENT INPUTS">
@@ -1424,7 +1448,7 @@ export function TrainingCalculatorWorkspace({ playerName, apiBase, sessionToken,
               <div><span>Starting battle stat</span><strong>{fmt(projectionStartingStat, 2)}</strong></div>
               <div><span>Selected gym</span><strong>{projectionGym.name}</strong></div>
               <div><span>Gym-gain modifier</span><strong>{fmt(projectionEffectiveModifier, 6)}×</strong></div>
-              <div><span>Weekly stock energy</span><strong>{projectionMcsEnabled ? "100E every 7 days" : "Off"}</strong></div>
+              <div><span>Weekly stock energy</span><strong>{projectionMcsBlocks ? fmt(projectionMcsBlocks * 100) + "E every 7 days" : "Off"}</strong></div>
             </div>
           </Panel>
         </aside>
