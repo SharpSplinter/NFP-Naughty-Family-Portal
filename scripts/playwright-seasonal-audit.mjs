@@ -632,12 +632,12 @@ async function auditTrainingCalculatorInteractions(page, viewportName, state) {
   await page.getByTestId("training-gym-can-type").selectOption("red-cow");
   await page.getByTestId("training-gym-can-per-day").fill("1");
   const gymDailySupplyWithoutMcs = Number((await page.getByTestId("training-gym-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
-  await page.getByTestId("training-gym-mcs").check();
+  await page.getByTestId("training-gym-mcs").fill("2");
   const gymDailySupplyWithMcs = Number((await page.getByTestId("training-gym-daily-energy").innerText()).replaceAll(",", "").replace(/E$/i, ""));
   recordAssertion("Training Calculator " + viewportName + ": Gym Trains daily supply includes projected Xanax, FHC and cans",
     gymDailySupplyWithoutMcs === 1145, String(gymDailySupplyWithoutMcs));
-  recordAssertion("Training Calculator " + viewportName + ": Gym Trains treats MCS as 100E weekly, not 100E daily",
-    Math.abs(gymDailySupplyWithMcs - gymDailySupplyWithoutMcs - 100 / 7) < 0.02,
+  recordAssertion("Training Calculator " + viewportName + ": two MCS blocks stack to 200E weekly, not 200E daily",
+    Math.abs(gymDailySupplyWithMcs - gymDailySupplyWithoutMcs - 200 / 7) < 0.02,
     gymDailySupplyWithoutMcs + "E/day → " + gymDailySupplyWithMcs + "E/day");
   await noOverflow("Gym Trains");
   await scanAxe("Gym Trains");
