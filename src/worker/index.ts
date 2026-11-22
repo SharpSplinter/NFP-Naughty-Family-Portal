@@ -7776,17 +7776,70 @@ export default {
         db.prepare("SELECT log_id AS logId, event_timestamp AS timestamp, category, title, log_json AS logJson FROM gym_training_event_logs WHERE player_id = ? ORDER BY event_timestamp DESC, log_id DESC LIMIT 50")
           .bind(session.player_id).all<{ logId: string; timestamp: number; category: string | null; title: string | null; logJson: string }>(),
       ])
+      const archivedLogs = (logs.results ?? []).map(row => {
+        let record: unknown = null
+        try { record = JSON.parse(row.logJson) } catch { record = null }
+        return { logId: row.logId, timestamp: row.timestamp, category: row.category, title: row.title, record }
+      })
+      let latestSyncedAt: string | null = null
+      let latestSyncError: string | null = null
+      let currentTornLogs: Array<{ logId: string; timestamp: number; category: string | null; title: string | null; record: unknown }> = []
+      if (Number(preference?.enabled) === 1 && connection) {
+        try {
+          const apiKey = await savedKey(env, session.player_id)
+          if (!apiKey) throw new Error("The saved Torn key is unavailable.")
+          const logUrl = new URL("https://api.torn.com/v2/user/log")
+          logUrl.searchParams.set("limit", "100")
+          logUrl.searchParams.set("sort", "desc")
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 10_000)
+          let response: Response
+          let payload: unknown
+          try {
+            response = await trackedTornFetch("gym-training-history-latest", logUrl.toString(), {
+              headers: { Authorization: "ApiKey " + apiKey, Accept: "application/json" },
+              signal: controller.signal,
+            }, fetch, session.player_id)
+            payload = await response.json().catch(() => null)
+          } finally { clearTimeout(timeout) }
+          const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : null
+          if (!response.ok || apiError || !isRecord(payload) || !Array.isArray(payload.log)) {
+            throw new Error(apiError?.code === 5 || apiError?.code === 8 || apiError?.code === 14
+              ? "Torn rate-limited the latest training-log refresh. Showing your saved history."
+              : "The latest Torn training logs could not be refreshed. Showing your saved history.")
+          }
+          currentTornLogs = payload.log
+            .filter((raw: unknown) => isRecord(raw) && raw.id != null && Number.isFinite(Number(raw.timestamp)) && isGymTrainingLog(raw))
+            .map((raw: Record<string, unknown>) => {
+              const details = isRecord(raw.details) ? raw.details : {}
+              return {
+                logId: String(raw.id),
+                timestamp: Number(raw.timestamp),
+                category: typeof details.category === "string" ? details.category : null,
+                title: typeof details.title === "string" ? details.title : null,
+                record: raw,
+              }
+            })
+          latestSyncedAt = new Date().toISOString()
+        } catch {
+          latestSyncError = "The latest live Torn log refresh failed. Saved historical records are still shown."
+        }
+      }
+      const mergedLogs = new Map<string, { logId: string; timestamp: number; category: string | null; title: string | null; record: unknown }>()
+      for (const log of archivedLogs) mergedLogs.set(log.logId, log)
+      for (const log of currentTornLogs) mergedLogs.set(log.logId, log)
+      const latestLogs = Array.from(mergedLogs.values())
+        .sort((left, right) => right.timestamp - left.timestamp || right.logId.localeCompare(left.logId))
+        .slice(0, 100)
       return jsonResponse({
         collectionEnabled: Number(preference?.enabled) === 1,
         connected: Boolean(connection),
         key: connection,
         job,
         totalLogs: Number(count?.total ?? 0),
-        logs: (logs.results ?? []).map(row => {
-          let record: unknown = null
-          try { record = JSON.parse(row.logJson) } catch { record = null }
-          return { logId: row.logId, timestamp: row.timestamp, category: row.category, title: row.title, record }
-        }),
+        latestSyncedAt,
+        latestSyncError,
+        logs: latestLogs,
       }, 200, origin)
     }
 
