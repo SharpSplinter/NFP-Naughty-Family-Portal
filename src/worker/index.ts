@@ -7782,7 +7782,11 @@ export default {
         return { logId: row.logId, timestamp: row.timestamp, category: row.category, title: row.title, record }
       })
       let latestSyncedAt: string | null = null
-      let latestSyncError: string | null = null
+      let latestSyncError: string | null = Number(preference?.enabled) !== 1
+        ? "Live Torn log refresh is disabled. Enable Gym Training history in Account Settings to include your latest trains."
+        : !connection
+          ? "Connect a Torn key with User → Log access in Account Settings to refresh your latest trains."
+          : null
       let currentTornLogs: Array<{ logId: string; timestamp: number; category: string | null; title: string | null; record: unknown }> = []
       if (Number(preference?.enabled) === 1 && connection) {
         try {
