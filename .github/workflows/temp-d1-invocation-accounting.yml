@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Query Cloudflare Workers Observability in dry-run mode
+      - name: Discover Observability field values and query D1 accounting logs in dry-run mode
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
@@ -22,12 +22,10 @@ jobs:
           const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
           const START = "2026-11-23T00:00:00Z";
           const END = "2026-11-24T00:00:00Z";
+          const timeframe = { from: Date.parse(START), to: Date.parse(END) };
           const API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/observability/telemetry`;
 
-          if (!token) {
-            console.error("CLOUDFLARE_API_TOKEN Actions secret is missing or unavailable.");
-            process.exit(1);
-          }
+          if (!token) throw new Error("CLOUDFLARE_API_TOKEN Actions secret is missing or unavailable.");
 
           async function post(path, body, label) {
             const response = await fetch(`${API}${path}`, {
@@ -48,123 +46,150 @@ jobs:
             return payload.result;
           }
 
-          function parseStructured(value, depth = 0) {
-            if (depth > 5 || value == null) return [];
+          function getValues(result) {
+            if (Array.isArray(result?.values)) return result.values;
+            if (Array.isArray(result)) return result;
+            return [];
+          }
+
+          function valueText(item) {
+            if (item && typeof item === "object" && "value" in item) return String(item.value);
+            return String(item ?? "");
+          }
+
+          function parseLog(value, depth = 0) {
+            if (depth > 8 || value == null) return [];
             if (typeof value === "string") {
               const text = value.trim();
               if (!text.includes("d1_read_accounting")) return [];
-              try { return parseStructured(JSON.parse(text), depth + 1); } catch { return []; }
+              try { return parseLog(JSON.parse(text), depth + 1); } catch { return []; }
             }
-            if (Array.isArray(value)) return value.flatMap((item) => parseStructured(item, depth + 1));
+            if (Array.isArray(value)) return value.flatMap((x) => parseLog(x, depth + 1));
             if (typeof value !== "object") return [];
             if (value.event === "d1_read_accounting") return [value];
-            const output = [];
-            for (const child of Object.values(value)) output.push(...parseStructured(child, depth + 1));
-            return output;
+            const out = [];
+            for (const child of Object.values(value)) out.push(...parseLog(child, depth + 1));
+            return out;
           }
 
-          function number(value) {
-            const parsed = Number(value ?? 0);
-            return Number.isFinite(parsed) ? parsed : 0;
+          function num(value) {
+            const n = Number(value ?? 0);
+            return Number.isFinite(n) ? n : 0;
           }
 
           try {
-            const keyResult = await post("/keys", {}, "Observability field discovery");
-            const keys = Array.isArray(keyResult?.keys) ? keyResult.keys : Array.isArray(keyResult) ? keyResult : [];
-            const relevantKeys = keys
-              .map((item) => ({
-                key: String(item?.key ?? ""),
-                type: String(item?.type ?? ""),
-                lastSeenAt: item?.lastSeenAt ?? null,
-              }))
-              .filter((item) => /metadata\.message|workers\.scriptName|workers\.eventType|timestamp|dataset|source/i.test(item.key));
+            const keysResult = await post("/keys", {}, "Observability key discovery");
+            const keys = Array.isArray(keysResult?.keys) ? keysResult.keys : Array.isArray(keysResult) ? keysResult : [];
+            const discovered = keys.map((k) => String(k?.key ?? ""));
 
-            console.log("OBSERVABILITY KEY DISCOVERY:");
+            const valueSpecs = [
+              { key: "$workers.scriptName", type: "string" },
+              { key: "$metadata.message", type: "string" },
+              { key: "$metadata.messageTemplate", type: "string" },
+            ];
+            const discoveredValues = {};
+            for (const spec of valueSpecs) {
+              if (!discovered.includes(spec.key)) continue;
+              const result = await post("/values", {
+                key: spec.key,
+                timeframe,
+                type: spec.type,
+              }, `Value discovery for ${spec.key}`);
+              const values = getValues(result);
+              discoveredValues[spec.key] = values.map((item) => ({
+                value: spec.key === "$workers.scriptName" ? valueText(item) : undefined,
+                containsD1Accounting: valueText(item).includes("d1_read_accounting"),
+                count: num(item?.count ?? item?.frequency),
+              }));
+            }
+
+            const scriptNames = (discoveredValues["$workers.scriptName"] ?? [])
+              .map((x) => x.value)
+              .filter((x) => x && x.length < 200);
+
+            console.log("OBSERVABILITY DISCOVERY:");
             console.log(JSON.stringify({
-              keysReturned: keys.length,
-              relevantKeys,
+              relevantKeys: valueSpecs.map((x) => x.key).filter((x) => discovered.includes(x)),
+              scriptNameValues: scriptNames,
+              messageValueCount: discoveredValues["$metadata.message"]?.length ?? 0,
+              messageValuesContainingD1Accounting: (discoveredValues["$metadata.message"] ?? []).filter((x) => x.containsD1Accounting).length,
+              messageTemplateValuesContainingD1Accounting: (discoveredValues["$metadata.messageTemplate"] ?? []).filter((x) => x.containsD1Accounting).length,
             }, null, 2));
 
-            const query = {
-              queryId: "ncd-d1-accounting-audit-2026-11-23",
-              timeframe: {
-                from: Date.parse(START),
-                to: Date.parse(END),
-              },
-              dry: true,
-              view: "events",
-              limit: 2000,
-              parameters: {
-                filterCombination: "and",
-                filters: [
-                  {
-                    key: "$metadata.message",
-                    operation: "includes",
-                    type: "string",
-                    value: "d1_read_accounting",
-                  },
-                  {
+            const runSummaries = [];
+            const accountingRows = [];
+            for (const scriptName of scriptNames) {
+              const query = {
+                queryId: "ncd-d1-accounting-audit-2026-11-23",
+                timeframe,
+                dry: true,
+                view: "events",
+                limit: 2000,
+                parameters: {
+                  filterCombination: "and",
+                  filters: [{
                     key: "$workers.scriptName",
                     operation: "eq",
                     type: "string",
-                    value: "naughtyfamily-api",
-                  },
-                ],
-              },
-            };
-
-            const queryResult = await post("/query", query, "D1 invocation accounting log query");
-            const eventBlock = queryResult?.events ?? {};
-            const events = Array.isArray(eventBlock?.events) ? eventBlock.events : [];
-            const matches = [];
-            for (const event of events) {
-              const candidates = [
-                event?.source,
-                event?.["$metadata"]?.message,
-                event?.message,
-                event?.event,
-                event,
-              ];
-              let parsed = [];
-              for (const candidate of candidates) parsed.push(...parseStructured(candidate));
-              for (const item of parsed) matches.push({ event, accounting: item });
+                    value: scriptName,
+                  }],
+                },
+              };
+              const result = await post("/query", query, `Telemetry event query for ${scriptName}`);
+              const eventBlock = result?.events ?? {};
+              const events = Array.isArray(eventBlock.events) ? eventBlock.events : [];
+              let parsedCount = 0;
+              for (const event of events) {
+                const parsed = [
+                  ...parseLog(event?.source),
+                  ...parseLog(event?.["$metadata"]?.message),
+                  ...parseLog(event?.message),
+                  ...parseLog(event?.event),
+                ];
+                for (const accounting of parsed) {
+                  parsedCount += 1;
+                  accountingRows.push({
+                    eventId: event?.["$metadata"]?.id ?? null,
+                    timestamp: accounting.observedAt ?? event?.timestamp ?? null,
+                    scriptName,
+                    eventType: accounting.eventType ?? event?.$workers?.eventType ?? "unknown",
+                    cron: accounting.cron ?? null,
+                    queue: accounting.queue ?? null,
+                    route: accounting.route ?? null,
+                    method: accounting.method ?? null,
+                    rowsWritten: num(accounting.rowsWritten),
+                    rowsRead: num(accounting.rowsRead),
+                    statementCount: num(accounting.statementCount),
+                    methodCounts: accounting.methodCounts ?? null,
+                    accountingStatus: accounting.accountingStatus ?? "unknown",
+                    missingWriteMetrics: num(accounting.missingWriteMetrics),
+                    failedStatements: num(accounting.failedStatements),
+                    unsupportedOperations: num(accounting.unsupportedOperations),
+                    backgroundTasks: num(accounting.backgroundTasks),
+                    backgroundTaskFailures: num(accounting.backgroundTaskFailures),
+                    durationMs: num(accounting.durationMs),
+                  });
+                }
+              }
+              runSummaries.push({
+                scriptName,
+                matchingEvents: eventBlock.count ?? null,
+                returnedEvents: events.length,
+                parsedD1AccountingLogs: parsedCount,
+                queryRunId: result?.run?.id ?? null,
+                queryDry: result?.run?.dry ?? null,
+                sampleEventFields: events.slice(0, 2).map((event) => ({
+                  dataset: event?.dataset ?? null,
+                  sourceType: typeof event?.source,
+                  sourceKeys: event?.source && typeof event.source === "object" && !Array.isArray(event.source) ? Object.keys(event.source).slice(0, 20) : [],
+                  metadataMessageTemplate: event?.["$metadata"]?.messageTemplate ?? null,
+                  metadataMessageContainsD1Accounting: String(event?.["$metadata"]?.message ?? "").includes("d1_read_accounting"),
+                })),
+              });
             }
 
-            const seen = new Set();
-            const unique = matches.filter(({ event, accounting }) => {
-              const id = String(event?.["$metadata"]?.id ?? "");
-              const key = id || JSON.stringify(accounting);
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-
             const byTrigger = {};
-            let totalRowsWritten = 0;
-            let totalRowsRead = 0;
-            let totalStatements = 0;
-            const normalized = unique.map(({ event, accounting }) => {
-              const workers = event?.$workers ?? event?.["$workers"] ?? {};
-              const row = {
-                observedAt: accounting.observedAt ?? event?.timestamp ?? event?.$metadata?.timestamp ?? null,
-                eventType: accounting.eventType ?? workers.eventType ?? "unknown",
-                cron: accounting.cron ?? null,
-                queue: accounting.queue ?? null,
-                messageCount: accounting.messageCount ?? null,
-                route: accounting.route ?? null,
-                method: accounting.method ?? null,
-                rowsWritten: number(accounting.rowsWritten),
-                rowsRead: number(accounting.rowsRead),
-                statementCount: number(accounting.statementCount),
-                methodCounts: accounting.methodCounts ?? null,
-                missingWriteMetrics: number(accounting.missingWriteMetrics),
-                failedStatements: number(accounting.failedStatements),
-                unsupportedOperations: number(accounting.unsupportedOperations),
-                backgroundTasks: number(accounting.backgroundTasks),
-                backgroundTaskFailures: number(accounting.backgroundTaskFailures),
-                durationMs: number(accounting.durationMs),
-                accountingStatus: accounting.accountingStatus ?? "unknown",
-              };
+            for (const row of accountingRows) {
               const key = row.eventType === "scheduled" ? `scheduled:${row.cron ?? "unknown"}`
                 : row.eventType === "queue" ? `queue:${row.queue ?? "unknown"}`
                 : row.eventType === "fetch" ? `fetch:${row.route ?? "unknown"}`
@@ -179,57 +204,40 @@ jobs:
                 rowsRead: 0,
                 statements: 0,
                 missingWriteMetrics: 0,
-                failedStatements: 0,
-                unsupportedOperations: 0,
+                incompleteAccountingInvocations: 0,
                 backgroundTasks: 0,
                 backgroundTaskFailures: 0,
-                incompleteAccountingInvocations: 0,
               };
-              const summary = byTrigger[key];
-              summary.invocations += 1;
-              summary.rowsWritten += row.rowsWritten;
-              summary.rowsRead += row.rowsRead;
-              summary.statements += row.statementCount;
-              summary.missingWriteMetrics += row.missingWriteMetrics;
-              summary.failedStatements += row.failedStatements;
-              summary.unsupportedOperations += row.unsupportedOperations;
-              summary.backgroundTasks += row.backgroundTasks;
-              summary.backgroundTaskFailures += row.backgroundTaskFailures;
-              if (row.accountingStatus !== "complete") summary.incompleteAccountingInvocations += 1;
-              totalRowsWritten += row.rowsWritten;
-              totalRowsRead += row.rowsRead;
-              totalStatements += row.statementCount;
-              return row;
-            });
+              const target = byTrigger[key];
+              target.invocations += 1;
+              target.rowsWritten += row.rowsWritten;
+              target.rowsRead += row.rowsRead;
+              target.statements += row.statementCount;
+              target.missingWriteMetrics += row.missingWriteMetrics;
+              target.backgroundTasks += row.backgroundTasks;
+              target.backgroundTaskFailures += row.backgroundTaskFailures;
+              if (row.accountingStatus !== "complete") target.incompleteAccountingInvocations += 1;
+            }
 
             const report = {
               timeWindowUtc: { startInclusive: START, endExclusive: END },
-              method: "Cloudflare Workers Observability telemetry query; dry=true; no saved query or resource changes",
-              eventsMatchedByQuery: eventBlock.count ?? null,
-              eventsReturned: events.length,
-              accountingEventsParsed: normalized.length,
-              queryRunId: queryResult?.run?.id ?? null,
-              queryDry: queryResult?.run?.dry ?? null,
-              accountingTotals: {
-                rowsWritten: totalRowsWritten,
-                rowsRead: totalRowsRead,
-                statements: totalStatements,
-                missingWriteMetrics: normalized.reduce((sum, row) => sum + row.missingWriteMetrics, 0),
-                incompleteAccountingInvocations: normalized.filter((row) => row.accountingStatus !== "complete").length,
-              },
+              method: "Cloudflare Workers Observability telemetry API; all queries use dry=true",
+              invocationLogCount: accountingRows.length,
+              totalRowsWritten: accountingRows.reduce((sum, x) => sum + x.rowsWritten, 0),
+              totalRowsRead: accountingRows.reduce((sum, x) => sum + x.rowsRead, 0),
+              totalStatements: accountingRows.reduce((sum, x) => sum + x.statementCount, 0),
+              missingWriteMetrics: accountingRows.reduce((sum, x) => sum + x.missingWriteMetrics, 0),
+              failedStatements: accountingRows.reduce((sum, x) => sum + x.failedStatements, 0),
+              unsupportedOperations: accountingRows.reduce((sum, x) => sum + x.unsupportedOperations, 0),
+              incompleteAccountingInvocations: accountingRows.filter((x) => x.accountingStatus !== "complete").length,
+              byScriptName: runSummaries,
               byTrigger: Object.values(byTrigger).sort((a, b) => b.rowsWritten - a.rowsWritten),
-              invocationEvents: normalized.sort((a, b) => String(a.observedAt).localeCompare(String(b.observedAt))),
-              pagination: {
-                hasMoreThanLimit: number(eventBlock.count) > events.length,
-                nextCursor: events.length ? (events.at(-1)?.$metadata?.id ?? null) : null,
-              },
+              invocationEvents: accountingRows.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))),
             };
-
             console.log("D1 INVOCATION WRITE ACCOUNTING (sanitized):");
             console.log(JSON.stringify(report, null, 2));
-
-            if (events.length === 0 || normalized.length === 0) {
-              console.error("No d1_read_accounting log records were decoded. Review the discovered keys and event field shape.");
+            if (accountingRows.length === 0) {
+              console.error("No D1 accounting events were returned. Inspect the scriptName, message, and dataset value discovery above.");
               process.exitCode = 1;
             }
           } catch (error) {
