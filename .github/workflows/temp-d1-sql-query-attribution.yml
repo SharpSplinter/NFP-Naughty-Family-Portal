@@ -20,8 +20,8 @@ jobs:
           node --input-type=module <<'NODE'
           const token = process.env.CLOUDFLARE_API_TOKEN;
           const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
-          const START = "2026-11-23T18:00:00Z";
-          const END_EXCLUSIVE = "2026-11-23T19:00:00Z";
+          const START = "2026-11-23T18:10:00Z";
+          const END_EXCLUSIVE = "2026-11-23T18:15:00Z";
           const DATABASES = {
             "bbbe128a-c5cc-46ec-b8ef-93860183e795": "naughty-company-dashboard",
             "46f7536d-f69c-4304-8b44-615901c60b7c": "naughty-company-bot-production",
