@@ -147,6 +147,76 @@ jobs:
               tables: schemaSummary,
             }, null, 2));
 
+            const d1AuditStart = "2026-11-23T18:10:00Z";
+            const d1AuditEnd = "2026-11-23T18:15:00Z";
+            const d1DatabaseId = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
+            const d1Statements = [
+              {
+                label: "automation_runs_in_spike_window",
+                sql: `SELECT trigger_name, status, started_at, finished_at, companies_checked, companies_failed, alerts_created, error_summary FROM automation_runs WHERE started_at >= '${d1AuditStart}' AND started_at < '${d1AuditEnd}' ORDER BY started_at`,
+              },
+              { label: "company_api_keys_total", sql: "SELECT COUNT(*) AS row_count FROM company_api_keys" },
+              { label: "legacy_company_keys_total", sql: "SELECT COUNT(*) AS row_count FROM company_keys" },
+              { label: "companies_fetched_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM companies WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
+              { label: "company_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM company_snapshots WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
+              { label: "company_financials_updated_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM company_financials WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
+              { label: "company_financial_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM company_financial_snapshots WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
+              { label: "faction_member_cache_updated_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_member_cache WHERE updated_at >= '${d1AuditStart}' AND updated_at < '${d1AuditEnd}'` },
+              { label: "faction_director_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_director_snapshots WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
+              { label: "faction_company_rank_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_company_rank_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}'` },
+              { label: "faction_roster_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_roster_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}'` },
+              { label: "faction_member_roster_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_member_roster_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}'` },
+              { label: "faction_member_stat_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_member_stat_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}'` },
+              { label: "faction_gym_energy_snapshots_inserted_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_gym_energy_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}'` },
+              {
+                label: "faction_performance_collection_runs_in_spike_window",
+                sql: `SELECT collection_kind, status, scheduled_at, started_at, completed_at, created_at, updated_at, next_index FROM faction_performance_collection_runs WHERE (created_at >= '${d1AuditStart}' AND created_at < '${d1AuditEnd}') OR (started_at >= '${d1AuditStart}' AND started_at < '${d1AuditEnd}') OR (completed_at >= '${d1AuditStart}' AND completed_at < '${d1AuditEnd}') ORDER BY created_at`,
+              },
+              { label: "faction_performance_collection_state_updated_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_performance_collection_state WHERE updated_at >= '${d1AuditStart}' AND updated_at < '${d1AuditEnd}'` },
+              {
+                label: "global_rankings_refresh_runs_in_spike_window",
+                sql: `SELECT run_id, source, status, started_at, updated_at, finished_at, companies_seen, expected_total FROM global_rankings_refresh_runs WHERE (started_at >= '${d1AuditStart}' AND started_at < '${d1AuditEnd}') OR (updated_at >= '${d1AuditStart}' AND updated_at < '${d1AuditEnd}') ORDER BY started_at`,
+              },
+              {
+                label: "global_rankings_pages_joined_to_runs_started_in_spike_window",
+                sql: `SELECT COUNT(*) AS row_count FROM global_rankings_refresh_pages p JOIN global_rankings_refresh_runs r ON r.run_id = p.run_id WHERE r.started_at >= '${d1AuditStart}' AND r.started_at < '${d1AuditEnd}'`,
+              },
+              { label: "faction_membership_intervals_last_seen_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM faction_membership_intervals WHERE last_seen_at >= '${d1AuditStart}' AND last_seen_at < '${d1AuditEnd}'` },
+            ];
+            const d1AuditResults = [];
+            for (const item of d1Statements) {
+              const response = await fetch(
+                `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${d1DatabaseId}/query`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                  },
+                  body: JSON.stringify({ sql: item.sql }),
+                  signal: AbortSignal.timeout(20000),
+                }
+              );
+              const payload = await response.json().catch(() => null);
+              if (!response.ok || payload?.success !== true) {
+                const messages = (payload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+                throw new Error(`Production D1 SELECT ${item.label} failed (HTTP ${response.status}): ${messages || "invalid response"}`);
+              }
+              d1AuditResults.push({
+                label: item.label,
+                meta: payload?.result?.[0]?.meta ?? null,
+                rows: payload?.result?.[0]?.results ?? [],
+              });
+            }
+            console.log("PRODUCTION D1 TABLE COUNTS FOR 18:10–18:15 UTC (SELECT-ONLY):");
+            console.log(JSON.stringify({
+              timeWindowUtc: { startInclusive: d1AuditStart, endExclusive: d1AuditEnd },
+              queryCount: d1AuditResults.length,
+              d1Results: d1AuditResults,
+              totalRowsWrittenByAuditQueries: d1AuditResults.reduce((sum, x) => sum + Number(x.meta?.rows_written ?? 0), 0),
+            }, null, 2));
+
             const auditStart = "2026-11-23T18:00:00Z";
             const auditEnd = "2026-11-23T19:00:00Z";
             const auditUrl = new URL(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/logs/audit`);
