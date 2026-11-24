@@ -21,7 +21,7 @@ jobs:
           const token = process.env.CLOUDFLARE_API_TOKEN;
           const accountId = "6c03b978ed9a59adc3f61c715bdad45c";
           const databaseId = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
-          const endpoint = \`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query\`;
+          const endpoint = "https://api.cloudflare.com/client/v4/accounts/" + accountId + "/d1/database/" + databaseId + "/query";
           const runId = "6b825378083084fcb8e69111";
 
           if (!token) throw new Error("CLOUDFLARE_API_TOKEN secret is unavailable.");
@@ -37,7 +37,7 @@ jobs:
             },
             {
               label: "scheduled_refresh_run",
-              sql: \`SELECT run_id, source, status, companies_seen, expected_total, snapshot_fetched_at, started_at, updated_at, finished_at FROM global_rankings_refresh_runs WHERE run_id = '${runId}'\`
+              sql: "SELECT run_id, source, status, companies_seen, expected_total, snapshot_fetched_at, started_at, updated_at, finished_at FROM global_rankings_refresh_runs WHERE run_id = '" + runId + "'"
             },
             {
               label: "snapshot_table_schema",
@@ -49,7 +49,7 @@ jobs:
             },
             {
               label: "refresh_pages_for_run",
-              sql: \`SELECT COUNT(*) AS row_count FROM global_rankings_refresh_pages WHERE run_id = '${runId}'\`
+              sql: "SELECT COUNT(*) AS row_count FROM global_rankings_refresh_pages WHERE run_id = '" + runId + "'"
             }
           ];
 
@@ -58,7 +58,7 @@ jobs:
             const response = await fetch(endpoint, {
               method: "POST",
               headers: {
-                Authorization: \`Bearer ${token}\`,
+                Authorization: "Bearer " + token,
                 "Content-Type": "application/json",
                 Accept: "application/json"
               },
@@ -68,7 +68,7 @@ jobs:
             const payload = await response.json().catch(() => null);
             if (!response.ok || payload?.success !== true) {
               const message = (payload?.errors ?? []).map(x => String(x.message ?? "API error")).join("; ");
-              throw new Error(\`${item.label} failed (HTTP ${response.status}): ${message || "invalid response"}\`);
+              throw new Error(item.label + " failed (HTTP " + response.status + "): " + (message || "invalid response"));
             }
             const result = payload?.result?.[0] ?? {};
             const meta = result.meta ?? {};
@@ -80,7 +80,7 @@ jobs:
               results: result.results ?? []
             });
             if (rowsWritten !== 0) {
-              throw new Error(\`Read-only assertion failed for ${item.label}: rows_written=${rowsWritten}\`);
+              throw new Error("Read-only assertion failed for " + item.label + ": rows_written=" + rowsWritten);
             }
           }
 
