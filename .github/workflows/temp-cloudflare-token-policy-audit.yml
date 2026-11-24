@@ -18,6 +18,7 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
+          const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
           const token = process.env.CLOUDFLARE_API_TOKEN;
           if (!token) {
             console.error("CLOUDFLARE_API_TOKEN repository secret is missing or unavailable to this workflow.");
@@ -49,7 +50,7 @@ jobs:
           }
 
           try {
-            const verified = await cloudflareGet("/user/tokens/verify", "Token verification");
+            const verified = await cloudflareGet(`/accounts/${ACCOUNT_ID}/tokens/verify`, "Account token verification");
             if (!verified || typeof verified.id !== "string" || !verified.id) {
               console.error("Token verification returned no token identifier; details lookup cannot continue.");
               process.exitCode = 1;
@@ -57,7 +58,7 @@ jobs:
               console.log(`TOKEN VERIFICATION: valid; status=${String(verified.status ?? "not-reported")}`);
 
               const details = await cloudflareGet(
-                `/user/tokens/${encodeURIComponent(verified.id)}`,
+                `/accounts/${ACCOUNT_ID}/tokens/${encodeURIComponent(verified.id)}`,
                 "Token policy details"
               );
               const policies = Array.isArray(details?.policies) ? details.policies : [];
