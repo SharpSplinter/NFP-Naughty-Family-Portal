@@ -95,6 +95,63 @@ jobs:
           }
 
           try {
+            const auditStart = "2026-11-23T18:00:00Z";
+            const auditEnd = "2026-11-23T19:00:00Z";
+            const auditUrl = new URL(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/logs/audit`);
+            auditUrl.searchParams.set("since", auditStart);
+            auditUrl.searchParams.set("before", auditEnd);
+            auditUrl.searchParams.set("direction", "asc");
+            auditUrl.searchParams.set("limit", "1000");
+            const auditResponse = await fetch(auditUrl, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+              signal: AbortSignal.timeout(20000),
+            });
+            const auditPayload = await auditResponse.json().catch(() => null);
+            if (!auditResponse.ok || auditPayload?.success !== true) {
+              const messages = (auditPayload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+              throw new Error(`Account audit log query failed (HTTP ${auditResponse.status}): ${messages || "invalid response"}`);
+            }
+            const auditRows = Array.isArray(auditPayload?.result) ? auditPayload.result : [];
+            const sanitizedAuditRows = auditRows.map((row) => ({
+              time: row?.action?.time ?? null,
+              actionType: row?.action?.type ?? null,
+              actionDescription: row?.action?.description ?? null,
+              actionResult: row?.action?.result ?? null,
+              actorContext: row?.actor?.context ?? null,
+              actorType: row?.actor?.type ?? null,
+              actorTokenName: row?.actor?.token_name ?? null,
+              actorTokenId: row?.actor?.token_id ?? null,
+              actorEmail: row?.actor?.email ?? null,
+              rawMethod: row?.raw?.method ?? null,
+              rawStatusCode: row?.raw?.status_code ?? null,
+              rawUri: row?.raw?.uri ?? null,
+              resourceProduct: row?.resource?.product ?? null,
+              resourceType: row?.resource?.type ?? null,
+              resourceId: row?.resource?.id ?? null,
+              resourceScope: row?.resource?.scope ?? null,
+            }));
+            const d1AuditRows = sanitizedAuditRows.filter((row) =>
+              /d1|database|sql/i.test([
+                row.actionDescription,
+                row.rawUri,
+                row.resourceProduct,
+                row.resourceType,
+              ].filter(Boolean).join(" "))
+            );
+            console.log("ACCOUNT AUDIT LOGS FOR 18:00–19:00 UTC (sanitized):");
+            console.log(JSON.stringify({
+              timeWindowUtc: { startInclusive: auditStart, endExclusive: auditEnd },
+              totalAccountAuditRows: auditRows.length,
+              resultInfo: auditPayload?.result_info ?? null,
+              d1RelatedRows: d1AuditRows.length,
+              d1RelatedAuditRows: d1AuditRows,
+              otherAccountAuditRows: sanitizedAuditRows.length - d1AuditRows.length,
+            }, null, 2));
+
             const versionHistoryResult = await cloudflareGet(
               `/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/versions?per_page=100`,
               "naughtyfamily-api version history"
