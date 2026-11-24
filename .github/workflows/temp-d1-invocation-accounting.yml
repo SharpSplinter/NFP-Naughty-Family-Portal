@@ -1,0 +1,239 @@
+name: Temporary D1 Invocation Write Accounting Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  d1-invocation-accounting:
+    name: Reconcile D1 writes to Worker invocation logs for Nov 23 UTC
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query Cloudflare Workers Observability in dry-run mode
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
+          const START = "2026-11-23T00:00:00Z";
+          const END = "2026-11-24T00:00:00Z";
+          const API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/observability/telemetry`;
+
+          if (!token) {
+            console.error("CLOUDFLARE_API_TOKEN Actions secret is missing or unavailable.");
+            process.exit(1);
+          }
+
+          async function post(path, body, label) {
+            const response = await fetch(`${API}${path}`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(25000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              const messages = (payload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+              throw new Error(`${label} failed (HTTP ${response.status}): ${messages || "invalid response"}`);
+            }
+            return payload.result;
+          }
+
+          function parseStructured(value, depth = 0) {
+            if (depth > 5 || value == null) return [];
+            if (typeof value === "string") {
+              const text = value.trim();
+              if (!text.includes("d1_read_accounting")) return [];
+              try { return parseStructured(JSON.parse(text), depth + 1); } catch { return []; }
+            }
+            if (Array.isArray(value)) return value.flatMap((item) => parseStructured(item, depth + 1));
+            if (typeof value !== "object") return [];
+            if (value.event === "d1_read_accounting") return [value];
+            const output = [];
+            for (const child of Object.values(value)) output.push(...parseStructured(child, depth + 1));
+            return output;
+          }
+
+          function number(value) {
+            const parsed = Number(value ?? 0);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+
+          try {
+            const keyResult = await post("/keys", {}, "Observability field discovery");
+            const keys = Array.isArray(keyResult?.keys) ? keyResult.keys : Array.isArray(keyResult) ? keyResult : [];
+            const relevantKeys = keys
+              .map((item) => ({
+                key: String(item?.key ?? ""),
+                type: String(item?.type ?? ""),
+                lastSeenAt: item?.lastSeenAt ?? null,
+              }))
+              .filter((item) => /metadata\.message|workers\.scriptName|workers\.eventType|timestamp|dataset|source/i.test(item.key));
+
+            console.log("OBSERVABILITY KEY DISCOVERY:");
+            console.log(JSON.stringify({
+              keysReturned: keys.length,
+              relevantKeys,
+            }, null, 2));
+
+            const query = {
+              queryId: "ncd-d1-accounting-audit-2026-11-23",
+              timeframe: {
+                from: Date.parse(START),
+                to: Date.parse(END),
+              },
+              dry: true,
+              view: "events",
+              limit: 2000,
+              parameters: {
+                filterCombination: "and",
+                filters: [
+                  {
+                    key: "$metadata.message",
+                    operation: "includes",
+                    type: "string",
+                    value: "d1_read_accounting",
+                  },
+                  {
+                    key: "$workers.scriptName",
+                    operation: "eq",
+                    type: "string",
+                    value: "naughtyfamily-api",
+                  },
+                ],
+              },
+            };
+
+            const queryResult = await post("/query", query, "D1 invocation accounting log query");
+            const eventBlock = queryResult?.events ?? {};
+            const events = Array.isArray(eventBlock?.events) ? eventBlock.events : [];
+            const matches = [];
+            for (const event of events) {
+              const candidates = [
+                event?.source,
+                event?.["$metadata"]?.message,
+                event?.message,
+                event?.event,
+                event,
+              ];
+              let parsed = [];
+              for (const candidate of candidates) parsed.push(...parseStructured(candidate));
+              for (const item of parsed) matches.push({ event, accounting: item });
+            }
+
+            const seen = new Set();
+            const unique = matches.filter(({ event, accounting }) => {
+              const id = String(event?.["$metadata"]?.id ?? "");
+              const key = id || JSON.stringify(accounting);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+
+            const byTrigger = {};
+            let totalRowsWritten = 0;
+            let totalRowsRead = 0;
+            let totalStatements = 0;
+            const normalized = unique.map(({ event, accounting }) => {
+              const workers = event?.$workers ?? event?.["$workers"] ?? {};
+              const row = {
+                observedAt: accounting.observedAt ?? event?.timestamp ?? event?.$metadata?.timestamp ?? null,
+                eventType: accounting.eventType ?? workers.eventType ?? "unknown",
+                cron: accounting.cron ?? null,
+                queue: accounting.queue ?? null,
+                messageCount: accounting.messageCount ?? null,
+                route: accounting.route ?? null,
+                method: accounting.method ?? null,
+                rowsWritten: number(accounting.rowsWritten),
+                rowsRead: number(accounting.rowsRead),
+                statementCount: number(accounting.statementCount),
+                methodCounts: accounting.methodCounts ?? null,
+                missingWriteMetrics: number(accounting.missingWriteMetrics),
+                failedStatements: number(accounting.failedStatements),
+                unsupportedOperations: number(accounting.unsupportedOperations),
+                backgroundTasks: number(accounting.backgroundTasks),
+                backgroundTaskFailures: number(accounting.backgroundTaskFailures),
+                durationMs: number(accounting.durationMs),
+                accountingStatus: accounting.accountingStatus ?? "unknown",
+              };
+              const key = row.eventType === "scheduled" ? `scheduled:${row.cron ?? "unknown"}`
+                : row.eventType === "queue" ? `queue:${row.queue ?? "unknown"}`
+                : row.eventType === "fetch" ? `fetch:${row.route ?? "unknown"}`
+                : row.eventType;
+              byTrigger[key] ??= {
+                eventType: row.eventType,
+                cron: row.cron,
+                queue: row.queue,
+                route: row.route,
+                invocations: 0,
+                rowsWritten: 0,
+                rowsRead: 0,
+                statements: 0,
+                missingWriteMetrics: 0,
+                failedStatements: 0,
+                unsupportedOperations: 0,
+                backgroundTasks: 0,
+                backgroundTaskFailures: 0,
+                incompleteAccountingInvocations: 0,
+              };
+              const summary = byTrigger[key];
+              summary.invocations += 1;
+              summary.rowsWritten += row.rowsWritten;
+              summary.rowsRead += row.rowsRead;
+              summary.statements += row.statementCount;
+              summary.missingWriteMetrics += row.missingWriteMetrics;
+              summary.failedStatements += row.failedStatements;
+              summary.unsupportedOperations += row.unsupportedOperations;
+              summary.backgroundTasks += row.backgroundTasks;
+              summary.backgroundTaskFailures += row.backgroundTaskFailures;
+              if (row.accountingStatus !== "complete") summary.incompleteAccountingInvocations += 1;
+              totalRowsWritten += row.rowsWritten;
+              totalRowsRead += row.rowsRead;
+              totalStatements += row.statementCount;
+              return row;
+            });
+
+            const report = {
+              timeWindowUtc: { startInclusive: START, endExclusive: END },
+              method: "Cloudflare Workers Observability telemetry query; dry=true; no saved query or resource changes",
+              eventsMatchedByQuery: eventBlock.count ?? null,
+              eventsReturned: events.length,
+              accountingEventsParsed: normalized.length,
+              queryRunId: queryResult?.run?.id ?? null,
+              queryDry: queryResult?.run?.dry ?? null,
+              accountingTotals: {
+                rowsWritten: totalRowsWritten,
+                rowsRead: totalRowsRead,
+                statements: totalStatements,
+                missingWriteMetrics: normalized.reduce((sum, row) => sum + row.missingWriteMetrics, 0),
+                incompleteAccountingInvocations: normalized.filter((row) => row.accountingStatus !== "complete").length,
+              },
+              byTrigger: Object.values(byTrigger).sort((a, b) => b.rowsWritten - a.rowsWritten),
+              invocationEvents: normalized.sort((a, b) => String(a.observedAt).localeCompare(String(b.observedAt))),
+              pagination: {
+                hasMoreThanLimit: number(eventBlock.count) > events.length,
+                nextCursor: events.length ? (events.at(-1)?.$metadata?.id ?? null) : null,
+              },
+            };
+
+            console.log("D1 INVOCATION WRITE ACCOUNTING (sanitized):");
+            console.log(JSON.stringify(report, null, 2));
+
+            if (events.length === 0 || normalized.length === 0) {
+              console.error("No d1_read_accounting log records were decoded. Review the discovered keys and event field shape.");
+              process.exitCode = 1;
+            }
+          } catch (error) {
+            console.error(`Observability accounting audit failed: ${error instanceof Error ? error.message : "unknown error"}`);
+            process.exitCode = 1;
+          }
+          NODE
