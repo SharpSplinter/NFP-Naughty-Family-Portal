@@ -95,6 +95,58 @@ jobs:
           }
 
           try {
+            const DB_ID = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
+            const targetTables = [
+              "automation_runs",
+              "company_api_keys",
+              "companies",
+              "company_snapshots",
+              "company_financials",
+              "company_financial_snapshots",
+              "faction_member_cache",
+              "faction_director_snapshots",
+              "faction_membership_intervals",
+              "faction_performance_collection_runs",
+              "faction_performance_collection_state",
+              "faction_roster_snapshots",
+              "faction_member_roster_snapshots",
+              "faction_member_stat_snapshots",
+              "faction_gym_energy_snapshots",
+              "global_rankings_refresh_runs",
+              "global_rankings_refresh_pages",
+              "faction_company_rank_snapshots",
+            ];
+            const schemaSql = `SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN (${targetTables.map((name) => "'" + name.replace(/'/g, "''") + "'").join(",")}) ORDER BY name`;
+            const schemaResponse = await fetch(
+              `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DB_ID}/query`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                  Accept: "application/json",
+                },
+                body: JSON.stringify({ sql: schemaSql }),
+                signal: AbortSignal.timeout(20000),
+              }
+            );
+            const schemaPayload = await schemaResponse.json().catch(() => null);
+            if (!schemaResponse.ok || schemaPayload?.success !== true) {
+              const messages = (schemaPayload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+              throw new Error(`Production D1 schema SELECT failed (HTTP ${schemaResponse.status}): ${messages || "invalid response"}`);
+            }
+            const schemaRows = schemaPayload?.result?.[0]?.results ?? [];
+            const schemaSummary = schemaRows.map((row) => ({
+              table: String(row.name ?? ""),
+              createSql: String(row.sql ?? ""),
+            }));
+            console.log("PRODUCTION D1 SNAPSHOT/AUTOMATION TABLE SCHEMAS (read-only SELECT):");
+            console.log(JSON.stringify({
+              schemaRows: schemaSummary.length,
+              queryMeta: schemaPayload?.result?.[0]?.meta ?? null,
+              tables: schemaSummary,
+            }, null, 2));
+
             const auditStart = "2026-11-23T18:00:00Z";
             const auditEnd = "2026-11-23T19:00:00Z";
             const auditUrl = new URL(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/logs/audit`);
