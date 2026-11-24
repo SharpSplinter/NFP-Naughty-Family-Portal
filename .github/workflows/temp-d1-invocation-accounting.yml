@@ -44,6 +44,25 @@ jobs:
             return payload.result;
           }
 
+          async function cloudflarePost(path, body, label) {
+            const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(25000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              const messages = (payload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+              throw new Error(`${label} failed (HTTP ${response.status}): ${messages || "invalid response"}`);
+            }
+            return payload.result;
+          }
+
           async function post(path, body, label) {
             const response = await fetch(`${API}${path}`, {
               method: "POST",
@@ -235,6 +254,34 @@ jobs:
               queryCount: d1AuditResults.length,
               d1Results: d1AuditResults,
               totalRowsWrittenByAuditQueries: d1AuditResults.reduce((sum, x) => sum + Number(x.meta?.rows_written ?? 0), 0),
+            }, null, 2));
+
+            const dashboardDatabaseId = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
+            const d1QueryPath = `/accounts/${ACCOUNT_ID}/d1/database/${dashboardDatabaseId}/query`;
+            const [snapshotCountResult, scheduledRunResult] = await Promise.all([
+              cloudflarePost(d1QueryPath, {
+                sql: "SELECT reporting_day, COUNT(*) AS row_count, COUNT(DISTINCT company_id) AS distinct_companies, MIN(source_fetched_at) AS first_source_fetched_at, MAX(source_fetched_at) AS last_source_fetched_at, MIN(captured_at) AS first_captured_at, MAX(captured_at) AS last_captured_at FROM global_company_rank_snapshots WHERE reporting_day = '2026-11-23' GROUP BY reporting_day"
+              }, "Read-only global company snapshot count"),
+              cloudflarePost(d1QueryPath, {
+                sql: "SELECT run_id, source, status, companies_seen, snapshot_fetched_at, started_at, finished_at FROM global_rankings_refresh_runs WHERE source = 'scheduled' AND snapshot_fetched_at >= '2026-11-23T00:00:00Z' AND snapshot_fetched_at < '2026-11-24T00:00:00Z' ORDER BY started_at"
+              }, "Read-only scheduled global ranking run lookup"),
+            ]);
+            const normalizeD1QueryResults = (value) => {
+              const resultSets = Array.isArray(value) ? value : [];
+              return resultSets.map((resultSet) => ({
+                success: resultSet?.success ?? null,
+                meta: resultSet?.meta ?? null,
+                results: Array.isArray(resultSet?.results) ? resultSet.results : [],
+              }));
+            };
+            const snapshotCountSets = normalizeD1QueryResults(snapshotCountResult);
+            const scheduledRunSets = normalizeD1QueryResults(scheduledRunResult);
+            console.log("PRODUCTION D1 GLOBAL RANKING SNAPSHOT RECONCILIATION (SELECT only):");
+            console.log(JSON.stringify({
+              database: "naughty-company-dashboard",
+              timeWindowUtc: { startInclusive: "2026-11-23T00:00:00Z", endExclusive: "2026-11-24T00:00:00Z" },
+              snapshotCountResults: snapshotCountSets,
+              scheduledRankingRunResults: scheduledRunSets,
             }, null, 2));
 
             const auditStart = "2026-11-23T18:00:00Z";
