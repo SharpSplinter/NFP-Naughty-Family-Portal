@@ -1,0 +1,104 @@
+name: Temporary Cloudflare Token Policy Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-token:
+    name: Verify token and enumerate permission policies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify GitHub Actions Cloudflare token (read-only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          if (!token) {
+            console.error("CLOUDFLARE_API_TOKEN repository secret is missing or unavailable to this workflow.");
+            process.exit(1);
+          }
+
+          async function cloudflareGet(path, label) {
+            let response;
+            try {
+              response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: "application/json",
+                },
+                signal: AbortSignal.timeout(15000),
+              });
+            } catch {
+              console.error(`${label}: network failure; response details suppressed.`);
+              throw new Error("Cloudflare request failed.");
+            }
+
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              console.error(`${label}: rejected (HTTP ${response.status}); response body suppressed.`);
+              throw new Error("Cloudflare rejected the request.");
+            }
+            return payload.result;
+          }
+
+          try {
+            const verified = await cloudflareGet("/user/tokens/verify", "Token verification");
+            if (!verified || typeof verified.id !== "string" || !verified.id) {
+              console.error("Token verification returned no token identifier; details lookup cannot continue.");
+              process.exitCode = 1;
+            } else {
+              console.log(`TOKEN VERIFICATION: valid; status=${String(verified.status ?? "not-reported")}`);
+
+              const details = await cloudflareGet(
+                `/user/tokens/${encodeURIComponent(verified.id)}`,
+                "Token policy details"
+              );
+              const policies = Array.isArray(details?.policies) ? details.policies : [];
+              const safePolicies = policies.map((policy, index) => {
+                const groups = Array.isArray(policy?.permission_groups)
+                  ? policy.permission_groups
+                  : Array.isArray(policy?.permissionGroups)
+                    ? policy.permissionGroups
+                    : [];
+                const permissionGroups = groups.map((group) => ({
+                  name: typeof group?.name === "string" ? group.name : null,
+                  id: typeof group?.id === "string" ? group.id : null,
+                }));
+                const resources = policy?.resources && typeof policy.resources === "object"
+                  ? Object.entries(policy.resources).map(([resource, scope]) => ({
+                      resource,
+                      scope: Array.isArray(scope) ? scope : [scope],
+                    }))
+                  : [];
+                return {
+                  policy: index + 1,
+                  effect: policy?.effect ?? "not-reported",
+                  permissionGroups,
+                  resources,
+                };
+              });
+
+              console.log("TOKEN POLICY SUMMARY (credential values are never printed):");
+              console.log(JSON.stringify({
+                status: details?.status ?? verified.status ?? "not-reported",
+                policyCount: policies.length,
+                policies: safePolicies,
+              }, null, 2));
+
+              if (policies.length === 0) {
+                console.error("No policies were returned; verify the token's policy metadata in Cloudflare.");
+                process.exitCode = 1;
+              }
+            }
+          } catch {
+            console.error("CLOUDFLARE TOKEN AUDIT FAILED; token value and raw API response were not logged.");
+            process.exitCode = 1;
+          }
+          NODE
