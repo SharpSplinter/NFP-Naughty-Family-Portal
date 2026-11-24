@@ -1,0 +1,211 @@
+name: Temporary D1 Previous UTC Day Write Attribution
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attribute-writes:
+    name: Attribute D1 writes for 2026-11-23 UTC
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query read-only D1 Analytics and query insights
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const ACCOUNT_ID = "6c03b978ed9a59adc3f61c715bdad45c";
+          const START = "2026-11-23T00:00:00Z";
+          const END = "2026-11-24T00:00:00Z";
+          const DATE = "2026-11-23";
+          const EXPECTED_WRITES = 84574;
+          const DATABASES = {
+            "bbbe128a-c5cc-46ec-b8ef-93860183e795": "naughty-company-dashboard",
+            "46f7536d-f69c-4304-8b44-615901c60b7c": "naughty-company-bot-production",
+            "02cca699-1232-495f-8a0a-de525058b92a": "naughtyfamily-acceptance-staging",
+          };
+
+          if (!token) {
+            console.error("CLOUDFLARE_API_TOKEN Actions secret is missing or unavailable.");
+            process.exit(1);
+          }
+
+          async function graphql(label, query) {
+            const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ query }),
+              signal: AbortSignal.timeout(25000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || !payload || payload.errors?.length) {
+              const messages = (payload?.errors ?? []).map((e) => String(e.message ?? "GraphQL error")).join("; ");
+              throw new Error(`${label} failed (HTTP ${response.status}): ${messages || "invalid response"}`);
+            }
+            return payload.data?.viewer?.accounts?.[0] ?? null;
+          }
+
+          const dailyQuery = `query {
+            viewer {
+              accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+                d1AnalyticsAdaptiveGroups(
+                  limit: 10000
+                  filter: { date_geq: "${DATE}", date_leq: "${DATE}" }
+                ) {
+                  sum { rowsWritten writeQueries rowsRead readQueries }
+                  dimensions { date databaseId }
+                }
+              }
+            }
+          }`;
+
+          const hourlyQuery = `query {
+            viewer {
+              accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+                d1AnalyticsAdaptiveGroups(
+                  limit: 10000
+                  filter: { datetime_geq: "${START}", datetime_lt: "${END}" }
+                ) {
+                  sum { rowsWritten writeQueries }
+                  dimensions { datetimeHour databaseId }
+                }
+              }
+            }
+          }`;
+
+          const queryInsightsQuery = `query {
+            viewer {
+              accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+                d1QueriesAdaptiveGroups(
+                  limit: 10000
+                  filter: { date_geq: "${DATE}", date_leq: "${DATE}" }
+                ) {
+                  count
+                  sum { rowsWritten rowsRead rowsReturned queryDurationMs }
+                  avg { rowsWritten queryDurationMs }
+                  dimensions { databaseId query error }
+                }
+              }
+            }
+          }`;
+
+          function n(value) { return Number(value ?? 0); }
+          function dbName(id) { return DATABASES[id] ?? `unmapped database ${id || "(no id)"}`; }
+          function redactSql(sql) {
+            return String(sql ?? "")
+              .replace(/'(?:''|[^'])*'/g, "'[literal]'")
+              .replace(/\s+/g, " ")
+              .trim();
+          }
+
+          try {
+            const [daily, hourly, queryData] = await Promise.all([
+              graphql("Daily database totals", dailyQuery),
+              graphql("Hourly database totals", hourlyQuery),
+              graphql("Per-query write attribution", queryInsightsQuery),
+            ]);
+
+            const dailyRows = daily?.d1AnalyticsAdaptiveGroups ?? [];
+            const hourlyRows = hourly?.d1AnalyticsAdaptiveGroups ?? [];
+            const queryRows = queryData?.d1QueriesAdaptiveGroups ?? [];
+
+            const totals = dailyRows.reduce((acc, row) => {
+              const id = row.dimensions?.databaseId ?? "";
+              const current = acc.byDatabase[id] ?? {
+                databaseId: id,
+                database: dbName(id),
+                rowsWritten: 0,
+                writeQueries: 0,
+                rowsRead: 0,
+                readQueries: 0,
+              };
+              current.rowsWritten += n(row.sum?.rowsWritten);
+              current.writeQueries += n(row.sum?.writeQueries);
+              current.rowsRead += n(row.sum?.rowsRead);
+              current.readQueries += n(row.sum?.readQueries);
+              acc.byDatabase[id] = current;
+              acc.rowsWritten += n(row.sum?.rowsWritten);
+              acc.writeQueries += n(row.sum?.writeQueries);
+              acc.rowsRead += n(row.sum?.rowsRead);
+              acc.readQueries += n(row.sum?.readQueries);
+              return acc;
+            }, { rowsWritten: 0, writeQueries: 0, rowsRead: 0, readQueries: 0, byDatabase: {} });
+
+            const querySummary = queryRows.map((row) => ({
+              databaseId: row.dimensions?.databaseId ?? "",
+              database: dbName(row.dimensions?.databaseId ?? ""),
+              error: row.dimensions?.error ?? "",
+              query: redactSql(row.dimensions?.query ?? ""),
+              sampledQueryEvents: n(row.count),
+              estimatedRowsWritten: n(row.sum?.rowsWritten),
+              estimatedRowsRead: n(row.sum?.rowsRead),
+              estimatedRowsReturned: n(row.sum?.rowsReturned),
+              totalQueryDurationMs: n(row.sum?.queryDurationMs),
+              avgRowsWritten: n(row.avg?.rowsWritten),
+              avgQueryDurationMs: n(row.avg?.queryDurationMs),
+            })).filter((row) => row.estimatedRowsWritten > 0);
+
+            querySummary.sort((a, b) => b.estimatedRowsWritten - a.estimatedRowsWritten);
+
+            const queryAttributedWrites = querySummary.reduce((sum, row) => sum + row.estimatedRowsWritten, 0);
+            const byQueryDatabase = {};
+            for (const row of querySummary) {
+              const key = row.databaseId;
+              byQueryDatabase[key] ??= { databaseId: key, database: row.database, estimatedRowsWritten: 0 };
+              byQueryDatabase[key].estimatedRowsWritten += row.estimatedRowsWritten;
+            }
+
+            const hourlySummary = hourlyRows.map((row) => ({
+              hour: row.dimensions?.datetimeHour ?? "unknown",
+              databaseId: row.dimensions?.databaseId ?? "",
+              database: dbName(row.dimensions?.databaseId ?? ""),
+              rowsWritten: n(row.sum?.rowsWritten),
+              writeQueries: n(row.sum?.writeQueries),
+            })).sort((a, b) => String(a.hour).localeCompare(String(b.hour)) || a.database.localeCompare(b.database));
+
+            const report = {
+              timeWindowUtc: { startInclusive: START, endExclusive: END },
+              expectedRowsWrittenFromPriorReport: EXPECTED_WRITES,
+              exactD1AnalyticsTotals: {
+                rowsWritten: totals.rowsWritten,
+                varianceFromExpected: totals.rowsWritten - EXPECTED_WRITES,
+                writeQueries: totals.writeQueries,
+                rowsRead: totals.rowsRead,
+                readQueries: totals.readQueries,
+                sourceRows: dailyRows.length,
+                byDatabase: Object.values(totals.byDatabase).sort((a, b) => b.rowsWritten - a.rowsWritten),
+              },
+              queryAttribution: {
+                groupsReturned: queryRows.length,
+                maximumGroupsRequested: 10000,
+                possiblyTruncated: queryRows.length >= 10000,
+                attributedRowsWritten: queryAttributedWrites,
+                differenceVsAnalyticsTotal: totals.rowsWritten - queryAttributedWrites,
+                note: "Per-query insights are adaptive-sampled attribution; the account/database D1 analytics totals are the billing-level reconciliation. Query strings have bound values omitted by Cloudflare and SQL string literals redacted in this output.",
+                byDatabase: Object.values(byQueryDatabase).sort((a, b) => b.estimatedRowsWritten - a.estimatedRowsWritten),
+                topQueries: querySummary.slice(0, 60),
+              },
+              hourlyRowsWritten: hourlySummary,
+            };
+
+            console.log("D1 PREVIOUS UTC DAY WRITE ATTRIBUTION (read-only):");
+            console.log(JSON.stringify(report, null, 2));
+
+            if (dailyRows.length === 0) {
+              console.error("No daily D1 Analytics rows were returned for the requested window.");
+              process.exitCode = 1;
+            }
+          } catch (error) {
+            console.error(`D1 attribution query failed: ${error instanceof Error ? error.message : "unknown error"}`);
+            process.exitCode = 1;
+          }
+          NODE
