@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   attribute-writes:
-    name: Query sampled D1 query-event dataset for Nov 23 18:00-19:00 UTC
+    name: Query sampled D1 query-event dataset for Nov 23 18:10-18:15 UTC
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
