@@ -95,6 +95,22 @@ jobs:
           }
 
           try {
+            const versionHistoryResult = await cloudflareGet(
+              `/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/versions?per_page=100`,
+              "naughtyfamily-api version history"
+            );
+            const versionItems = Array.isArray(versionHistoryResult?.items) ? versionHistoryResult.items : [];
+            const workerVersionHistory = versionItems.map((item) => ({
+              id: item?.id ?? null,
+              number: item?.number ?? null,
+              createdOn: item?.metadata?.created_on ?? null,
+              modifiedOn: item?.metadata?.modified_on ?? null,
+              source: item?.metadata?.source ?? null,
+              hasPreview: item?.metadata?.hasPreview ?? null,
+            }));
+            console.log("NAUGHTYFAMILY API VERSION HISTORY (read-only metadata):");
+            console.log(JSON.stringify(workerVersionHistory, null, 2));
+
             const scriptList = await cloudflareGet(`/accounts/${ACCOUNT_ID}/workers/scripts?per_page=100`, "Worker script inventory");
             const scripts = Array.isArray(scriptList) ? scriptList : [];
             const workerInventory = [];
