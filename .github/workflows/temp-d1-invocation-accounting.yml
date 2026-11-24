@@ -27,6 +27,23 @@ jobs:
 
           if (!token) throw new Error("CLOUDFLARE_API_TOKEN Actions secret is missing or unavailable.");
 
+          async function cloudflareGet(path, label) {
+            const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+              signal: AbortSignal.timeout(20000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              const messages = (payload?.errors ?? []).map((x) => String(x.message ?? "API error")).join("; ");
+              throw new Error(`${label} failed (HTTP ${response.status}): ${messages || "invalid response"}`);
+            }
+            return payload.result;
+          }
+
           async function post(path, body, label) {
             const response = await fetch(`${API}${path}`, {
               method: "POST",
@@ -78,6 +95,42 @@ jobs:
           }
 
           try {
+            const scriptList = await cloudflareGet(`/accounts/${ACCOUNT_ID}/workers/scripts?per_page=100`, "Worker script inventory");
+            const scripts = Array.isArray(scriptList) ? scriptList : [];
+            const workerInventory = [];
+            for (const script of scripts) {
+              const scriptName = String(script?.id ?? script?.name ?? "");
+              if (!scriptName) continue;
+              try {
+                const settingsPayload = await cloudflareGet(
+                  `/accounts/${ACCOUNT_ID}/workers/scripts/${encodeURIComponent(scriptName)}/settings`,
+                  `Worker settings for ${scriptName}`
+                );
+                const bindings = Array.isArray(settingsPayload?.bindings) ? settingsPayload.bindings : [];
+                workerInventory.push({
+                  scriptName,
+                  d1Bindings: bindings
+                    .filter((binding) => binding?.type === "d1")
+                    .map((binding) => ({
+                      bindingName: String(binding.name ?? ""),
+                      databaseId: String(binding.database_id ?? ""),
+                      databaseName: String(binding.database_name ?? ""),
+                    })),
+                  queueBindings: bindings
+                    .filter((binding) => binding?.type === "queue")
+                    .map((binding) => ({
+                      bindingName: String(binding.name ?? ""),
+                      queueName: String(binding.queue_name ?? ""),
+                    })),
+                  settingsReadable: true,
+                });
+              } catch {
+                workerInventory.push({ scriptName, d1Bindings: [], queueBindings: [], settingsReadable: false });
+              }
+            }
+            console.log("DEPLOYED WORKER D1 BINDING INVENTORY (no secret values):");
+            console.log(JSON.stringify(workerInventory, null, 2));
+
             const keysResult = await post("/keys", {}, "Observability key discovery");
             const keys = Array.isArray(keysResult?.keys) ? keysResult.keys : Array.isArray(keysResult) ? keysResult : [];
             const discovered = keys.map((k) => String(k?.key ?? ""));
