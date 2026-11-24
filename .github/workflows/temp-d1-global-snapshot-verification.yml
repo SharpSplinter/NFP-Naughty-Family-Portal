@@ -1,0 +1,90 @@
+name: Temporary read-only D1 global snapshot verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Nov 23 production global ranking snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run SELECT-only production D1 checks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const accountId = "6c03b978ed9a59adc3f61c715bdad45c";
+          const databaseId = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
+          const endpoint = "https://api.cloudflare.com/client/v4/accounts/" + accountId + "/d1/database/" + databaseId + "/query";
+
+          if (!token) throw new Error("CLOUDFLARE_API_TOKEN secret is unavailable.");
+
+          const statements = [
+            {
+              label: "snapshot_rows_for_reporting_day",
+              sql: "SELECT reporting_day, source, COUNT(*) AS row_count, COUNT(DISTINCT company_id) AS distinct_companies, MIN(captured_at) AS first_captured_at, MAX(captured_at) AS last_captured_at, MIN(source_fetched_at) AS first_source_fetched_at, MAX(source_fetched_at) AS last_source_fetched_at FROM global_company_rank_snapshots WHERE reporting_day = '2026-11-23' GROUP BY reporting_day, source ORDER BY source"
+            },
+            {
+              label: "snapshot_meta",
+              sql: "SELECT singleton_id, reporting_day, source_fetched_at, company_count, updated_at FROM global_company_rank_snapshot_meta WHERE singleton_id = 1"
+            },
+            {
+              label: "scheduled_refresh_run",
+              sql: "SELECT r.run_id, r.source, r.status, r.companies_seen, r.expected_total, r.snapshot_fetched_at, r.started_at, r.updated_at, r.finished_at, (SELECT COUNT(*) FROM global_rankings_refresh_pages p WHERE p.run_id = r.run_id) AS refresh_page_count FROM global_rankings_refresh_runs r WHERE r.source = 'scheduled' AND r.started_at >= '2026-11-23T18:10:00Z' AND r.started_at < '2026-11-23T18:15:00Z' ORDER BY r.started_at"
+            },
+            {
+              label: "snapshot_table_schema",
+              sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'global_company_rank_snapshots'"
+            },
+            {
+              label: "snapshot_index_list",
+              sql: "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'global_company_rank_snapshots' ORDER BY name"
+            },
+          ];
+
+          const results = [];
+          for (const item of statements) {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+                Accept: "application/json"
+              },
+              body: JSON.stringify({ sql: item.sql }),
+              signal: AbortSignal.timeout(20000)
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || payload?.success !== true) {
+              const message = (payload?.errors ?? []).map(x => String(x.message ?? "API error")).join("; ");
+              throw new Error(item.label + " failed (HTTP " + response.status + "): " + (message || "invalid response"));
+            }
+            const result = payload?.result?.[0] ?? {};
+            const meta = result.meta ?? {};
+            const rowsWritten = Number(meta.rows_written ?? meta.rowsWritten ?? 0);
+            results.push({
+              label: item.label,
+              rowsWritten,
+              rowsRead: Number(meta.rows_read ?? meta.rowsRead ?? 0),
+              results: result.results ?? []
+            });
+            if (rowsWritten !== 0) {
+              throw new Error("Read-only assertion failed for " + item.label + ": rows_written=" + rowsWritten);
+            }
+          }
+
+          console.log("READ-ONLY PRODUCTION D1 SNAPSHOT VERIFICATION:");
+          console.log(JSON.stringify({
+            database: "naughty-company-dashboard",
+            reportingDayUtc: "2026-11-23",
+            statementCount: results.length,
+            totalRowsWrittenByAudit: results.reduce((sum, item) => sum + item.rowsWritten, 0),
+            results
+          }, null, 2));
+          NODE
