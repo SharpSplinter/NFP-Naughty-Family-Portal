@@ -82,6 +82,20 @@ jobs:
             }
           }`;
 
+          const fiveMinuteQuery = `query {
+            viewer {
+              accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+                d1AnalyticsAdaptiveGroups(
+                  limit: 10000
+                  filter: { datetime_geq: "2026-11-23T18:00:00Z", datetime_lt: "2026-11-23T19:00:00Z" }
+                ) {
+                  sum { rowsWritten writeQueries }
+                  dimensions { datetimeFiveMinutes databaseId }
+                }
+              }
+            }
+          }`;
+
           const queryInsightsQuery = `query {
             viewer {
               accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
@@ -108,15 +122,23 @@ jobs:
           }
 
           try {
-            const [daily, hourly, queryData] = await Promise.all([
+            const [daily, hourly, fiveMinute, queryData] = await Promise.all([
               graphql("Daily database totals", dailyQuery),
               graphql("Hourly database totals", hourlyQuery),
+              graphql("Five-minute spike window totals", fiveMinuteQuery),
               graphql("Per-query write attribution", queryInsightsQuery),
             ]);
 
             const dailyRows = daily?.d1AnalyticsAdaptiveGroups ?? [];
             const hourlyRows = hourly?.d1AnalyticsAdaptiveGroups ?? [];
             const queryRows = queryData?.d1QueriesAdaptiveGroups ?? [];
+            const fiveMinuteRows = (fiveMinute?.d1AnalyticsAdaptiveGroups ?? []).map((row) => ({
+              time: row.dimensions?.datetimeFiveMinutes ?? "unknown",
+              databaseId: row.dimensions?.databaseId ?? "",
+              database: dbName(row.dimensions?.databaseId ?? ""),
+              rowsWritten: n(row.sum?.rowsWritten),
+              writeQueries: n(row.sum?.writeQueries),
+            })).sort((a, b) => String(a.time).localeCompare(String(b.time)) || a.database.localeCompare(b.database));
 
             const totals = dailyRows.reduce((acc, row) => {
               const id = row.dimensions?.databaseId ?? "";
@@ -195,6 +217,7 @@ jobs:
                 topQueries: querySummary.slice(0, 60),
               },
               hourlyRowsWritten: hourlySummary,
+              fiveMinuteRowsWrittenInSpikeHour: fiveMinuteRows,
             };
 
             console.log("D1 PREVIOUS UTC DAY WRITE ATTRIBUTION (read-only):");
