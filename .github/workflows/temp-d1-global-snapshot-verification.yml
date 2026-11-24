@@ -22,7 +22,6 @@ jobs:
           const accountId = "6c03b978ed9a59adc3f61c715bdad45c";
           const databaseId = "bbbe128a-c5cc-46ec-b8ef-93860183e795";
           const endpoint = "https://api.cloudflare.com/client/v4/accounts/" + accountId + "/d1/database/" + databaseId + "/query";
-          const runId = "6b825378083084fcb8e69111";
 
           if (!token) throw new Error("CLOUDFLARE_API_TOKEN secret is unavailable.");
 
@@ -45,12 +44,8 @@ jobs:
             },
             {
               label: "snapshot_index_list",
-              sql: "PRAGMA index_list('global_company_rank_snapshots')"
+              sql: "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'global_company_rank_snapshots' ORDER BY name"
             },
-            {
-              label: "refresh_pages_for_run",
-              sql: "SELECT COUNT(*) AS row_count FROM global_rankings_refresh_pages WHERE run_id = '" + runId + "'"
-            }
           ];
 
           const results = [];
@@ -88,7 +83,6 @@ jobs:
           console.log(JSON.stringify({
             database: "naughty-company-dashboard",
             reportingDayUtc: "2026-11-23",
-            refreshRunId: runId,
             statementCount: results.length,
             totalRowsWrittenByAudit: results.reduce((sum, item) => sum + item.rowsWritten, 0),
             results
