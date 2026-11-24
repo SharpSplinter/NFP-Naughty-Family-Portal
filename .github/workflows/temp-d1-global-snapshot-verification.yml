@@ -36,7 +36,7 @@ jobs:
             },
             {
               label: "scheduled_refresh_run",
-              sql: "SELECT run_id, source, status, companies_seen, expected_total, snapshot_fetched_at, started_at, updated_at, finished_at FROM global_rankings_refresh_runs WHERE run_id = '" + runId + "'"
+              sql: "SELECT r.run_id, r.source, r.status, r.companies_seen, r.expected_total, r.snapshot_fetched_at, r.started_at, r.updated_at, r.finished_at, (SELECT COUNT(*) FROM global_rankings_refresh_pages p WHERE p.run_id = r.run_id) AS refresh_page_count FROM global_rankings_refresh_runs r WHERE r.source = 'scheduled' AND r.started_at >= '2026-11-23T18:10:00Z' AND r.started_at < '2026-11-23T18:15:00Z' ORDER BY r.started_at"
             },
             {
               label: "snapshot_table_schema",
