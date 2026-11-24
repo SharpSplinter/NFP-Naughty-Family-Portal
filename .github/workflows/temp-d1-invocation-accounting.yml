@@ -155,6 +155,26 @@ jobs:
                 label: "automation_runs_in_spike_window",
                 sql: `SELECT trigger_name, status, started_at, finished_at, companies_checked, companies_failed, alerts_created, error_summary FROM automation_runs WHERE started_at >= '${d1AuditStart}' AND started_at < '${d1AuditEnd}' ORDER BY started_at`,
               },
+              {
+                label: "global_company_rank_snapshots_captured_in_spike_window",
+                sql: `SELECT reporting_day, source, COUNT(*) AS row_count, MIN(captured_at) AS first_captured_at, MAX(captured_at) AS last_captured_at, COUNT(DISTINCT company_id) AS distinct_companies FROM global_company_rank_snapshots WHERE captured_at >= '${d1AuditStart}' AND captured_at < '${d1AuditEnd}' GROUP BY reporting_day, source ORDER BY reporting_day, source`,
+              },
+              {
+                label: "global_company_rank_snapshots_by_source_timestamp_in_spike_window",
+                sql: `SELECT source_fetched_at, reporting_day, source, COUNT(*) AS row_count FROM global_company_rank_snapshots WHERE source_fetched_at >= '${d1AuditStart}' AND source_fetched_at < '${d1AuditEnd}' GROUP BY source_fetched_at, reporting_day, source`,
+              },
+              {
+                label: "global_company_rank_snapshot_meta",
+                sql: "SELECT singleton_id, reporting_day, source_fetched_at, company_count, updated_at FROM global_company_rank_snapshot_meta WHERE singleton_id = 1",
+              },
+              {
+                label: "global_rankings_cache_timestamp",
+                sql: "SELECT cache_id, fetched_at, length(companies_json) AS companies_json_bytes FROM global_rankings_cache WHERE cache_id = 1",
+              },
+              {
+                label: "global_rankings_refresh_run_detail",
+                sql: `SELECT run_id, source, status, started_at, updated_at, finished_at, companies_seen, snapshot_fetched_at, type_index, page_offset FROM global_rankings_refresh_runs WHERE run_id = '6b825378083084fcb8e69111'`,
+              },
               { label: "company_api_keys_total", sql: "SELECT COUNT(*) AS row_count FROM company_api_keys" },
               { label: "legacy_company_keys_total", sql: "SELECT COUNT(*) AS row_count FROM company_keys" },
               { label: "companies_fetched_in_spike_window", sql: `SELECT COUNT(*) AS row_count FROM companies WHERE fetched_at >= '${d1AuditStart}' AND fetched_at < '${d1AuditEnd}'` },
