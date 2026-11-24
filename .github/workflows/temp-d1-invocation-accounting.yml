@@ -152,6 +152,45 @@ jobs:
               otherAccountAuditRows: sanitizedAuditRows.length - d1AuditRows.length,
             }, null, 2));
 
+            const liveContentResponse = await fetch(
+              `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/content/v2`,
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: "application/json",
+                },
+                signal: AbortSignal.timeout(20000),
+              }
+            );
+            const liveContent = await liveContentResponse.text();
+            let contentPayload = null;
+            try { contentPayload = JSON.parse(liveContent); } catch { /* content may be multipart */ }
+            const contentText = contentPayload
+              ? JSON.stringify(contentPayload)
+              : liveContent;
+            const liveBundleSummary = {
+              status: liveContentResponse.status,
+              contentLength: liveContent.length,
+              hasD1RequestReadMeter: contentText.includes("D1RequestReadMeter"),
+              hasD1ReadAccountingMarker: contentText.includes("d1_read_accounting"),
+              hasRunScheduledAutomation: contentText.includes("runScheduledAutomation"),
+              hasDailyCronString: contentText.includes("10 18 * * *"),
+              hasFactionDirectorySync: contentText.includes("syncFactionDirectorDirectory"),
+              hasRankingProfileRefresh: contentText.includes("refreshRankingProfiles"),
+              hasGlobalRankingRefresh: contentText.includes("refreshGlobalRankingCache"),
+            };
+            if (!liveContentResponse.ok) throw new Error(`Live Worker content fetch failed (HTTP ${liveContentResponse.status}).`);
+
+            const schedules = await cloudflareGet(
+              `/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/schedules`,
+              "naughtyfamily-api cron schedules"
+            );
+            console.log("LIVE PRODUCTION WORKER BUNDLE FEATURE CHECK (no source dump):");
+            console.log(JSON.stringify(liveBundleSummary, null, 2));
+            console.log("LIVE PRODUCTION WORKER CRON SCHEDULES:");
+            console.log(JSON.stringify(schedules, null, 2));
+
             const versionHistoryResult = await cloudflareGet(
               `/accounts/${ACCOUNT_ID}/workers/scripts/naughtyfamily-api/versions?per_page=100`,
               "naughtyfamily-api version history"
