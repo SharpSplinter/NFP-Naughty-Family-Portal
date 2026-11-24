@@ -91,6 +91,7 @@ jobs:
             for (const spec of valueSpecs) {
               if (!discovered.includes(spec.key)) continue;
               const result = await post("/values", {
+                datasets: [],
                 key: spec.key,
                 timeframe,
                 type: spec.type,
