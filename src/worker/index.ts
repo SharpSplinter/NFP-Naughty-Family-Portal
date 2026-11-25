@@ -1577,7 +1577,7 @@ async function getGlobalRankingApiKey(env: WorkerEnv): Promise<string> {
   throw Object.assign(new Error("No Worker-owned Torn service API key is configured for shared company-ranking requests."), { status: 503 })
 }
 
-async function startGlobalRankingRefresh(env: WorkerEnv): Promise<{ runId: string }> {
+async function startGlobalRankingRefresh(env: WorkerEnv, scheduledAt: string): Promise<{ runId: string }> {
   if (!env.GLOBAL_RANKINGS_QUEUE) throw new Error("The resumable global star-income buffer queue is not configured.")
   const db = requireDb(env)
   await ensureGlobalRankingRefreshSchema(env)
@@ -1587,9 +1587,10 @@ async function startGlobalRankingRefresh(env: WorkerEnv): Promise<{ runId: strin
   const apiKey = await getGlobalRankingApiKey(env)
   const types = await fetchGlobalCompanyTypeCatalog(apiKey)
   const now = new Date().toISOString()
+  if (!Number.isFinite(Date.parse(scheduledAt))) throw new Error("The scheduled global star-income capture timestamp is invalid.")
   const runId = randomToken().slice(0, 24)
   await db.prepare("INSERT INTO global_rankings_refresh_runs (run_id, source, status, types_json, type_index, page_offset, expected_total, companies_seen, snapshot_fetched_at, admin_job_id, lease_until, started_at, updated_at) VALUES (?, 'scheduled', 'running', ?, 0, 0, NULL, 0, ?, NULL, 0, ?, ?)")
-    .bind(runId, asJson(types), now, now, now).run()
+    .bind(runId, asJson(types), scheduledAt, now, now).run()
   try {
     await env.GLOBAL_RANKINGS_QUEUE.send({ runId })
   } catch (error) {
@@ -1688,10 +1689,11 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
   const buffers = Array.from(combined.values()).sort((a, b) => a.companyTypeId - b.companyTypeId || a.starRating - b.starRating)
   if (!buffers.length) throw new Error("Torn returned no valid star-rating and weekly-income benchmarks; the prior snapshot was preserved.")
 
-  const sourceStartedAt = run.snapshot_fetched_at
+  const scheduledAt = run.snapshot_fetched_at
+  const sourceStartedAt = run.started_at
   const sourceCompletedAt = new Date().toISOString()
-  if (!Number.isFinite(Date.parse(sourceStartedAt))) throw new Error("The weekly star-income capture did not have a valid source timestamp.")
-  const reportingDay = new Date(sourceStartedAt).toISOString().slice(0, 10)
+  if (!Number.isFinite(Date.parse(scheduledAt)) || !Number.isFinite(Date.parse(sourceStartedAt))) throw new Error("The weekly star-income capture did not have valid scheduled and source timestamps.")
+  const reportingDay = weeklyFactionReportingDay(scheduledAt)
   const benchmarkCompanyCount = buffers.reduce((sum, row) => sum + row.companyCount, 0)
   const tuples = buffers.map(row => [
     reportingDay, row.companyTypeId, row.companyType, row.starRating, row.minWeeklyIncome, row.maxWeeklyIncome,
@@ -1701,7 +1703,7 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
   await db.batch([
     db.prepare("INSERT INTO global_star_income_buffers (reporting_day, company_type_id, company_type, star_rating, min_weekly_income, max_weekly_income, company_count, source_started_at, captured_at) SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]'), json_extract(value, '$[6]'), json_extract(value, '$[7]'), json_extract(value, '$[8]') FROM json_each(?) WHERE 1 ON CONFLICT(reporting_day, company_type_id, star_rating) DO UPDATE SET company_type = excluded.company_type, min_weekly_income = excluded.min_weekly_income, max_weekly_income = excluded.max_weekly_income, company_count = excluded.company_count, source_started_at = excluded.source_started_at, captured_at = excluded.captured_at").bind(asJson(tuples)),
     db.prepare("INSERT INTO global_star_income_buffer_snapshots (reporting_day, scheduled_at, source_started_at, source_completed_at, company_count, benchmark_company_count, company_type_count, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(reporting_day) DO UPDATE SET scheduled_at = excluded.scheduled_at, source_started_at = excluded.source_started_at, source_completed_at = excluded.source_completed_at, company_count = excluded.company_count, benchmark_company_count = excluded.benchmark_company_count, company_type_count = excluded.company_type_count, captured_at = excluded.captured_at")
-      .bind(reportingDay, sourceStartedAt, sourceStartedAt, sourceCompletedAt, stagedCompanyCount, benchmarkCompanyCount, new Set(types.map(type => type.id)).size, sourceCompletedAt),
+      .bind(reportingDay, scheduledAt, sourceStartedAt, sourceCompletedAt, stagedCompanyCount, benchmarkCompanyCount, new Set(types.map(type => type.id)).size, sourceCompletedAt),
   ])
   const now = new Date().toISOString()
   await db.prepare("UPDATE global_rankings_refresh_runs SET status = 'completed', lease_until = 0, finished_at = ?, updated_at = ?, error_message = NULL WHERE run_id = ? AND status = 'running'")
@@ -4711,7 +4713,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
       isDailyCompanyCaptureWindow ? refreshRankingProfiles(env, true, { cron: controller.cron, scheduledTime: controller.scheduledTime }) : emptyCompanyRefresh,
       isWeeklyStarIncomeBufferWindow ? captureWeeklyFactionCounts() : refreshDirectory(),
     ]
-    if (isWeeklyStarIncomeBufferWindow) fallbackTasks.push(startGlobalRankingRefresh(env))
+    if (isWeeklyStarIncomeBufferWindow) fallbackTasks.push(startGlobalRankingRefresh(env, startedAt))
     await Promise.allSettled(fallbackTasks)
     return
   }
@@ -4721,7 +4723,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
     isDailyCompanyCaptureWindow ? refreshRankingProfiles(env, true, { cron: controller.cron, scheduledTime: controller.scheduledTime }) : emptyCompanyRefresh,
     isWeeklyStarIncomeBufferWindow ? captureWeeklyFactionCounts() : refreshDirectory(),
   ]
-  if (isWeeklyStarIncomeBufferWindow) tasks.push(startGlobalRankingRefresh(env))
+  if (isWeeklyStarIncomeBufferWindow) tasks.push(startGlobalRankingRefresh(env, startedAt))
   const results = await Promise.allSettled(tasks)
   let staleRuleFailures = 0
   let digestFailures = 0
