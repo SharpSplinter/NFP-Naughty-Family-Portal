@@ -204,12 +204,13 @@ Design a conservative shared throttle and request budget. Do not rely on the max
 
 All weekly rankings use this fixed reporting window:
 
-**Sunday 00:00:00 TCT (UTC), inclusive, through the following Sunday 00:00:00 TCT (UTC), exclusive.**
+**Sunday 7:10 PM fixed EST (Monday 00:10 UTC), inclusive, through the following Sunday 7:10 PM fixed EST (Monday 00:10 UTC), exclusive.**
 
-- Duration: exactly 168 hours.
-- All backend timestamps and database boundaries are UTC.
-- Do not use the viewer's local timezone or daylight saving time.
-- The weekly page must display the exact period and time remaining in the active week.
+- The recurring window is exactly 168 hours.
+- Use the fixed EST offset (UTC-5) year-round; do not shift the collection boundary for daylight saving time.
+- Store all backend timestamps and database boundaries in UTC.
+- The November 22, 2026 Sunday-00:00-UTC baseline is retained through the first new boundary on November 30, 2026 at 00:10 UTC. This one-time transition period ends at the first Sunday 7:10 PM EST capture; subsequent windows are exactly seven days.
+- The weekly page must display the exact reporting period and time remaining in the active week.
 
 At each Sunday boundary, schedule dedicated starting/ending lifetime-counter snapshots for each member. Capture actual request/response timestamps. Record timing deviation and label late or incomplete boundary snapshots. A delayed job must not pretend it captured an exact boundary.
 
@@ -696,7 +697,7 @@ Still to implement or validate:
 
 **Active-week and immutable closed-week reporting, 26-week history/comparison, admin diagnostics and audited boundary recovery are implemented on the PR branch. Stateful staging acceptance passed in [Run 20](https://github.com/SharpSplinter/Naughty-Company-Dashboard/actions/runs/41565717801).**
 
-- [x] Add a unique Sunday 00:00 UTC boundary registry and idempotently enqueue dedicated personalstats and gym-energy baseline runs through the existing serialized collection queue.
+- [x] Add a unique weekly boundary registry and idempotently enqueue dedicated personalstats and gym-energy baseline runs through the existing serialized collection queue at Sunday 7:10 PM fixed EST / Monday 00:10 UTC.
 - [x] Preserve scheduled boundary time separately from each actual API response capture time; expose first-capture timestamps and timing deviation, and label captures more than five minutes late.
 - [x] Calculate weekly deltas from the dedicated baseline run and the latest later in-week samples; keep all 18 counters independent, including separate Xanax and LSD.
 - [x] Rank faction gym-energy contribution independently from the personalstats counters.
@@ -717,7 +718,7 @@ Still to implement or validate:
 **Active-week rankings, filtering/sorting, and current/archived member drilldowns implemented on the PR branch.**
 
 - [x] Make Weekly Rankings the default Faction workspace tab while retaining the previous Company directory as a separate tab.
-- [x] Show the fixed Sunday 00:00 UTC reporting period, remaining time, boundary run state and actual first-capture timing.
+- [x] Show the fixed Sunday 7:10 PM EST reporting period, remaining time, boundary run state and actual first-capture timing.
 - [x] Add faction summary cards for member count, complete public-stat coverage, Xanax, LSD, alcohol, boosters, energy drinks and gym energy.
 - [x] Add independent metric ranking selection across all 18 public counters and gym-energy contribution.
 - [x] Display starting and latest public networth balances beside the weekly networth change.

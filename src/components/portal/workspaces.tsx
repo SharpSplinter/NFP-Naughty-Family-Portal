@@ -287,7 +287,7 @@ type FactionWeeklyHistoryPayload = {
 
 type FactionWeeklyPayload = {
   generatedAt: string
-  week: { startAt: string; endAt: string; secondsRemaining: number; generatedAt: string }
+  week: { startAt: string; endAt: string; secondsRemaining: number; generatedAt: string; transition?: boolean }
   boundary: {
     statsStatus: string
     gymEnergyStatus: string
@@ -616,6 +616,9 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
   const formatUtc = (value: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: "UTC", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(value)) + " UTC"
+  const formatEst = (value: string) => new Intl.DateTimeFormat("en-US", {
+    timeZone: "Etc/GMT+5", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+  }).format(new Date(value)) + " EST"
   const remaining = (seconds: number) => {
     const days = Math.floor(seconds / 86400)
     const hours = Math.floor((seconds % 86400) / 3600)
@@ -624,7 +627,7 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
   }
   const statusLabel = (value: FactionWeeklyMember["status"]) => ({
     complete: "Complete", partial: "Partial data", incomplete: "Incomplete",
-    waiting_for_baseline: "Waiting for Sunday baseline", waiting_for_update: "Waiting for next sample", anomaly: "Counter anomaly",
+    waiting_for_baseline: "Waiting for weekly baseline", waiting_for_update: "Waiting for next sample", anomaly: "Counter anomaly",
   })[value]
   const metricValue = (member: FactionWeeklyMember, key: FactionWeeklyRankingMetric) => key === "gymEnergy" ? member.gymEnergy : member.metrics[key]
   const metricTotal = (key: FactionWeeklyMetric) => {
@@ -661,15 +664,16 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
   return (
     <main className="module-page faction-module faction-weekly-module">
       <header className="module-topbar"><a className="portal-brand" href="/" onClick={(event) => { event.preventDefault(); onNavigate("/") }}><span className="portal-brand-mark">NF</span><span><strong>NAUGHTY FAMILY</strong><small>FACTION WORKSPACE</small></span></a><button type="button" onClick={() => onNavigate("/")}>← Return to portal</button></header>
-      <section className="module-heading"><div className="portal-eyebrow"><span /> NAUGHTY SOULS · WEEKLY PERFORMANCE</div><h1>Faction <em>Weekly Rankings</em></h1><p>Lifetime counters are compared with this week's Sunday 00:00 UTC baseline. Xanax and LSD remain independent rankings. Missing or anomalous samples are never treated as zero.</p></section>
+      <section className="module-heading"><div className="portal-eyebrow"><span /> NAUGHTY SOULS · WEEKLY PERFORMANCE</div><h1>Faction <em>Weekly Rankings</em></h1><p>Lifetime counters are compared with this week's Sunday 7:10 PM EST baseline. Xanax and LSD remain independent rankings. Missing or anomalous samples are never treated as zero.</p></section>
       {error && <p className="settings-feedback error" role="alert">{error}</p>}
       <section className="faction-weekly-toolbar">
-        <div><small>REPORTING WINDOW · TCT / UTC</small><strong>{payload ? formatUtc(payload.week.startAt) + " – " + formatUtc(payload.week.endAt) : "Sunday 00:00 UTC – following Sunday 00:00 UTC"}</strong><span>{payload ? remaining(payload.week.secondsRemaining) : "Exact 168-hour reporting week"}</span></div>
+        <div><small>REPORTING WINDOW · FIXED EST</small><strong>{payload ? formatEst(payload.week.startAt) + " – " + formatEst(payload.week.endAt) : "Sunday 7:10 PM EST – following Sunday 7:10 PM EST"}</strong><span>{payload ? remaining(payload.week.secondsRemaining) : "Weekly 168-hour reporting window"}</span></div>
         <div className="faction-weekly-controls">
           <label>Rank by<select value={metric} onChange={event => setMetric(event.target.value as FactionWeeklyRankingMetric)}>{factionWeeklyMetricOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <button type="button" onClick={() => void load()} disabled={busy}>{busy ? "Loading…" : "Refresh ↻"}</button>
         </div>
       </section>
+      {payload?.week.transition && <p className="field-hint">One-time schedule transition: the existing November 22 baseline is retained through Sunday, November 29 at 7:10 PM EST. The recurring Sunday 7:10 PM EST window begins at that next boundary.</p>}
       <section className="faction-weekly-boundary-status">
         <span>Sunday stats baseline: <strong>{metricsStatus.replace(/_/g, " ")}</strong></span>
         <span>First stats capture: <strong>{timingLabel(payload?.boundary.statsCapturedAt, payload?.boundary.statsTimingDeviationSeconds, payload?.boundary.statsLate)}</strong></span>
@@ -757,7 +761,7 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
             </div>
             <div className="historical-leaderboard faction-weekly-snapshot-history">
               <table>
-                <thead><tr><th>METRIC</th><th>SUNDAY BASELINE</th><th>LATEST LIFETIME VALUE</th><th>WEEKLY DELTA</th><th>METRIC COVERAGE &amp; FRESHNESS</th></tr></thead>
+                <thead><tr><th>METRIC</th><th>WEEK START BASELINE</th><th>LATEST LIFETIME VALUE</th><th>WEEKLY DELTA</th><th>METRIC COVERAGE &amp; FRESHNESS</th></tr></thead>
                 <tbody>{factionWeeklyMetricOptions.map(option => {
                   const startingValue = option.value === "gymEnergy" ? member.startingGymEnergy : member.startingMetrics[option.value]
                   const endingValue = option.value === "gymEnergy" ? member.endingGymEnergy : member.endingMetrics[option.value]
@@ -808,14 +812,14 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
                     setCompareWeekStart(historyWeeks.find(report => report.weekStartAt < selected)?.weekStartAt || "")
                   }
                 }}>
-                  {historyWeeks.map(report => <option key={report.weekStartAt} value={report.weekStartAt}>{formatUtc(report.weekStartAt)} · {report.status}</option>)}
+                  {historyWeeks.map(report => <option key={report.weekStartAt} value={report.weekStartAt}>{formatEst(report.weekStartAt)} · {report.status}</option>)}
                 </select>
               </label>
               <label>Compare against
                 <select value={compareWeekStart} onChange={event => setCompareWeekStart(event.target.value)}>
                   <option value="">No comparison</option>
                   {historyWeeks.filter(report => report.weekStartAt < historyWeekStart).map(report =>
-                    <option key={report.weekStartAt} value={report.weekStartAt}>{formatUtc(report.weekStartAt)} · {report.status}</option>
+                    <option key={report.weekStartAt} value={report.weekStartAt}>{formatEst(report.weekStartAt)} · {report.status}</option>
                   )}
                 </select>
               </label>

@@ -75,7 +75,14 @@ try {
   const {
     WEEKLY_METRIC_NAMES,
     WEEK_MS,
-    utcSundayWindow,
+    FIRST_EST_WEEKLY_BOUNDARY_AT,
+    EST_WEEKLY_TRANSITION_START_AT,
+    weeklyFactionBoundaryStart,
+    weeklyFactionPreviousBoundaryStart,
+    weeklyFactionWindow,
+    weeklyFactionWindowEnd,
+    weeklyFactionWindowStart,
+    isWeeklyFactionBoundary,
     calculateWeeklyMemberResult,
     rankWeeklyMembers,
   } = require(join(temp, "lib/faction-performance/weekly.js"))
@@ -1259,14 +1266,30 @@ try {
     }), null)
   })
 
-  await test("weekly windows start Sunday 00:00 UTC and remain exactly 168 hours across DST changes", () => {
-    const regular = utcSundayWindow(Date.parse("2026-11-02T18:00:00.000Z"))
-    assert.equal(regular.startAt, "2026-11-01T00:00:00.000Z")
-    assert.equal(regular.endAt, "2026-11-08T00:00:00.000Z")
+  await test("weekly faction windows start Sunday 19:10 fixed EST / Monday 00:10 UTC and preserve the prior baseline once", () => {
+    assert.equal(FIRST_EST_WEEKLY_BOUNDARY_AT, Date.parse("2026-11-30T00:10:00.000Z"))
+    assert.equal(EST_WEEKLY_TRANSITION_START_AT, Date.parse("2026-11-22T00:00:00.000Z"))
+    assert.equal(weeklyFactionBoundaryStart(Date.parse("2026-11-30T00:09:59.999Z")), Date.parse("2026-11-23T00:10:00.000Z"))
+    assert.equal(weeklyFactionBoundaryStart(Date.parse("2026-11-30T00:10:00.000Z")), FIRST_EST_WEEKLY_BOUNDARY_AT)
+    assert.equal(weeklyFactionPreviousBoundaryStart(FIRST_EST_WEEKLY_BOUNDARY_AT), EST_WEEKLY_TRANSITION_START_AT)
+    assert.equal(weeklyFactionWindowStart(Date.parse("2026-11-25T12:00:00.000Z")), EST_WEEKLY_TRANSITION_START_AT)
+
+    const transition = weeklyFactionWindow(Date.parse("2026-11-25T12:00:00.000Z"))
+    assert.equal(transition.startAt, "2026-11-22T00:00:00.000Z")
+    assert.equal(transition.endAt, "2026-11-30T00:10:00.000Z")
+    assert.equal(transition.transition, true)
+    assert.equal(Date.parse(transition.endAt) - Date.parse(transition.startAt), 7 * 24 * 60 * 60 * 1000 + 10 * 60 * 1000)
+
+    const regular = weeklyFactionWindow(Date.parse("2026-12-02T18:00:00.000Z"))
+    assert.equal(regular.startAt, "2026-11-30T00:10:00.000Z")
+    assert.equal(regular.endAt, "2026-12-07T00:10:00.000Z")
+    assert.equal(regular.transition, false)
     assert.equal(Date.parse(regular.endAt) - Date.parse(regular.startAt), WEEK_MS)
-    const dstSunday = utcSundayWindow(Date.parse("2026-03-08T07:30:00.000Z"))
-    assert.equal(dstSunday.startAt, "2026-03-08T00:00:00.000Z")
-    assert.equal(Date.parse(dstSunday.endAt) - Date.parse(dstSunday.startAt), 168 * 60 * 60 * 1000)
+
+    assert.equal(weeklyFactionWindowEnd(EST_WEEKLY_TRANSITION_START_AT), FIRST_EST_WEEKLY_BOUNDARY_AT)
+    assert.equal(isWeeklyFactionBoundary(Date.parse("2026-11-22T00:00:00.000Z")), true, "legacy archived UTC boundaries remain valid")
+    assert.equal(isWeeklyFactionBoundary(FIRST_EST_WEEKLY_BOUNDARY_AT), true, "new fixed-EST weekly anchors are valid")
+    assert.equal(isWeeklyFactionBoundary(Date.parse("2026-11-30T00:00:00.000Z")), false, "Sunday midnight is not a new EST weekly boundary")
   })
 
   await test("weekly deltas use Sunday baseline snapshots, keep Xanax and LSD separate, and allow negative networth change", () => {
@@ -2299,6 +2322,13 @@ try {
     assert.match(scheduled, /isWeeklyStarIncomeBufferWindow \? captureWeeklyFactionCounts\(\) : refreshDirectory\(\)/)
     assert.match(scheduled, /refreshFactionDirectoryFromServiceKey\(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow, isWeeklyStarIncomeBufferWindow\)/)
     assert.match(workerSource, /if \(!forceRefreshAll && checked && now - checked < freshnessWindowMs\) continue/, "the weekly snapshot must bypass the routine freshness skip and refresh every member")
+    const factionDispatcherStart = workerSource.indexOf("async function runFiveMinuteScheduledJobs")
+    const factionDispatcherEnd = workerSource.indexOf("export default {", factionDispatcherStart)
+    const factionDispatcher = workerSource.slice(factionDispatcherStart, factionDispatcherEnd)
+    assert.match(factionDispatcher, /scheduledTime === weeklyBoundaryMs/, "faction baseline collections must enqueue at exact Sunday 19:10 EST")
+    assert.match(factionDispatcher, /weeklyFactionPreviousBoundaryStart\(weeklyBoundaryMs\)/, "report finalization must use the prior transition-aware boundary")
+    assert.match(workerSource, /weeklyFactionWindow\(nowMs\)/, "the Faction Dashboard must use the active fixed-EST window")
+    assert.match(workerSource, /isWeeklyFactionBoundary\(compareMs\)/, "archived UTC and new EST report comparisons must remain valid")
     assert.match(workerSource, /const pendingCount = Math\.max\(pending \+ failedMemberCount, 0\)/)
     assert.match(workerSource, /if \(forceRefresh && \(typeof root\.rating !== "number" \|\| !Number\.isFinite\(root\.rating\)\)\)/)
     assert.match(workerSource, /DELETE FROM faction_star_weekly_counts WHERE week_key = \?/)

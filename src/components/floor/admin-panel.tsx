@@ -500,11 +500,11 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
     if (!actionsArmed || weeklyBoundaryRecoveryBusy || !boundary.recoverable) return
     const collectionNames = boundary.boundaryExists
       ? boundary.recoveryCollections.map((kind) => kind === "personalstats" ? "public personal stats" : "gym-energy").join(" and ")
-      : "both Sunday baseline collections"
+      : "both weekly baseline collections"
     const detail = boundary.boundaryExists
       ? "Retry " + collectionNames + " using the existing frozen member cohort. Captures will keep their actual timestamps and may be marked late."
-      : "Create and queue both Sunday captures for the known membership cohort. This is only available within 24 hours of the boundary."
-    if (!window.confirm("Recover the Sunday boundary " + prettyDate(boundary.boundaryAt) + "?\\n\\n" + detail + "\\n\\nFinalized weekly reports are protected and will not be changed.")) return
+      : "Create and queue both weekly captures for the known membership cohort. This is only available within 24 hours of the boundary."
+    if (!window.confirm("Recover the weekly boundary " + prettyDate(boundary.boundaryAt) + "?\\n\\n" + detail + "\\n\\nFinalized weekly reports are protected and will not be changed.")) return
     try {
       setWeeklyBoundaryRecoveryBusy(boundary.boundaryAt); setError(""); setNotice("")
       const payload = await adminFetch<{ created: boolean; queued?: Array<{ collection: string; runId: string }>; queuedCollections?: string[]; skipped?: Array<{ collection: string; reason: string }> }>(apiBase, sessionToken, "/api/admin/faction/weekly-boundaries/recover", {
@@ -784,8 +784,8 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
       </div>
       <section className="panel admin-subpanel">
         <p className="field-hint">A missing boundary can only be created during the first 24 hours. Existing failed, partial, or stale runs can be retried for up to eight days using the original frozen cohort. Actual capture times remain visible as late when appropriate. Once either adjacent weekly report is finalized, recovery is blocked to protect its immutable results.</p>
-        {weeklyBoundariesLoading && !weeklyBoundaries.length ? <div className="empty-state">Loading Sunday boundary records…</div> : (
-          <div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable administration table"><table className="admin-table"><thead><tr><th>SUNDAY · UTC</th><th>STATS RUN</th><th>GYM ENERGY RUN</th><th>MEMBERS KNOWN</th><th>WEEKLY REPORTS</th><th>RECOVERY</th></tr></thead><tbody>
+        {weeklyBoundariesLoading && !weeklyBoundaries.length ? <div className="empty-state">Loading weekly boundary records…</div> : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable administration table"><table className="admin-table"><thead><tr><th>WINDOW START · EST</th><th>STATS RUN</th><th>GYM ENERGY RUN</th><th>MEMBERS KNOWN</th><th>WEEKLY REPORTS</th><th>RECOVERY</th></tr></thead><tbody>
             {weeklyBoundaries.map((boundary) => {
               const runLabel = (run: AdminWeeklyRunDiagnostic | null) => !run ? "No run" : run.status + " · " + run.capturedMemberCount + "/" + Math.max(run.targetMemberCount, run.capturedMemberCount) + " captured · " + run.completeMemberCount + " complete"
               const captureLabel = (run: AdminWeeklyRunDiagnostic | null) => !run?.firstCapturedAt ? "No sample captured" : "First " + prettyDate(run.firstCapturedAt) + (run.lastCapturedAt && run.lastCapturedAt !== run.firstCapturedAt ? " · last " + prettyDate(run.lastCapturedAt) : "") + (run.timingDeviationSeconds === null ? "" : " · " + (run.timingDeviationSeconds >= 0 ? "+" : "") + Math.round(run.timingDeviationSeconds / 60) + "m")

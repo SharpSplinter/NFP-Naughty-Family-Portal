@@ -12,8 +12,13 @@ import {
 import {
   calculateWeeklyMemberResult,
   rankWeeklyMembers,
-  utcSundayWindow,
-  utcSundayStart,
+  FIRST_EST_WEEKLY_BOUNDARY_AT,
+  isWeeklyFactionBoundary,
+  weeklyFactionBoundaryStart,
+  weeklyFactionPreviousBoundaryStart,
+  weeklyFactionWindow,
+  weeklyFactionWindowEnd,
+  weeklyFactionWindowStart,
   WEEK_MS,
   WEEKLY_METRIC_NAMES,
   type WeeklyMemberResult,
@@ -952,15 +957,17 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
   return enqueued
 }
 
-async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
+async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number, boundaryAtOverride?: number): Promise<boolean> {
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
-  const boundaryMs = utcSundayStart(scheduledTime)
+  const boundaryMs = boundaryAtOverride ?? weeklyFactionBoundaryStart(scheduledTime)
+  if (boundaryAtOverride === undefined && scheduledTime < FIRST_EST_WEEKLY_BOUNDARY_AT) return false
   const boundaryAt = new Date(boundaryMs).toISOString()
   let boundary = await db.prepare(
     "SELECT stats_run_id AS statsRunId, gym_energy_run_id AS gymEnergyRunId FROM faction_weekly_boundary_runs WHERE faction_id = ? AND boundary_at = ?"
   ).bind(NAUGHTY_SOULS_FACTION_ID, boundaryAt).first<{ statsRunId: string; gymEnergyRunId: string }>()
   if (!boundary) {
+    if (scheduledTime - boundaryMs < 0 || scheduledTime - boundaryMs > DAY * 1000) return false
     // Freeze the cohort that was known to be in-faction at this exact
     // Sunday boundary. A delayed scheduler must still include members who
     // left after the boundary, while excluding people who joined afterward.
@@ -1024,8 +1031,8 @@ async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: nu
 async function finalizeFactionWeeklyReport(env: WorkerEnv, weekStartMs: number): Promise<boolean> {
   if (!env.DB || !Number.isFinite(weekStartMs)) return false
   const db = requireDb(env)
-  const weekStartAt = new Date(utcSundayStart(weekStartMs)).toISOString()
-  const weekEndAt = new Date(Date.parse(weekStartAt) + WEEK_MS).toISOString()
+  const weekStartAt = new Date(weekStartMs).toISOString()
+  const weekEndAt = new Date(weeklyFactionWindowEnd(weekStartMs)).toISOString()
   const existing = await db.prepare(
     "SELECT report_status AS reportStatus FROM faction_weekly_reports WHERE faction_id = ? AND week_start_at = ?"
   ).bind(NAUGHTY_SOULS_FACTION_ID, weekStartAt).first<{ reportStatus: string }>()
@@ -3648,7 +3655,7 @@ async function handleGlobalRankingQueueBatch(batch: { messages: QueueMessage[]; 
     if (body.kind === "faction-weekly-finalize") {
       const weekStartAt = typeof body.weekStartAt === "string" ? body.weekStartAt : ""
       const parsedStart = Date.parse(weekStartAt)
-      if (!Number.isFinite(parsedStart) || new Date(utcSundayStart(parsedStart)).toISOString() !== weekStartAt) {
+      if (!Number.isFinite(parsedStart) || !isWeeklyFactionBoundary(parsedStart) || new Date(parsedStart).toISOString() !== weekStartAt) {
         message.ack()
         continue
       }
@@ -5609,12 +5616,16 @@ async function handleAdminRequest(
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 50) || 50))
   if (url.pathname === "/api/admin/faction/weekly-boundaries" && request.method === "GET") {
     const boundaryLimit = Math.min(26, Math.max(1, Number(url.searchParams.get("limit") || 12) || 12))
-    const currentSundayMs = utcSundayStart(Date.now())
-    const boundaryTimes = Array.from({ length: boundaryLimit }, (_, index) =>
-      new Date(currentSundayMs - index * WEEK_MS).toISOString())
+    const currentBoundaryMs = weeklyFactionWindowStart(Date.now())
+    const boundaryTimes: string[] = []
+    let boundaryCursor = currentBoundaryMs
+    for (let index = 0; index < boundaryLimit; index += 1) {
+      boundaryTimes.push(new Date(boundaryCursor).toISOString())
+      boundaryCursor = weeklyFactionPreviousBoundaryStart(boundaryCursor)
+    }
     const reportWeekStarts = Array.from(new Set([
       ...boundaryTimes,
-      ...boundaryTimes.map((value) => new Date(Date.parse(value) - WEEK_MS).toISOString()),
+      ...boundaryTimes.map((value) => new Date(weeklyFactionPreviousBoundaryStart(Date.parse(value))).toISOString()),
     ]))
     const boundaryPlaceholders = boundaryTimes.map(() => "?").join(", ")
     const reportPlaceholders = reportWeekStarts.map(() => "?").join(", ")
@@ -5714,7 +5725,7 @@ async function handleAdminRequest(
       }).length
       const stats = registry ? diagnosticRun(registry.statsRunId, "personalstats") : null
       const gymEnergy = registry ? diagnosticRun(registry.gymEnergyRunId, "gym_energy", knownMemberCount) : null
-      const endingWeekStartAt = new Date(boundaryMs - WEEK_MS).toISOString()
+      const endingWeekStartAt = new Date(weeklyFactionPreviousBoundaryStart(boundaryMs)).toISOString()
       const endingWeekReport = reportByWeek.get(endingWeekStartAt) ?? null
       const startingWeekReport = reportByWeek.get(boundaryAt) ?? null
       const locked = Boolean(endingWeekReport || startingWeekReport)
@@ -5796,19 +5807,19 @@ async function handleAdminRequest(
       Array.isArray(requestedRaw) ? requestedRaw : null
     if (!boundaryAt || requestedCollections === null || requestedCollections.length === 0 ||
         requestedCollections.some((kind) => kind !== "personalstats" && kind !== "gym_energy")) {
-      return jsonResponse({ error: "Provide a Sunday boundary and one or both supported collection kinds." }, 400, origin)
+      return jsonResponse({ error: "Provide a weekly boundary and one or both supported collection kinds." }, 400, origin)
     }
     const boundaryMs = Date.parse(boundaryAt)
-    if (!Number.isFinite(boundaryMs) || new Date(utcSundayStart(boundaryMs)).toISOString() !== boundaryAt) {
-      return jsonResponse({ error: "Select a Sunday 00:00 UTC boundary." }, 400, origin)
+    if (!Number.isFinite(boundaryMs) || !isWeeklyFactionBoundary(boundaryMs) || new Date(boundaryMs).toISOString() !== boundaryAt) {
+      return jsonResponse({ error: "Select a valid weekly boundary (Sunday 19:10 EST; legacy Sunday 00:00 UTC records are also supported)." }, 400, origin)
     }
-    const currentSundayMs = utcSundayStart(Date.now())
-    if (boundaryMs > currentSundayMs) return jsonResponse({ error: "Future Sunday boundaries cannot be recovered." }, 400, origin)
+    const currentBoundaryMs = weeklyFactionWindowStart(Date.now())
+    if (boundaryMs > currentBoundaryMs) return jsonResponse({ error: "Future weekly boundaries cannot be recovered." }, 400, origin)
     if (!env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) {
       return jsonResponse({ error: "Faction collection queue or Worker service Torn API key is not configured." }, 503, origin)
     }
     const relatedWeekStarts = [
-      new Date(boundaryMs - WEEK_MS).toISOString(),
+      new Date(weeklyFactionPreviousBoundaryStart(boundaryMs)).toISOString(),
       boundaryAt,
     ]
     const reportPlaceholders = relatedWeekStarts.map(() => "?").join(", ")
@@ -5829,7 +5840,7 @@ async function handleAdminRequest(
       if (ageMs < 0 || ageMs > DAY * 1000) {
         return jsonResponse({ error: "A missing Sunday capture can only be created within 24 hours. The original historical counter values cannot be reconstructed later." }, 409, origin)
       }
-      const enqueued = await enqueueFactionWeeklyBoundaryRun(env, boundaryMs)
+      const enqueued = await enqueueFactionWeeklyBoundaryRun(env, boundaryMs, boundaryMs)
       if (!enqueued) {
         return jsonResponse({ error: "No known membership cohort covers this Sunday, or the boundary could not be queued. No capture was created." }, 409, origin)
       }
@@ -6290,19 +6301,24 @@ async function handleAdminRequest(
 
 async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number): Promise<void> {
   // Keep membership and event-window timing on the five-minute clock.
-  // Weekly boundary/report reconciliation runs every fifteen minutes, including
-  // the exact Sunday 00:00 UTC boundary, to avoid repeating its four SELECTs
-  // on all 288 daily dispatcher ticks. Roster history is hourly; stats and
-  // gym-energy snapshots are every four hours.
+  // Weekly collection begins Sunday 19:10 EST (Monday 00:10 UTC); periodic
+  // fifteen-minute checks retry failed or delayed captures.
+  // Roster history is hourly; regular personalstats and gym-energy samples are every four hours.
   // One source outage must not suppress the other scheduled work.
   const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
+  const weeklyBoundaryMs = weeklyFactionBoundaryStart(scheduledTime)
+  const weeklyRetryTick = schedulerBucket % FACTION_WEEKLY_RETRY_TICK_INTERVAL === 0
   if (schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0) {
     try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
   }
   try { await enqueueFactionPerformanceCollections(env, scheduledTime) } catch { /* Idempotent schedule buckets retry on a later tick. */ }
-  if (schedulerBucket % FACTION_WEEKLY_RETRY_TICK_INTERVAL === 0) {
-    try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* Retry the unique Sunday boundary on the next weekly reconciliation tick. */ }
-    try { await finalizeFactionWeeklyReport(env, utcSundayStart(scheduledTime) - WEEK_MS) } catch { /* Finalization retries on the next weekly reconciliation tick after ending captures become terminal. */ }
+  if (scheduledTime >= FIRST_EST_WEEKLY_BOUNDARY_AT && (weeklyRetryTick || scheduledTime === weeklyBoundaryMs)) {
+    try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* Retry the unique weekly boundary on the next reconciliation tick. */ }
+  }
+  if (weeklyRetryTick && scheduledTime >= FIRST_EST_WEEKLY_BOUNDARY_AT) {
+    try { await finalizeFactionWeeklyReport(env, weeklyFactionPreviousBoundaryStart(weeklyBoundaryMs)) } catch { /* Finalization retries after ending captures become terminal. */ }
+  } else if (weeklyRetryTick && scheduledTime < FIRST_EST_WEEKLY_BOUNDARY_AT) {
+    try { await finalizeFactionWeeklyReport(env, weeklyFactionPreviousBoundaryStart(weeklyFactionWindowStart(scheduledTime))) } catch { /* Finish any legacy Sunday-UTC report still awaiting captures. */ }
   }
   try { await enqueueScheduledHalloweenSnapshots(env, scheduledTime) } catch { /* Retry the next event sweep. */ }
 }
@@ -8503,8 +8519,8 @@ export default {
         }
 
         const weekStartMs = Date.parse(weeks)
-        if (!Number.isFinite(weekStartMs) || new Date(utcSundayStart(weekStartMs)).toISOString() !== weeks) {
-          return jsonResponse({ error: "Select a valid Sunday 00:00 UTC report boundary." }, 400, origin)
+        if (!Number.isFinite(weekStartMs) || !isWeeklyFactionBoundary(weekStartMs) || new Date(weekStartMs).toISOString() !== weeks) {
+          return jsonResponse({ error: "Select a valid weekly report boundary." }, 400, origin)
         }
         const metricParam = (url.searchParams.get("metric") || "xantaken").trim()
         const allowedMetrics = [...WEEKLY_METRIC_NAMES, "gymEnergy"] as readonly string[]
@@ -8574,8 +8590,8 @@ export default {
         let priorRanked = new Map<string, WeeklyMemberResult & { rank: number | null }>()
         if (compareTo) {
           const compareMs = Date.parse(compareTo)
-          if (!Number.isFinite(compareMs) || new Date(utcSundayStart(compareMs)).toISOString() !== compareTo || compareMs >= weekStartMs) {
-            return jsonResponse({ error: "Choose an earlier completed Sunday report to compare." }, 400, origin)
+          if (!Number.isFinite(compareMs) || !isWeeklyFactionBoundary(compareMs) || new Date(compareMs).toISOString() !== compareTo || compareMs >= weekStartMs) {
+            return jsonResponse({ error: "Choose an earlier completed weekly report to compare." }, 400, origin)
           }
           priorReport = await db.prepare(
             "SELECT week_start_at AS weekStartAt, week_end_at AS weekEndAt, report_status AS status, finalized_at AS finalizedAt FROM faction_weekly_reports WHERE faction_id = ? AND week_start_at = ?"
@@ -8626,7 +8642,7 @@ export default {
       const db = requireDb(env)
       try {
         const nowMs = Date.now()
-        const week = utcSundayWindow(nowMs)
+        const week = weeklyFactionWindow(nowMs)
         const requestedMetric = (url.searchParams.get("metric") || "xantaken").trim()
         const allowedRankingMetrics = [...WEEKLY_METRIC_NAMES, "gymEnergy"] as readonly string[]
         const selectedMetric = allowedRankingMetrics.includes(requestedMetric)
