@@ -1278,7 +1278,7 @@ try {
     assert.equal(transition.startAt, "2026-11-22T00:00:00.000Z")
     assert.equal(transition.endAt, "2026-11-30T00:10:00.000Z")
     assert.equal(transition.transition, true)
-    assert.equal(Date.parse(transition.endAt) - Date.parse(transition.startAt), 7 * 24 * 60 * 60 * 1000 + 10 * 60 * 1000)
+    assert.equal(Date.parse(transition.endAt) - Date.parse(transition.startAt), 8 * 24 * 60 * 60 * 1000 + 10 * 60 * 1000)
 
     const regular = weeklyFactionWindow(Date.parse("2026-12-02T18:00:00.000Z"))
     assert.equal(regular.startAt, "2026-11-30T00:10:00.000Z")
