@@ -5273,8 +5273,8 @@ try {
     }
     const cachedDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-test")
     const sql = "SELECT company_id AS companyId, weekly_income AS weeklyIncome FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ?"
-    const first = await cachedDb.prepare(sql).bind("2026-11-15").all()
-    const second = await cachedDb.prepare(sql).bind("2026-11-15").all()
+    const first = await cachedDb.prepare(sql).bind("2026-11-15", "8317").all()
+    const second = await cachedDb.prepare(sql).bind("2026-11-15", "8317").all()
     assert.equal(snapshotReads, 2, "an incomplete daily capture must bypass the cache")
     assert.equal(readinessReads, 1, "the negative readiness probe should be briefly memoized per isolate")
     assert.equal(first.results.length, 1)
@@ -5283,13 +5283,13 @@ try {
     ready = true
     // A new namespace models a different Worker deployment/isolated D1 cache scope.
     const readyDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-ready-test")
-    const third = await readyDb.prepare(sql).bind("2026-11-15").all()
-    const fourth = await readyDb.prepare(sql).bind("2026-11-15").all()
+    const third = await readyDb.prepare(sql).bind("2026-11-15", "8317").all()
+    const fourth = await readyDb.prepare(sql).bind("2026-11-15", "8317").all()
     assert.equal(snapshotReads, 3, "the second request after successful lock-in should be served from cache")
     assert.equal(readinessReads, 2, "the ready marker should prevent a D1 readiness read on every request")
     assert.deepEqual(fourth.results, third.results)
 
-    const differentPlayer = await readyDb.prepare(sql).bind("2026-11-16").all()
+    const differentPlayer = await readyDb.prepare(sql).bind("2026-11-16", "8317").all()
     assert.equal(snapshotReads, 4, "different bound parameters must never share cached rows")
     assert.equal(differentPlayer.results[0].companyId, "2026-11-16")
     const firstSql = "SELECT company_id AS companyId FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ? AND company_id = ?"
@@ -5332,7 +5332,7 @@ try {
       },
     }
     const kvBacked = withDailySnapshotReadCache(kvDatabase, "backend-cache-kv-persistence-test", kv)
-    await kvBacked.prepare(sql).bind("shared-report").all()
+    await kvBacked.prepare(sql).bind("shared-report", "8317").all()
     assert.ok(kvWrites.length >= 2, "a successful daily capture writes both the readiness marker and snapshot result to KV")
     const nextBoundary = Date.parse(dailyReportingDay(Date.now()) + "T18:00:00.000Z") + 86400000
     assert.ok(kvWrites.every(write => write.expiration === Math.floor(nextBoundary / 1000)), "KV keys expire exactly at the next 18:00 UTC reporting boundary")
@@ -5364,7 +5364,7 @@ try {
       },
     }
     const isolatedDb = isolatedCacheModule.withDailySnapshotReadCache(isolatedDatabase, "backend-cache-kv-persistence-test", kv)
-    const sharedHit = await isolatedDb.prepare(sql).bind("shared-report").all()
+    const sharedHit = await isolatedDb.prepare(sql).bind("shared-report", "8317").all()
     assert.equal(isolatedD1SnapshotReads, 0, "a fresh Worker isolate reads the global KV cache instead of D1")
     assert.equal(isolatedReadinessReads, 0, "a fresh Worker isolate also reads the shared readiness marker")
     assert.equal(sharedHit.results[0].companyId, "shared-report")
