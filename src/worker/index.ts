@@ -3950,7 +3950,7 @@ async function persistCompleteFactionRankingSnapshot(db: D1Database): Promise<bo
   return true
 }
 
-async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; complete: boolean }> {
+async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; failedMemberCount: number; complete: boolean }> {
   const client = createTornApiClient(env, apiKey, "faction-directory-refresh")
   const memberPayload = await client.getFactionMembers()
   if (!(Array.isArray(memberPayload.members) || isRecord(memberPayload.members))) throw new Error("Torn did not return a valid faction member roster.")
@@ -4050,12 +4050,17 @@ async function captureWeeklyFactionStarCounts(env: WorkerEnv, capturedAt = new D
   const weekKey = weeklyFactionReportingDay(capturedAt)
   await db.prepare("CREATE TABLE IF NOT EXISTS faction_star_weekly_counts (week_key TEXT NOT NULL, star_rating INTEGER NOT NULL, company_count INTEGER NOT NULL, captured_at TEXT NOT NULL, PRIMARY KEY (week_key, star_rating))").run()
   const counts = await db.prepare("SELECT company_rating AS starRating, COUNT(DISTINCT company_id) AS companyCount FROM faction_member_cache WHERE faction_id = '8317' AND is_director = 1 AND company_id IS NOT NULL AND company_rating IS NOT NULL GROUP BY company_rating ORDER BY company_rating ASC").all<{ starRating: number; companyCount: number }>()
-  if (!(counts.results ?? []).length) throw new Error("Weekly faction star counts were not captured because no rated director companies were available.")
-  for (const row of counts.results ?? []) {
-    if (!Number.isInteger(row.starRating) || row.starRating < 0) continue
-    await db.prepare("INSERT INTO faction_star_weekly_counts (week_key, star_rating, company_count, captured_at) VALUES (?, ?, ?, ?) ON CONFLICT(week_key, star_rating) DO UPDATE SET company_count = excluded.company_count, captured_at = excluded.captured_at WHERE excluded.captured_at > faction_star_weekly_counts.captured_at")
-      .bind(weekKey, row.starRating, row.companyCount, capturedAt).run()
-  }
+  const validCounts = (counts.results ?? []).filter((row) =>
+    Number.isInteger(row.starRating) && row.starRating >= 0 && Number.isInteger(row.companyCount) && row.companyCount > 0,
+  )
+  if (!validCounts.length) throw new Error("Weekly faction star counts were not captured because no rated director companies were available.")
+  if (!db.batch) throw new Error("D1 batch support is required to publish a complete weekly faction star-count snapshot.")
+  const statements = [
+    db.prepare("DELETE FROM faction_star_weekly_counts WHERE week_key = ?").bind(weekKey),
+    ...validCounts.map((row) => db.prepare("INSERT INTO faction_star_weekly_counts (week_key, star_rating, company_count, captured_at) VALUES (?, ?, ?, ?)")
+      .bind(weekKey, row.starRating, row.companyCount, capturedAt)),
+  ]
+  await db.batch(statements)
 }
 async function getWeeklyFactionStarCounts(env: WorkerEnv): Promise<{ weeklyStarCounts: { starRating: number; companyCount: number }[]; weeklyStarCountsCapturedAt: string }> {
   const db = requireDb(env)
