@@ -139,8 +139,6 @@ with tempfile.TemporaryDirectory() as temp:
     original_target = target.read_text(encoding="utf-8")
     target.write_text(
         "DELETE FROM companies;\n"
-        "CREATE TABLE global_star_income_buffers (id INTEGER PRIMARY KEY);\n"
-        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n"
         "ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;\n",
         encoding="utf-8",
     )
@@ -154,8 +152,6 @@ with tempfile.TemporaryDirectory() as temp:
     sql.write_text(original_sql, encoding="utf-8")
     target.write_text(
         "DROP TABLE companies;\n"
-        "CREATE TABLE global_star_income_buffers (id INTEGER PRIMARY KEY);\n"
-        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n"
         "ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;\n",
         encoding="utf-8",
     )
