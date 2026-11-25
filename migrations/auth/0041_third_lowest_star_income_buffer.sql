@@ -1,0 +1,1 @@
+ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;
