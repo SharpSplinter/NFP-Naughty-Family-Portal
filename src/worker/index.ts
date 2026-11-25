@@ -1624,15 +1624,45 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
     if (!type) throw new Error("Staged data referenced an unknown company type; the prior star-income buffer snapshot was preserved.")
     let parsed: unknown
     try { parsed = JSON.parse(page.companiesJson) } catch { throw new Error("Staged page data was malformed; the prior star-income buffer snapshot was preserved.") }
-    if (!isRecord(parsed) || !Array.isArray(parsed.companyIds) || !Array.isArray(parsed.buffers)) throw new Error("Staged page aggregate was incomplete; the prior snapshot was preserved.")
-    for (const value of parsed.companyIds) {
+    // Queue pages created before this compact-aggregate release contain raw company
+    // rows. Convert those staged rows in place during finalization so an in-flight
+    // weekly run can finish safely across the deployment boundary.
+    let stagedIds: unknown[]
+    let stagedBuffers: unknown[]
+    if (Array.isArray(parsed)) {
+      const legacyInputs: GlobalStarIncomeBufferInput[] = []
+      stagedIds = []
+      for (const value of parsed) {
+        if (!isRecord(value)) throw new Error("Legacy staged company row was malformed; the prior snapshot was preserved.")
+        const id = positiveId(value.id ?? value.company_id ?? value.companyId ?? value.ID)
+        if (!id) throw new Error("Legacy staged company row had no valid ID; the prior snapshot was preserved.")
+        stagedIds.push(id)
+        const rowType = isRecord(value.type) ? value.type : {}
+        const rowTypeId = positiveId(rowType.id ?? value.company_type_id ?? value.companyTypeId)
+        if (rowTypeId !== null && Number(rowTypeId) !== type.id) throw new Error("Legacy staged company row had a mismatched type; the prior snapshot was preserved.")
+        const income = isRecord(value.income) ? value.income : {}
+        legacyInputs.push({
+          companyTypeId: type.id,
+          companyType: typeof rowType.name === "string" && rowType.name.trim() ? rowType.name.trim() : type.name,
+          starRating: numericField(value.rating ?? value.stars ?? value.star_rating),
+          weeklyIncome: numericField(income.weekly ?? value.weekly_income ?? value.weeklyIncome),
+        })
+      }
+      stagedBuffers = buildGlobalStarIncomeBuffers(legacyInputs)
+    } else if (isRecord(parsed) && Array.isArray(parsed.companyIds) && Array.isArray(parsed.buffers)) {
+      stagedIds = parsed.companyIds
+      stagedBuffers = parsed.buffers
+    } else {
+      throw new Error("Staged page aggregate was incomplete; the prior snapshot was preserved.")
+    }
+    for (const value of stagedIds) {
       const id = positiveId(value)
       if (!id) throw new Error("Torn returned a company row without a valid ID; the prior snapshot was preserved.")
       if (companyIds.has(id)) throw new Error("Torn returned duplicate company IDs across company types; the prior snapshot was preserved.")
       companyIds.add(id)
     }
-    stagedCompanyCount += parsed.companyIds.length
-    for (const value of parsed.buffers) {
+    stagedCompanyCount += stagedIds.length
+    for (const value of stagedBuffers) {
       if (!isRecord(value)) throw new Error("Staged star-income aggregate was malformed; the prior snapshot was preserved.")
       const typeId = numericField(value.companyTypeId), star = numericField(value.starRating)
       const minimum = numericField(value.minWeeklyIncome), maximum = numericField(value.maxWeeklyIncome)
