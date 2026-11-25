@@ -30,6 +30,7 @@ import { applyChristmasTownMarketPrices, calculateChristmasTownMetrics, type Chr
 import { isGymTrainingLog } from "../lib/gym-training/logs"
 import { parsePrivateLiveBars, parsePrivateLiveCooldowns, parsePrivateLiveNetworth } from "../lib/faction-performance/private-live"
 import { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } from "./snapshot-provenance"
+import { refreshThenCaptureWeeklyFactionSnapshot, weeklyFactionReportingDay } from "./weekly-faction-snapshot"
 import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company-history"
 import { buildFactionCompanyRankSnapshots, isFactionDirectorySnapshotEligible, type FactionDirectorRankingInput } from "./ranking-snapshots"
 import { buildGlobalStarIncomeBuffers, type GlobalStarIncomeBuffer, type GlobalStarIncomeBufferInput } from "../lib/company/star-income-buffers"
@@ -3949,7 +3950,7 @@ async function persistCompleteFactionRankingSnapshot(db: D1Database): Promise<bo
   return true
 }
 
-async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; complete: boolean }> {
+async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false, forceRefreshAll = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; failedMemberCount: number; complete: boolean }> {
   const client = createTornApiClient(env, apiKey, "faction-directory-refresh")
   const memberPayload = await client.getFactionMembers()
   if (!(Array.isArray(memberPayload.members) || isRecord(memberPayload.members))) throw new Error("Torn did not return a valid faction member roster.")
@@ -3978,10 +3979,11 @@ async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limi
   const freshnessWindowMs = forceRefresh ? 15 * 60 * 1000 : 12 * 60 * 60 * 1000
   let processed = 0
   let pending = 0
+  let failedMemberCount = 0
   for (const { item, id } of members) {
     const name = typeof item.name === "string" ? item.name : `Player #${id}`
     const checked = checkedAtForPlayer(id)
-    if (checked && now - checked < freshnessWindowMs) continue
+    if (!forceRefreshAll && checked && now - checked < freshnessWindowMs) continue
     if (processed >= limit) { pending += 1; continue }
     processed += 1
     const checkedAt = new Date().toISOString()
@@ -3998,8 +4000,16 @@ async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limi
       }
       const companyId = positiveId(job.id ?? job.company_id)!
       let profile: unknown = null
-      try { profile = await client.getCompanyProfileById(companyId) } catch { /* Keep job-derived company identity if profile access is temporarily unavailable. */ }
+      try {
+        profile = await client.getCompanyProfileById(companyId)
+      } catch (error) {
+        if (forceRefresh) throw error
+        // Keep job-derived company identity if profile access is temporarily unavailable during routine sync.
+      }
       const root = companyProfileRoot(profile)
+      if (forceRefresh && (typeof root.rating !== "number" || !Number.isFinite(root.rating))) {
+        throw new Error("Torn did not provide a current company star rating for a faction director.")
+      }
       const type = isRecord(root.type) ? root.type : {}
       const jobTypeId = typeof job.type_id === "number" ? job.type_id : null
       const companyName = typeof root.name === "string" ? root.name : typeof job.name === "string" ? job.name : `Company #${companyId}`
@@ -4012,11 +4022,14 @@ async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limi
       await db.prepare("INSERT INTO faction_member_cache (player_id, player_name, faction_id, checked_at, is_director, company_id, company_name, company_type, company_type_id, company_rating, daily_income, weekly_income, job_json, profile_json, updated_at) VALUES (?, ?, '8317', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET player_name = excluded.player_name, faction_id = excluded.faction_id, checked_at = excluded.checked_at, is_director = 1, company_id = excluded.company_id, company_name = excluded.company_name, company_type = excluded.company_type, company_type_id = excluded.company_type_id, company_rating = excluded.company_rating, daily_income = excluded.daily_income, weekly_income = excluded.weekly_income, job_json = excluded.job_json, profile_json = COALESCE(excluded.profile_json, faction_member_cache.profile_json), updated_at = excluded.updated_at")
         .bind(id, name, checkedAt, companyId, companyName, companyType, companyTypeId, rating, dailyIncome, weeklyIncome, asJson(jobPayload), profile === null ? null : asJson(profile), checkedAt).run()
     } catch {
-      await db.prepare("INSERT INTO faction_member_cache (player_id, player_name, faction_id, checked_at, is_director, updated_at) VALUES (?, ?, '8317', ?, 0, ?) ON CONFLICT(player_id) DO UPDATE SET player_name = excluded.player_name, faction_id = excluded.faction_id, checked_at = excluded.checked_at, updated_at = excluded.updated_at")
-        .bind(id, name, checkedAt, checkedAt).run()
+      failedMemberCount += 1
+      // Preserve the prior director cache and its checked_at timestamp. A failed
+      // Torn request must remain eligible for a retry on the next scheduled run.
+      await db.prepare("INSERT INTO faction_member_cache (player_id, player_name, faction_id, checked_at, is_director, updated_at) VALUES (?, ?, '8317', NULL, 0, ?) ON CONFLICT(player_id) DO UPDATE SET player_name = excluded.player_name, faction_id = excluded.faction_id, updated_at = excluded.updated_at")
+        .bind(id, name, checkedAt).run()
     }
   }
-  const pendingCount = Math.max(pending, 0)
+  const pendingCount = Math.max(pending + failedMemberCount, 0)
   const memberCount = rawMembers.length - invalidMemberCount
   const complete = memberCount > 0 && pendingCount === 0 && invalidMemberCount === 0
   const completedAt = new Date().toISOString()
@@ -4028,21 +4041,26 @@ async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limi
   await db.prepare("INSERT INTO faction_directory_sync_state (faction_id, checked_at, member_count, processed_count, pending_count, invalid_member_count, complete) VALUES ('8317', ?, ?, ?, ?, ?, ?) ON CONFLICT(faction_id) DO UPDATE SET checked_at = excluded.checked_at, member_count = excluded.member_count, processed_count = excluded.processed_count, pending_count = excluded.pending_count, invalid_member_count = excluded.invalid_member_count, complete = excluded.complete").bind(completedAt, memberCount, processed, pendingCount, invalidMemberCount, complete ? 1 : 0).run()
   await persistCompleteFactionRankingSnapshot(db).catch(() => false)
   const rows = await db.prepare("SELECT player_id AS playerId, player_name AS directorName, company_id AS companyId, company_name AS companyName, company_type AS companyType, company_type_id AS companyTypeId, company_rating AS starRating, daily_income AS dailyIncome, weekly_income AS weeklyIncome, updated_at AS fetchedAt FROM faction_member_cache WHERE faction_id = '8317' AND is_director = 1 ORDER BY company_type ASC, weekly_income DESC").all()
-  return { processed, pending: pendingCount, directors: rows.results ?? [], memberCount, invalidMemberCount, complete }
+  return { processed, pending: pendingCount, directors: rows.results ?? [], memberCount, invalidMemberCount, failedMemberCount, complete }
 }
 
 async function captureWeeklyFactionStarCounts(env: WorkerEnv, capturedAt = new Date().toISOString()): Promise<void> {
-  if (!env.DB) return
+  if (!env.DB) throw new Error("The faction directory database is unavailable.")
   const db = requireDb(env)
-  const captured = new Date(capturedAt)
-  const weekKey = captured.toISOString().slice(0, 10)
+  const weekKey = weeklyFactionReportingDay(capturedAt)
   await db.prepare("CREATE TABLE IF NOT EXISTS faction_star_weekly_counts (week_key TEXT NOT NULL, star_rating INTEGER NOT NULL, company_count INTEGER NOT NULL, captured_at TEXT NOT NULL, PRIMARY KEY (week_key, star_rating))").run()
   const counts = await db.prepare("SELECT company_rating AS starRating, COUNT(DISTINCT company_id) AS companyCount FROM faction_member_cache WHERE faction_id = '8317' AND is_director = 1 AND company_id IS NOT NULL AND company_rating IS NOT NULL GROUP BY company_rating ORDER BY company_rating ASC").all<{ starRating: number; companyCount: number }>()
-  for (const row of counts.results ?? []) {
-    if (!Number.isInteger(row.starRating) || row.starRating < 0) continue
-    await db.prepare("INSERT INTO faction_star_weekly_counts (week_key, star_rating, company_count, captured_at) VALUES (?, ?, ?, ?) ON CONFLICT(week_key, star_rating) DO NOTHING")
-      .bind(weekKey, row.starRating, row.companyCount, capturedAt).run()
-  }
+  const validCounts = (counts.results ?? []).filter((row) =>
+    Number.isInteger(row.starRating) && row.starRating >= 0 && Number.isInteger(row.companyCount) && row.companyCount > 0,
+  )
+  if (!validCounts.length) throw new Error("Weekly faction star counts were not captured because no rated director companies were available.")
+  if (!db.batch) throw new Error("D1 batch support is required to publish a complete weekly faction star-count snapshot.")
+  const statements = [
+    db.prepare("DELETE FROM faction_star_weekly_counts WHERE week_key = ?").bind(weekKey),
+    ...validCounts.map((row) => db.prepare("INSERT INTO faction_star_weekly_counts (week_key, star_rating, company_count, captured_at) VALUES (?, ?, ?, ?)")
+      .bind(weekKey, row.starRating, row.companyCount, capturedAt)),
+  ]
+  await db.batch(statements)
 }
 async function getWeeklyFactionStarCounts(env: WorkerEnv): Promise<{ weeklyStarCounts: { starRating: number; companyCount: number }[]; weeklyStarCountsCapturedAt: string }> {
   const db = requireDb(env)
@@ -4065,13 +4083,11 @@ async function getLatestGlobalStarIncomeBufferSnapshot(db: D1Database): Promise<
   return { starIncomeBuffers: rows.results ?? [], starIncomeBufferSnapshot: snapshot }
 }
 
-async function refreshFactionDirectoryFromServiceKey(env: WorkerEnv, limit = 35, forceRefresh = false): Promise<void> {
-  if (!env.DB) return
+async function refreshFactionDirectoryFromServiceKey(env: WorkerEnv, limit = 35, forceRefresh = false, forceRefreshAll = false): Promise<Awaited<ReturnType<typeof syncFactionDirectorDirectory>>> {
+  if (!env.DB) throw new Error("The faction directory database is unavailable.")
   const apiKey = workerServiceTornApiKey(env)
-  if (!apiKey) return
-  try {
-    await syncFactionDirectorDirectory(env, apiKey, limit, forceRefresh)
-  } catch { /* Keep scheduled sync resilient to a Torn outage or service-key issue. */ }
+  if (!apiKey) throw new Error("The Worker-owned Torn service API key is unavailable.")
+  return syncFactionDirectorDirectory(env, apiKey, limit, forceRefresh, forceRefreshAll)
 }
 
 async function refreshRankingProfiles(env: WorkerEnv, captureHistory = false, snapshotSchedule?: { cron: string; scheduledTime: number }): Promise<{ companiesChecked: number; companiesFailed: number; snapshotsAdded: number; snapshotsSkipped: number; snapshotsRejected: number }> {
@@ -4684,16 +4700,18 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   const isWeeklyStarIncomeBufferWindow = controller.cron.trim() === "10 0 * * 1"
   const startedAt = new Date(controller.scheduledTime).toISOString()
   const factionDirectoryLimit = isWeeklyStarIncomeBufferWindow ? 250 : 35
+  const refreshDirectory = () => refreshFactionDirectoryFromServiceKey(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow, isWeeklyStarIncomeBufferWindow)
+  const captureWeeklyFactionCounts = () => refreshThenCaptureWeeklyFactionSnapshot(
+    () => refreshDirectory(),
+    () => captureWeeklyFactionStarCounts(env, startedAt),
+  )
   const emptyCompanyRefresh = Promise.resolve({ companiesChecked: 0, companiesFailed: 0, snapshotsAdded: 0, snapshotsSkipped: 0, snapshotsRejected: 0 })
   try { await ensureAutomationSchema(env) } catch {
     const fallbackTasks: Promise<unknown>[] = [
       isDailyCompanyCaptureWindow ? refreshRankingProfiles(env, true, { cron: controller.cron, scheduledTime: controller.scheduledTime }) : emptyCompanyRefresh,
-      refreshFactionDirectoryFromServiceKey(env, factionDirectoryLimit),
+      isWeeklyStarIncomeBufferWindow ? captureWeeklyFactionCounts() : refreshDirectory(),
     ]
-    if (isWeeklyStarIncomeBufferWindow) {
-      fallbackTasks.push(startGlobalRankingRefresh(env))
-      fallbackTasks.push(captureWeeklyFactionStarCounts(env, startedAt))
-    }
+    if (isWeeklyStarIncomeBufferWindow) fallbackTasks.push(startGlobalRankingRefresh(env))
     await Promise.allSettled(fallbackTasks)
     return
   }
@@ -4701,12 +4719,9 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   await db.prepare("INSERT INTO automation_runs (run_id, trigger_name, status, started_at) VALUES (?, ?, 'running', ?)").bind(runId, controller.cron || "scheduled", startedAt).run()
   const tasks: Promise<unknown>[] = [
     isDailyCompanyCaptureWindow ? refreshRankingProfiles(env, true, { cron: controller.cron, scheduledTime: controller.scheduledTime }) : emptyCompanyRefresh,
-    refreshFactionDirectoryFromServiceKey(env, factionDirectoryLimit),
+    isWeeklyStarIncomeBufferWindow ? captureWeeklyFactionCounts() : refreshDirectory(),
   ]
-  if (isWeeklyStarIncomeBufferWindow) {
-    tasks.push(startGlobalRankingRefresh(env))
-    tasks.push(captureWeeklyFactionStarCounts(env, startedAt))
-  }
+  if (isWeeklyStarIncomeBufferWindow) tasks.push(startGlobalRankingRefresh(env))
   const results = await Promise.allSettled(tasks)
   let staleRuleFailures = 0
   let digestFailures = 0
