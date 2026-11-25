@@ -96,7 +96,7 @@ try {
     "energydrinkused", "refills", "statenhancersused", "networth", "cantaken",
   ]
   const worker = require(join(temp, "worker/index.js")).default
-  const { buildGlobalStarIncomeBuffers, mergeGlobalStarIncomeBuffers, resolveStarIncomeProgress, isExpectedWeeklyStarIncomeSchedule } = require(join(temp, "lib/company/star-income-buffers.js"))
+  const { buildGlobalStarIncomeBuffers, mergeGlobalStarIncomeBuffers, resolveStarIncomeProgress, isExpectedWeeklyStarIncomeSchedule, isBeforeWeeklyStarIncomeScheduleChange } = require(join(temp, "lib/company/star-income-buffers.js"))
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
   const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot } = require(join(temp, "worker/d1-optimizations.js"))
