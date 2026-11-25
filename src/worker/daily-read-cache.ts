@@ -22,8 +22,8 @@ const MAX_LOCAL_CACHE_ENTRIES = 512
 const MAX_LOCAL_CACHE_BYTES = 8 * 1024 * 1024
 const MAX_LOCAL_CACHE_ENTRY_BYTES = 2 * 1024 * 1024
 const CACHEABLE_TABLES = new Set([
-  // Both ranking snapshot tables receive at most one immutable row set per
-  // reporting day and use INSERT OR IGNORE to preserve that lock-in.
+  // Faction ranking snapshots receive at most one immutable row set per
+  // reporting day and are written only after directory completion.
   "faction_company_rank_snapshots",
 ])
 const localCache = new Map<string, CacheEntry>()
@@ -152,7 +152,7 @@ async function isDailyCaptureReady(
   let ready = true
   try {
     for (const table of tables) {
-      if (table === "faction_company_rank_snapshots") {      } else if (table === "faction_company_rank_snapshots") {
+      if (table === "faction_company_rank_snapshots") {
         // This table is written only after the full faction directory has been
         // validated and ranked. A pending/partial directory has no lock-in row.
         const completed = await db.prepare(
@@ -182,7 +182,7 @@ async function isDailyCaptureReady(
     return true
   }
 
-  // Readiness can take several minutes when the global refresh is queued. Keep
+  // Faction directory validation can take several minutes. Keep
   // this negative result for one minute to avoid probing D1 on every request.
   localReadiness.set(memoryKey, { ready: false, expiresAt: now + 60_000 })
   return false
