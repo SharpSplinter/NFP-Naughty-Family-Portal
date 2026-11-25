@@ -525,36 +525,56 @@ try {
     assert.equal(factionRows.every(row=>row.factionId==="8317"),true)
   })
 
-  await test("weekly star-income buffers aggregate by type and nearest observed star level", () => {
+  await test("weekly star-income buffers use the third-lowest eligible income and exclude nonzero-star zero-income companies", () => {
     const pageA = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:5},
       {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:100},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:110},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:120},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:0},
       {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:200},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:220},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:230},
       {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:400},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:450},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:500},
       {companyTypeId:5,companyType:"Television Network",starRating:9,weeklyIncome:75},
       {companyTypeId:28,companyType:"Oil Rig",starRating:null,weeklyIncome:500},
     ])
     const pageB = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:100},
       {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:250},
-      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:450},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:350},
     ])
     const merged = mergeGlobalStarIncomeBuffers([pageA,pageB])
-    assert.deepEqual(merged.map(row=>[row.companyTypeId,row.starRating,row.minWeeklyIncome,row.maxWeeklyIncome,row.companyCount]),[
-      [5,9,75,75,1],
-      [28,8,100,100,1],
-      [28,10,200,250,2],
-      [28,12,400,450,2],
+    assert.deepEqual(merged.map(row=>[
+      row.companyTypeId,row.starRating,row.minWeeklyIncome,row.maxWeeklyIncome,
+      row.thirdLowestWeeklyIncome,row.companyCount,row.lowestWeeklyIncomes,
+    ]),[
+      [5,9,75,75,null,1,[75]],
+      [28,0,0,5,0,4,[0,0,0]],
+      [28,8,100,120,120,3,[100,110,120]],
+      [28,10,100,250,220,5,[100,200,220]],
+      [28,12,350,500,450,4,[350,400,450]],
     ])
     assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",10,150),{
-      nextStarRating:12,nextStarIncome:400,nextStarGap:250,
-      previousStarRating:8,previousStarIncome:100,previousStarGap:50,
+      nextStarRating:12,nextStarIncome:450,nextStarGap:300,nextStarCompanyCount:4,
+      previousStarRating:8,previousStarIncome:120,previousStarGap:30,previousStarCompanyCount:3,
     })
     assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",12,500),{
-      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
-      previousStarRating:10,previousStarIncome:250,previousStarGap:250,
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:null,
+      previousStarRating:10,previousStarIncome:220,previousStarGap:280,previousStarCompanyCount:5,
+    })
+    assert.deepEqual(resolveStarIncomeProgress(merged,5,"Television Network",8,100),{
+      nextStarRating:9,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:1,
+      previousStarRating:null,previousStarIncome:null,previousStarGap:null,previousStarCompanyCount:null,
     })
     assert.deepEqual(resolveStarIncomeProgress(merged,999,"Unknown",10,150),{
-      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
-      previousStarRating:null,previousStarIncome:null,previousStarGap:null,
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:null,
+      previousStarRating:null,previousStarIncome:null,previousStarGap:null,previousStarCompanyCount:null,
     })
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:10:00.000Z"),true,"Monday 00:10 UTC is the approved weekly capture")
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-22T18:10:00.000Z"),false,"Sunday 18:10 UTC is not the new weekly capture")
@@ -5256,11 +5276,15 @@ try {
     const helperSource = readFileSync(join(root, "src/lib/company/star-income-buffers.ts"), "utf8")
     const floorSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
     const migration = readFileSync(join(root, "migrations/auth/0040_global_star_income_buffers.sql"), "utf8")
+    const safetyMigration = readFileSync(join(root, "migrations/auth/0041_third_lowest_star_income_buffer.sql"), "utf8")
     assert.match(workerSource, /INSERT INTO global_star_income_buffers/)
+    assert.match(workerSource, /third_lowest_weekly_income/)
     assert.match(workerSource, /INSERT INTO global_star_income_buffer_snapshots/)
     assert.match(workerSource, /companyIds: pageCompanyIds, buffers: buildGlobalStarIncomeBuffers\(pageInputs\)/)
     assert.match(workerSource, /getLatestGlobalStarIncomeBufferSnapshot/)
     assert.match(workerSource, /starIncomeBuffers/)
+    assert.match(helperSource, /thirdLowestWeeklyIncome/)
+    assert.match(helperSource, /lowestWeeklyIncomes/)
     assert.match(helperSource, /minWeeklyIncome/)
     assert.match(helperSource, /maxWeeklyIncome/)
     assert.match(helperSource, /companyCount/)
@@ -5272,6 +5296,7 @@ try {
     assert.match(floorSource, /PREVIOUS STAR BUFFER/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffers/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffer_snapshots/)
+    assert.match(safetyMigration, /ADD COLUMN third_lowest_weekly_income REAL/)
     assert.doesNotMatch(migration, /DELETE FROM|DROP TABLE/i, "the new migration must preserve existing ranking history")
   })
 
