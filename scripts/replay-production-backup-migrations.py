@@ -14,10 +14,9 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_MIGRATION_NUMBERS = list(range(13, 40))
-EXPECTED_RESTORED_MIGRATION_COUNT = 42
-EXPECTED_PENDING_MIGRATION_NUMBERS = [38, 39]
-EXPECTED_RETIRED_TABLES = {"discord_alert_poll_history", "discord_alert_poll_health"}
+EXPECTED_MIGRATION_NUMBERS = list(range(13, 41))
+EXPECTED_RESTORED_MIGRATION_COUNT = 44
+EXPECTED_PENDING_MIGRATION_NUMBERS = [40]
 
 
 def sha256_file(path: Path) -> str:
@@ -111,18 +110,21 @@ def replay_backup(
                 number = int(path.name.split("_", 1)[0])
             except ValueError:
                 continue
-            if 13 <= number <= 39:
+            if 13 <= number <= 40:
                 candidate_files.append(path)
 
         numbers = [int(path.name.split("_", 1)[0]) for path in candidate_files]
         if numbers != EXPECTED_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0039."
+                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0040."
             )
 
+        # Production already has 0038_global_company_rank_snapshot_meta.sql and
+        # 0039_retire_discord_poll_telemetry.sql in its live ledger. Both must be
+        # represented in the backup; the only new migration in this release is 0040.
         prior_migrations = [
             path for path in candidate_files
-            if int(path.name.split("_", 1)[0]) < 38
+            if int(path.name.split("_", 1)[0]) < 40
         ]
         missing_prior = [path.name for path in prior_migrations if path.name not in applied]
         if missing_prior:
@@ -135,26 +137,19 @@ def replay_backup(
         pending_numbers = [int(path.name.split("_", 1)[0]) for path in pending]
         if pending_numbers != EXPECTED_PENDING_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "Expected only migrations 0038 and 0039 to be pending for this production backup; "
+                "Expected only migration 0040 to be pending for this production backup; "
                 f"found {pending_numbers}."
             )
 
         if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
             raise RuntimeError(
                 "Expected the production backup to contain "
-                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0037; "
+                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0039; "
                 f"found {len(applied)} entries."
             )
 
         before_counts = application_table_counts(connection)
-        missing_retired_tables = sorted(EXPECTED_RETIRED_TABLES - set(before_counts))
-        if missing_retired_tables:
-            raise RuntimeError(
-                "The production backup is missing expected retired Discord tables: "
-                + ", ".join(missing_retired_tables)
-            )
         before_total = sum(before_counts.values())
-        retired_rows_removed = sum(before_counts[name] for name in EXPECTED_RETIRED_TABLES)
 
         for migration in pending:
             sql = migration.read_text(encoding="utf-8")
@@ -169,22 +164,15 @@ def replay_backup(
 
         after_counts = application_table_counts(connection)
         missing_tables = sorted(set(before_counts) - set(after_counts))
-        unexpected_missing_tables = sorted(set(missing_tables) - EXPECTED_RETIRED_TABLES)
-        if unexpected_missing_tables:
+        if missing_tables:
             raise RuntimeError(
-                "A non-retired table present in the restored backup disappeared during replay: "
-                + ", ".join(unexpected_missing_tables[:12])
-            )
-        remaining_retired_tables = sorted(EXPECTED_RETIRED_TABLES.intersection(after_counts))
-        if remaining_retired_tables:
-            raise RuntimeError(
-                "The cleanup migration did not remove all retired Discord tables: "
-                + ", ".join(remaining_retired_tables)
+                "A table present in the restored backup disappeared during additive replay: "
+                + ", ".join(missing_tables[:12])
             )
 
         decreased_tables = sorted(
             name for name, count in before_counts.items()
-            if name not in EXPECTED_RETIRED_TABLES and after_counts.get(name, -1) < count
+            if after_counts.get(name, -1) < count
         )
         if decreased_tables:
             details = ", ".join(
@@ -225,9 +213,7 @@ def replay_backup(
             "final_application_table_count": len(after_counts),
             "starting_application_row_count": before_total,
             "final_application_row_count": sum(after_counts.values()),
-            "preserved_existing_tables": len(before_counts) - len(EXPECTED_RETIRED_TABLES),
-            "retired_tables_dropped": sorted(EXPECTED_RETIRED_TABLES),
-            "retired_rows_removed": retired_rows_removed,
+            "preserved_existing_tables": len(before_counts),
             "row_count_decreases": 0,
             "integrity_check": integrity,
             "foreign_key_violations": len(foreign_key_violations),
@@ -248,24 +234,19 @@ def main() -> int:
     if not args.sql_file.is_file():
         parser.error("--sql-file must identify an extracted SQL file.")
     if not args.migrations_dir.is_dir():
-        parser.error("--migrations-dir must identify the checked-out migrations directory.")
+        parser.error("--migrations-dir must identify a migrations directory.")
     if len(args.expected_sql_sha256) != 64 or any(
         char not in "0123456789abcdefABCDEF" for char in args.expected_sql_sha256
     ):
         parser.error("--expected-sql-sha256 must be exactly 64 hexadecimal characters.")
 
-    report = replay_backup(
-        args.sql_file,
-        args.migrations_dir,
-        args.expected_sql_sha256,
-    )
+    report = replay_backup(args.sql_file, args.migrations_dir, args.expected_sql_sha256)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(
         "PASS local production-data migration replay: "
-        f"{len(report['replayed_migrations'])} migrations, "
+        f"{len(report['replayed_migrations'])} migration, "
         f"{report['preserved_existing_tables']} existing tables preserved, "
-        f"{len(report['retired_tables_dropped'])} explicitly retired tables, "
         f"{report['foreign_key_violations']} foreign-key violations."
     )
     print(f"SQLite integrity_check: {report['integrity_check']}")

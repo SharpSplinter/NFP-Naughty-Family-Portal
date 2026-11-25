@@ -5177,7 +5177,7 @@ try {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
     const helperSource = readFileSync(join(root, "src/lib/company/star-income-buffers.ts"), "utf8")
     const floorSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
-    const migration = readFileSync(join(root, "migrations/auth/0039_global_star_income_buffers.sql"), "utf8")
+    const migration = readFileSync(join(root, "migrations/auth/0040_global_star_income_buffers.sql"), "utf8")
     assert.match(workerSource, /INSERT INTO global_star_income_buffers/)
     assert.match(workerSource, /INSERT INTO global_star_income_buffer_snapshots/)
     assert.match(workerSource, /companyIds: pageCompanyIds, buffers: buildGlobalStarIncomeBuffers\(pageInputs\)/)
