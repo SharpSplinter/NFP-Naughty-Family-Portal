@@ -87,7 +87,7 @@ function validTime(value: string | null | undefined): number | null {
   return Number.isFinite(result) ? result : null
 }
 
-/** Sunday 00:00:00 UTC, independent of viewer timezone and daylight saving. */
+/** Legacy Sunday 00:00 UTC boundary, retained for pre-cutover report compatibility. */
 export function utcSundayStart(timestampMs: number): number {
   if (!Number.isFinite(timestampMs)) throw new Error("A finite timestamp is required.")
   const date = new Date(timestampMs)
@@ -96,6 +96,69 @@ export function utcSundayStart(timestampMs: number): number {
   return date.getTime()
 }
 
+/** Sunday 19:10 fixed EST is Monday 00:10 UTC (UTC-5), year-round. */
+export const FIRST_EST_WEEKLY_BOUNDARY_AT = Date.parse("2026-11-30T00:10:00.000Z")
+export const EST_WEEKLY_TRANSITION_START_AT = utcSundayStart(FIRST_EST_WEEKLY_BOUNDARY_AT - WEEK_MS)
+
+/** Most recent Monday 00:10 UTC boundary, equivalent to Sunday 19:10 EST. */
+export function weeklyFactionBoundaryStart(timestampMs: number): number {
+  if (!Number.isFinite(timestampMs)) throw new Error("A finite timestamp is required.")
+  const date = new Date(timestampMs)
+  date.setUTCHours(0, 10, 0, 0)
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7
+  date.setUTCDate(date.getUTCDate() - daysSinceMonday)
+  if (date.getTime() > timestampMs) date.setUTCDate(date.getUTCDate() - 7)
+  return date.getTime()
+}
+
+/**
+ * Active reporting-window start. Historical windows keep their Sunday 00:00
+ * UTC keys; the transition week keeps the November 22 baseline through the
+ * first new boundary on November 30, 2026 at 00:10 UTC.
+ */
+export function weeklyFactionWindowStart(timestampMs: number): number {
+  if (!Number.isFinite(timestampMs)) throw new Error("A finite timestamp is required.")
+  if (timestampMs < FIRST_EST_WEEKLY_BOUNDARY_AT) {
+    return Math.min(utcSundayStart(timestampMs), EST_WEEKLY_TRANSITION_START_AT)
+  }
+  return weeklyFactionBoundaryStart(timestampMs)
+}
+
+export function weeklyFactionWindowEnd(weekStartMs: number): number {
+  if (!Number.isFinite(weekStartMs)) throw new Error("A finite weekly boundary is required.")
+  if (weekStartMs === EST_WEEKLY_TRANSITION_START_AT) return FIRST_EST_WEEKLY_BOUNDARY_AT
+  return weekStartMs + WEEK_MS
+}
+
+/** Start of the reporting window immediately before the supplied boundary. */
+export function weeklyFactionPreviousBoundaryStart(boundaryMs: number): number {
+  if (!Number.isFinite(boundaryMs)) throw new Error("A finite weekly boundary is required.")
+  return weeklyFactionWindowStart(boundaryMs - 1)
+}
+
+/** Accept both legacy Sunday-UTC keys and new Sunday-19:10-EST weekly keys. */
+export function isWeeklyFactionBoundary(timestampMs: number): boolean {
+  if (!Number.isFinite(timestampMs)) return false
+  const legacyBoundary = timestampMs <= EST_WEEKLY_TRANSITION_START_AT && utcSundayStart(timestampMs) === timestampMs
+  const estBoundary = timestampMs >= FIRST_EST_WEEKLY_BOUNDARY_AT && weeklyFactionBoundaryStart(timestampMs) === timestampMs
+  return legacyBoundary || estBoundary
+}
+
+export function weeklyFactionWindow(timestampMs: number): WeeklyWindow & { transition: boolean } {
+  const startMs = weeklyFactionWindowStart(timestampMs)
+  const endMs = weeklyFactionWindowEnd(startMs)
+  const remaining = Math.max(0, endMs - timestampMs)
+  return {
+    startAt: new Date(startMs).toISOString(),
+    endAt: new Date(endMs).toISOString(),
+    generatedAt: new Date(timestampMs).toISOString(),
+    millisecondsRemaining: remaining,
+    secondsRemaining: Math.floor(remaining / 1000),
+    transition: startMs === EST_WEEKLY_TRANSITION_START_AT,
+  }
+}
+
+/** Legacy helper for tests and callers that explicitly need Sunday-UTC windows. */
 export function utcSundayWindow(timestampMs: number): WeeklyWindow {
   const startMs = utcSundayStart(timestampMs)
   const endMs = startMs + WEEK_MS

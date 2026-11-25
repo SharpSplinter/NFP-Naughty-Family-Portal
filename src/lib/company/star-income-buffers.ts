@@ -1,35 +1,95 @@
 export type GlobalStarIncomeBufferInput = { companyTypeId: number; companyType: string; starRating: number | null; weeklyIncome: number | null }
-export type GlobalStarIncomeBuffer = { companyTypeId: number; companyType: string; starRating: number; minWeeklyIncome: number; maxWeeklyIncome: number; companyCount: number }
-export type StarIncomeProgress = { nextStarRating: number | null; nextStarIncome: number | null; nextStarGap: number | null; previousStarRating: number | null; previousStarIncome: number | null; previousStarGap: number | null }
+export type GlobalStarIncomeBuffer = {
+  companyTypeId: number
+  companyType: string
+  starRating: number
+  minWeeklyIncome: number
+  maxWeeklyIncome: number
+  thirdLowestWeeklyIncome: number | null
+  companyCount: number
+}
+export type GlobalStarIncomeBufferPage = GlobalStarIncomeBuffer & { lowestWeeklyIncomes: number[] }
+export type StarIncomeProgress = {
+  nextStarRating: number | null
+  nextStarIncome: number | null
+  nextStarGap: number | null
+  nextStarCompanyCount: number | null
+  previousStarRating: number | null
+  previousStarIncome: number | null
+  previousStarGap: number | null
+  previousStarCompanyCount: number | null
+}
 
-export function buildGlobalStarIncomeBuffers(rows: readonly GlobalStarIncomeBufferInput[]): GlobalStarIncomeBuffer[] {
-  const grouped = new Map<string, GlobalStarIncomeBuffer>()
+function updateLowestThree(values: readonly number[], income: number): number[] {
+  return [...values, income].sort((a, b) => a - b).slice(0, 3)
+}
+
+function thirdLowest(values: readonly number[]): number | null {
+  return values.length >= 3 ? values[2] : null
+}
+
+/**
+ * Build page-local aggregates for weekly global star-income benchmarks.
+ * Zero-income companies remain eligible at 0 stars, but are excluded at
+ * every higher star level. Keep the three lowest values so page aggregates
+ * can be merged without losing the true third-lowest value across pages.
+ */
+export function buildGlobalStarIncomeBuffers(rows: readonly GlobalStarIncomeBufferInput[]): GlobalStarIncomeBufferPage[] {
+  const grouped = new Map<string, GlobalStarIncomeBufferPage>()
   for (const row of rows) {
     if (!Number.isFinite(row.companyTypeId) || row.companyTypeId <= 0 || row.starRating === null ||
-      !Number.isFinite(row.starRating) || row.starRating < 0 || row.weeklyIncome === null || !Number.isFinite(row.weeklyIncome)) continue
+      !Number.isFinite(row.starRating) || row.starRating < 0 || row.weeklyIncome === null ||
+      !Number.isFinite(row.weeklyIncome)) continue
+    if (row.starRating !== 0 && row.weeklyIncome === 0) continue
+
     const key = row.companyTypeId + ":" + row.starRating
     const current = grouped.get(key)
     if (current) {
       current.minWeeklyIncome = Math.min(current.minWeeklyIncome, row.weeklyIncome)
       current.maxWeeklyIncome = Math.max(current.maxWeeklyIncome, row.weeklyIncome)
       current.companyCount += 1
-    } else grouped.set(key, { companyTypeId: row.companyTypeId, companyType: row.companyType.trim() || "Unknown", starRating: row.starRating, minWeeklyIncome: row.weeklyIncome, maxWeeklyIncome: row.weeklyIncome, companyCount: 1 })
+      current.lowestWeeklyIncomes = updateLowestThree(current.lowestWeeklyIncomes, row.weeklyIncome)
+      current.thirdLowestWeeklyIncome = thirdLowest(current.lowestWeeklyIncomes)
+    } else {
+      const lowestWeeklyIncomes = [row.weeklyIncome]
+      grouped.set(key, {
+        companyTypeId: row.companyTypeId,
+        companyType: row.companyType.trim() || "Unknown",
+        starRating: row.starRating,
+        minWeeklyIncome: row.weeklyIncome,
+        maxWeeklyIncome: row.weeklyIncome,
+        thirdLowestWeeklyIncome: null,
+        companyCount: 1,
+        lowestWeeklyIncomes,
+      })
+    }
   }
   return Array.from(grouped.values()).sort((a, b) => a.companyTypeId - b.companyTypeId || a.starRating - b.starRating)
 }
 
-export function mergeGlobalStarIncomeBuffers(groups: readonly (readonly GlobalStarIncomeBuffer[])[]): GlobalStarIncomeBuffer[] {
-  const merged = new Map<string, GlobalStarIncomeBuffer>()
+/** Merge page-local aggregates while retaining the globally lowest three eligible incomes. */
+export function mergeGlobalStarIncomeBuffers(groups: readonly (readonly GlobalStarIncomeBufferPage[])[]): GlobalStarIncomeBufferPage[] {
+  const merged = new Map<string, GlobalStarIncomeBufferPage>()
   for (const group of groups) for (const row of group) {
+    const lowest = row.lowestWeeklyIncomes
     if (!Number.isFinite(row.companyTypeId) || row.companyTypeId <= 0 || !Number.isFinite(row.starRating) ||
       !Number.isFinite(row.minWeeklyIncome) || !Number.isFinite(row.maxWeeklyIncome) ||
-      !Number.isInteger(row.companyCount) || row.companyCount <= 0 || row.minWeeklyIncome > row.maxWeeklyIncome) continue
-    const key = row.companyTypeId + ":" + row.starRating, current = merged.get(key)
+      !Number.isInteger(row.companyCount) || row.companyCount <= 0 || row.minWeeklyIncome > row.maxWeeklyIncome ||
+      !Array.isArray(lowest) || lowest.length !== Math.min(3, row.companyCount) ||
+      lowest.some((value, index) => !Number.isFinite(value) || (index > 0 && value < lowest[index - 1])) ||
+      row.thirdLowestWeeklyIncome !== thirdLowest(lowest)) continue
+
+    const key = row.companyTypeId + ":" + row.starRating
+    const current = merged.get(key)
     if (current) {
       current.minWeeklyIncome = Math.min(current.minWeeklyIncome, row.minWeeklyIncome)
       current.maxWeeklyIncome = Math.max(current.maxWeeklyIncome, row.maxWeeklyIncome)
       current.companyCount += row.companyCount
-    } else merged.set(key, { ...row })
+      current.lowestWeeklyIncomes = [...current.lowestWeeklyIncomes, ...lowest].sort((a, b) => a - b).slice(0, 3)
+      current.thirdLowestWeeklyIncome = thirdLowest(current.lowestWeeklyIncomes)
+    } else {
+      merged.set(key, { ...row, lowestWeeklyIncomes: [...lowest] })
+    }
   }
   return Array.from(merged.values()).sort((a, b) => a.companyTypeId - b.companyTypeId || a.starRating - b.starRating)
 }
@@ -40,15 +100,24 @@ export function resolveStarIncomeProgress(buffers: readonly GlobalStarIncomeBuff
   const matching = buffers.filter(row => id !== null && Number.isFinite(id) && id > 0
     ? row.companyTypeId === id
     : name !== "" && row.companyType.trim().toLocaleLowerCase() === name)
-  if (starRating == null || !Number.isFinite(starRating)) return { nextStarRating: null, nextStarIncome: null, nextStarGap: null, previousStarRating: null, previousStarIncome: null, previousStarGap: null }
+  if (starRating == null || !Number.isFinite(starRating)) return {
+    nextStarRating: null, nextStarIncome: null, nextStarGap: null, nextStarCompanyCount: null,
+    previousStarRating: null, previousStarIncome: null, previousStarGap: null, previousStarCompanyCount: null,
+  }
   const next = matching.filter(row => row.starRating > starRating).sort((a, b) => a.starRating - b.starRating)[0] ?? null
   const previous = matching.filter(row => row.starRating < starRating).sort((a, b) => b.starRating - a.starRating)[0] ?? null
   const income = typeof weeklyIncome === "number" && Number.isFinite(weeklyIncome) ? weeklyIncome : null
+  const nextIncome = next?.thirdLowestWeeklyIncome ?? null
+  const previousIncome = previous?.thirdLowestWeeklyIncome ?? null
   return {
-    nextStarRating: next?.starRating ?? null, nextStarIncome: next?.minWeeklyIncome ?? null,
-    nextStarGap: next && income !== null ? Math.max(0, next.minWeeklyIncome - income) : null,
-    previousStarRating: previous?.starRating ?? null, previousStarIncome: previous?.maxWeeklyIncome ?? null,
-    previousStarGap: previous && income !== null ? Math.max(0, income - previous.maxWeeklyIncome) : null,
+    nextStarRating: next?.starRating ?? null,
+    nextStarIncome: nextIncome,
+    nextStarGap: next && income !== null && nextIncome !== null ? Math.max(0, nextIncome - income) : null,
+    nextStarCompanyCount: next?.companyCount ?? null,
+    previousStarRating: previous?.starRating ?? null,
+    previousStarIncome: previousIncome,
+    previousStarGap: previous && income !== null && previousIncome !== null ? Math.max(0, income - previousIncome) : null,
+    previousStarCompanyCount: previous?.companyCount ?? null,
   }
 }
 

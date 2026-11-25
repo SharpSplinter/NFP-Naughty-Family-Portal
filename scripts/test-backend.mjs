@@ -75,7 +75,14 @@ try {
   const {
     WEEKLY_METRIC_NAMES,
     WEEK_MS,
-    utcSundayWindow,
+    FIRST_EST_WEEKLY_BOUNDARY_AT,
+    EST_WEEKLY_TRANSITION_START_AT,
+    weeklyFactionBoundaryStart,
+    weeklyFactionPreviousBoundaryStart,
+    weeklyFactionWindow,
+    weeklyFactionWindowEnd,
+    weeklyFactionWindowStart,
+    isWeeklyFactionBoundary,
     calculateWeeklyMemberResult,
     rankWeeklyMembers,
   } = require(join(temp, "lib/faction-performance/weekly.js"))
@@ -518,36 +525,56 @@ try {
     assert.equal(factionRows.every(row=>row.factionId==="8317"),true)
   })
 
-  await test("weekly star-income buffers aggregate by type and nearest observed star level", () => {
+  await test("weekly star-income buffers use the third-lowest eligible income and exclude nonzero-star zero-income companies", () => {
     const pageA = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:5},
       {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:100},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:110},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:120},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:0},
       {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:200},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:220},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:230},
       {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:400},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:450},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:500},
       {companyTypeId:5,companyType:"Television Network",starRating:9,weeklyIncome:75},
       {companyTypeId:28,companyType:"Oil Rig",starRating:null,weeklyIncome:500},
     ])
     const pageB = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:0,weeklyIncome:0},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:100},
       {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:250},
-      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:450},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:350},
     ])
     const merged = mergeGlobalStarIncomeBuffers([pageA,pageB])
-    assert.deepEqual(merged.map(row=>[row.companyTypeId,row.starRating,row.minWeeklyIncome,row.maxWeeklyIncome,row.companyCount]),[
-      [5,9,75,75,1],
-      [28,8,100,100,1],
-      [28,10,200,250,2],
-      [28,12,400,450,2],
+    assert.deepEqual(merged.map(row=>[
+      row.companyTypeId,row.starRating,row.minWeeklyIncome,row.maxWeeklyIncome,
+      row.thirdLowestWeeklyIncome,row.companyCount,row.lowestWeeklyIncomes,
+    ]),[
+      [5,9,75,75,null,1,[75]],
+      [28,0,0,5,0,4,[0,0,0]],
+      [28,8,100,120,120,3,[100,110,120]],
+      [28,10,100,250,220,5,[100,200,220]],
+      [28,12,350,500,450,4,[350,400,450]],
     ])
     assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",10,150),{
-      nextStarRating:12,nextStarIncome:400,nextStarGap:250,
-      previousStarRating:8,previousStarIncome:100,previousStarGap:50,
+      nextStarRating:12,nextStarIncome:450,nextStarGap:300,nextStarCompanyCount:4,
+      previousStarRating:8,previousStarIncome:120,previousStarGap:30,previousStarCompanyCount:3,
     })
     assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",12,500),{
-      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
-      previousStarRating:10,previousStarIncome:250,previousStarGap:250,
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:null,
+      previousStarRating:10,previousStarIncome:220,previousStarGap:280,previousStarCompanyCount:5,
+    })
+    assert.deepEqual(resolveStarIncomeProgress(merged,5,"Television Network",8,100),{
+      nextStarRating:9,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:1,
+      previousStarRating:null,previousStarIncome:null,previousStarGap:null,previousStarCompanyCount:null,
     })
     assert.deepEqual(resolveStarIncomeProgress(merged,999,"Unknown",10,150),{
-      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
-      previousStarRating:null,previousStarIncome:null,previousStarGap:null,
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,nextStarCompanyCount:null,
+      previousStarRating:null,previousStarIncome:null,previousStarGap:null,previousStarCompanyCount:null,
     })
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:10:00.000Z"),true,"Monday 00:10 UTC is the approved weekly capture")
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-22T18:10:00.000Z"),false,"Sunday 18:10 UTC is not the new weekly capture")
@@ -1259,14 +1286,30 @@ try {
     }), null)
   })
 
-  await test("weekly windows start Sunday 00:00 UTC and remain exactly 168 hours across DST changes", () => {
-    const regular = utcSundayWindow(Date.parse("2026-11-02T18:00:00.000Z"))
-    assert.equal(regular.startAt, "2026-11-01T00:00:00.000Z")
-    assert.equal(regular.endAt, "2026-11-08T00:00:00.000Z")
+  await test("weekly faction windows start Sunday 19:10 fixed EST / Monday 00:10 UTC and preserve the prior baseline once", () => {
+    assert.equal(FIRST_EST_WEEKLY_BOUNDARY_AT, Date.parse("2026-11-30T00:10:00.000Z"))
+    assert.equal(EST_WEEKLY_TRANSITION_START_AT, Date.parse("2026-11-22T00:00:00.000Z"))
+    assert.equal(weeklyFactionBoundaryStart(Date.parse("2026-11-30T00:09:59.999Z")), Date.parse("2026-11-23T00:10:00.000Z"))
+    assert.equal(weeklyFactionBoundaryStart(Date.parse("2026-11-30T00:10:00.000Z")), FIRST_EST_WEEKLY_BOUNDARY_AT)
+    assert.equal(weeklyFactionPreviousBoundaryStart(FIRST_EST_WEEKLY_BOUNDARY_AT), EST_WEEKLY_TRANSITION_START_AT)
+    assert.equal(weeklyFactionWindowStart(Date.parse("2026-11-25T12:00:00.000Z")), EST_WEEKLY_TRANSITION_START_AT)
+
+    const transition = weeklyFactionWindow(Date.parse("2026-11-25T12:00:00.000Z"))
+    assert.equal(transition.startAt, "2026-11-22T00:00:00.000Z")
+    assert.equal(transition.endAt, "2026-11-30T00:10:00.000Z")
+    assert.equal(transition.transition, true)
+    assert.equal(Date.parse(transition.endAt) - Date.parse(transition.startAt), 8 * 24 * 60 * 60 * 1000 + 10 * 60 * 1000)
+
+    const regular = weeklyFactionWindow(Date.parse("2026-12-02T18:00:00.000Z"))
+    assert.equal(regular.startAt, "2026-11-30T00:10:00.000Z")
+    assert.equal(regular.endAt, "2026-12-07T00:10:00.000Z")
+    assert.equal(regular.transition, false)
     assert.equal(Date.parse(regular.endAt) - Date.parse(regular.startAt), WEEK_MS)
-    const dstSunday = utcSundayWindow(Date.parse("2026-03-08T07:30:00.000Z"))
-    assert.equal(dstSunday.startAt, "2026-03-08T00:00:00.000Z")
-    assert.equal(Date.parse(dstSunday.endAt) - Date.parse(dstSunday.startAt), 168 * 60 * 60 * 1000)
+
+    assert.equal(weeklyFactionWindowEnd(EST_WEEKLY_TRANSITION_START_AT), FIRST_EST_WEEKLY_BOUNDARY_AT)
+    assert.equal(isWeeklyFactionBoundary(Date.parse("2026-11-22T00:00:00.000Z")), true, "legacy archived UTC boundaries remain valid")
+    assert.equal(isWeeklyFactionBoundary(FIRST_EST_WEEKLY_BOUNDARY_AT), true, "new fixed-EST weekly anchors are valid")
+    assert.equal(isWeeklyFactionBoundary(Date.parse("2026-11-30T00:00:00.000Z")), false, "Sunday midnight is not a new EST weekly boundary")
   })
 
   await test("weekly deltas use Sunday baseline snapshots, keep Xanax and LSD separate, and allow negative networth change", () => {
@@ -2299,6 +2342,13 @@ try {
     assert.match(scheduled, /isWeeklyStarIncomeBufferWindow \? captureWeeklyFactionCounts\(\) : refreshDirectory\(\)/)
     assert.match(scheduled, /refreshFactionDirectoryFromServiceKey\(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow, isWeeklyStarIncomeBufferWindow\)/)
     assert.match(workerSource, /if \(!forceRefreshAll && checked && now - checked < freshnessWindowMs\) continue/, "the weekly snapshot must bypass the routine freshness skip and refresh every member")
+    const factionDispatcherStart = workerSource.indexOf("async function runFiveMinuteScheduledJobs")
+    const factionDispatcherEnd = workerSource.indexOf("export default {", factionDispatcherStart)
+    const factionDispatcher = workerSource.slice(factionDispatcherStart, factionDispatcherEnd)
+    assert.match(factionDispatcher, /scheduledTime === weeklyBoundaryMs/, "faction baseline collections must enqueue at exact Sunday 19:10 EST")
+    assert.match(factionDispatcher, /weeklyFactionPreviousBoundaryStart\(weeklyBoundaryMs\)/, "report finalization must use the prior transition-aware boundary")
+    assert.match(workerSource, /weeklyFactionWindow\(nowMs\)/, "the Faction Dashboard must use the active fixed-EST window")
+    assert.match(workerSource, /isWeeklyFactionBoundary\(compareMs\)/, "archived UTC and new EST report comparisons must remain valid")
     assert.match(workerSource, /const pendingCount = Math\.max\(pending \+ failedMemberCount, 0\)/)
     assert.match(workerSource, /if \(forceRefresh && \(typeof root\.rating !== "number" \|\| !Number\.isFinite\(root\.rating\)\)\)/)
     assert.match(workerSource, /DELETE FROM faction_star_weekly_counts WHERE week_key = \?/)
@@ -5226,11 +5276,15 @@ try {
     const helperSource = readFileSync(join(root, "src/lib/company/star-income-buffers.ts"), "utf8")
     const floorSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
     const migration = readFileSync(join(root, "migrations/auth/0040_global_star_income_buffers.sql"), "utf8")
+    const safetyMigration = readFileSync(join(root, "migrations/auth/0041_third_lowest_star_income_buffer.sql"), "utf8")
     assert.match(workerSource, /INSERT INTO global_star_income_buffers/)
+    assert.match(workerSource, /third_lowest_weekly_income/)
     assert.match(workerSource, /INSERT INTO global_star_income_buffer_snapshots/)
     assert.match(workerSource, /companyIds: pageCompanyIds, buffers: buildGlobalStarIncomeBuffers\(pageInputs\)/)
     assert.match(workerSource, /getLatestGlobalStarIncomeBufferSnapshot/)
     assert.match(workerSource, /starIncomeBuffers/)
+    assert.match(helperSource, /thirdLowestWeeklyIncome/)
+    assert.match(helperSource, /lowestWeeklyIncomes/)
     assert.match(helperSource, /minWeeklyIncome/)
     assert.match(helperSource, /maxWeeklyIncome/)
     assert.match(helperSource, /companyCount/)
@@ -5242,6 +5296,7 @@ try {
     assert.match(floorSource, /PREVIOUS STAR BUFFER/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffers/)
     assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffer_snapshots/)
+    assert.match(safetyMigration, /ADD COLUMN third_lowest_weekly_income REAL/)
     assert.doesNotMatch(migration, /DELETE FROM|DROP TABLE/i, "the new migration must preserve existing ranking history")
   })
 

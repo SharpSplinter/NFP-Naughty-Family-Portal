@@ -12,8 +12,13 @@ import {
 import {
   calculateWeeklyMemberResult,
   rankWeeklyMembers,
-  utcSundayWindow,
-  utcSundayStart,
+  FIRST_EST_WEEKLY_BOUNDARY_AT,
+  isWeeklyFactionBoundary,
+  weeklyFactionBoundaryStart,
+  weeklyFactionPreviousBoundaryStart,
+  weeklyFactionWindow,
+  weeklyFactionWindowEnd,
+  weeklyFactionWindowStart,
   WEEK_MS,
   WEEKLY_METRIC_NAMES,
   type WeeklyMemberResult,
@@ -33,7 +38,7 @@ import { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } from "./
 import { refreshThenCaptureWeeklyFactionSnapshot, weeklyFactionReportingDay } from "./weekly-faction-snapshot"
 import { withRollingWeeklyProfit, type DailyProfitHistoryPoint } from "./company-history"
 import { buildFactionCompanyRankSnapshots, isFactionDirectorySnapshotEligible, type FactionDirectorRankingInput } from "./ranking-snapshots"
-import { buildGlobalStarIncomeBuffers, type GlobalStarIncomeBuffer, type GlobalStarIncomeBufferInput } from "../lib/company/star-income-buffers"
+import { buildGlobalStarIncomeBuffers, type GlobalStarIncomeBuffer, type GlobalStarIncomeBufferInput, type GlobalStarIncomeBufferPage } from "../lib/company/star-income-buffers"
 import { withDailySnapshotReadCache, type DailyReadCacheKV } from "./daily-read-cache"
 import { D1RequestReadMeter, type D1Database } from "./d1-read-accounting"
 import { loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, reserveHalloweenRequestSlot, type SessionAccessMetadata } from "./d1-optimizations"
@@ -952,15 +957,17 @@ async function enqueueFactionPerformanceCollections(env: WorkerEnv, scheduledTim
   return enqueued
 }
 
-async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number): Promise<boolean> {
+async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: number, boundaryAtOverride?: number): Promise<boolean> {
   if (!env.DB || !env.GLOBAL_RANKINGS_QUEUE || !workerServiceTornApiKey(env)) return false
   const db = requireDb(env)
-  const boundaryMs = utcSundayStart(scheduledTime)
+  const boundaryMs = boundaryAtOverride ?? weeklyFactionBoundaryStart(scheduledTime)
+  if (boundaryAtOverride === undefined && scheduledTime < FIRST_EST_WEEKLY_BOUNDARY_AT) return false
   const boundaryAt = new Date(boundaryMs).toISOString()
   let boundary = await db.prepare(
     "SELECT stats_run_id AS statsRunId, gym_energy_run_id AS gymEnergyRunId FROM faction_weekly_boundary_runs WHERE faction_id = ? AND boundary_at = ?"
   ).bind(NAUGHTY_SOULS_FACTION_ID, boundaryAt).first<{ statsRunId: string; gymEnergyRunId: string }>()
   if (!boundary) {
+    if (scheduledTime - boundaryMs < 0 || scheduledTime - boundaryMs > DAY * 1000) return false
     // Freeze the cohort that was known to be in-faction at this exact
     // Sunday boundary. A delayed scheduler must still include members who
     // left after the boundary, while excluding people who joined afterward.
@@ -1024,8 +1031,8 @@ async function enqueueFactionWeeklyBoundaryRun(env: WorkerEnv, scheduledTime: nu
 async function finalizeFactionWeeklyReport(env: WorkerEnv, weekStartMs: number): Promise<boolean> {
   if (!env.DB || !Number.isFinite(weekStartMs)) return false
   const db = requireDb(env)
-  const weekStartAt = new Date(utcSundayStart(weekStartMs)).toISOString()
-  const weekEndAt = new Date(Date.parse(weekStartAt) + WEEK_MS).toISOString()
+  const weekStartAt = new Date(weekStartMs).toISOString()
+  const weekEndAt = new Date(weeklyFactionWindowEnd(weekStartMs)).toISOString()
   const existing = await db.prepare(
     "SELECT report_status AS reportStatus FROM faction_weekly_reports WHERE faction_id = ? AND week_start_at = ?"
   ).bind(NAUGHTY_SOULS_FACTION_ID, weekStartAt).first<{ reportStatus: string }>()
@@ -1619,7 +1626,7 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
   const pages = await db.prepare("SELECT type_index AS typeIndex, page_offset AS pageOffset, companies_json AS companiesJson FROM global_rankings_refresh_pages WHERE run_id = ? ORDER BY type_index, page_offset")
     .bind(run.run_id).all<{ typeIndex: number; pageOffset: number; companiesJson: string }>()
   const companyIds = new Set<string>()
-  const combined = new Map<string, GlobalStarIncomeBuffer>()
+  const combined = new Map<string, GlobalStarIncomeBufferPage>()
   let stagedCompanyCount = 0
   for (const page of pages.results ?? []) {
     const type = types[Number(page.typeIndex)]
@@ -1668,19 +1675,31 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
       if (!isRecord(value)) throw new Error("Staged star-income aggregate was malformed; the prior snapshot was preserved.")
       const typeId = numericField(value.companyTypeId), star = numericField(value.starRating)
       const minimum = numericField(value.minWeeklyIncome), maximum = numericField(value.maxWeeklyIncome)
+      const third = numericField(value.thirdLowestWeeklyIncome)
       const count = numericField(value.companyCount)
+      const lowest = value.lowestWeeklyIncomes
       if (typeId !== type.id || star === null || minimum === null || maximum === null || count === null ||
-        !Number.isInteger(count) || count <= 0 || minimum > maximum) throw new Error("Staged star-income aggregate failed validation; the prior snapshot was preserved.")
+        !Number.isInteger(count) || count <= 0 || minimum > maximum || !Array.isArray(lowest) ||
+        lowest.length !== Math.min(3, count) || lowest.some((entry, index) =>
+          typeof entry !== "number" || !Number.isFinite(entry) || (index > 0 && entry < lowest[index - 1])) ||
+        (star !== 0 && lowest.some(entry => entry === 0)) ||
+        (lowest.length > 0 && lowest[0] !== minimum) ||
+        (lowest.length === 3 ? third !== lowest[2] : third !== null)) {
+        throw new Error("Staged star-income aggregate failed validation; the prior snapshot was preserved.")
+      }
       const key = typeId + ":" + star
       const current = combined.get(key)
       if (current) {
         current.minWeeklyIncome = Math.min(current.minWeeklyIncome, minimum)
         current.maxWeeklyIncome = Math.max(current.maxWeeklyIncome, maximum)
         current.companyCount += count
+        current.lowestWeeklyIncomes = [...current.lowestWeeklyIncomes, ...lowest].sort((a, b) => a - b).slice(0, 3)
+        current.thirdLowestWeeklyIncome = current.lowestWeeklyIncomes.length === 3 ? current.lowestWeeklyIncomes[2] : null
       } else combined.set(key, {
         companyTypeId: typeId,
         companyType: typeof value.companyType === "string" && value.companyType.trim() ? value.companyType : type.name,
-        starRating: star, minWeeklyIncome: minimum, maxWeeklyIncome: maximum, companyCount: count,
+        starRating: star, minWeeklyIncome: minimum, maxWeeklyIncome: maximum,
+        thirdLowestWeeklyIncome: third, companyCount: count, lowestWeeklyIncomes: [...lowest],
       })
     }
   }
@@ -1697,11 +1716,11 @@ async function finalizeGlobalRankingRefresh(env: WorkerEnv, run: GlobalRankingRu
   const benchmarkCompanyCount = buffers.reduce((sum, row) => sum + row.companyCount, 0)
   const tuples = buffers.map(row => [
     reportingDay, row.companyTypeId, row.companyType, row.starRating, row.minWeeklyIncome, row.maxWeeklyIncome,
-    row.companyCount, sourceStartedAt, sourceCompletedAt,
+    row.thirdLowestWeeklyIncome, row.companyCount, sourceStartedAt, sourceCompletedAt,
   ])
   if (!db.batch) throw new Error("D1 batch support is required to publish a complete weekly star-income snapshot; the prior snapshot was preserved.")
   await db.batch([
-    db.prepare("INSERT INTO global_star_income_buffers (reporting_day, company_type_id, company_type, star_rating, min_weekly_income, max_weekly_income, company_count, source_started_at, captured_at) SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]'), json_extract(value, '$[6]'), json_extract(value, '$[7]'), json_extract(value, '$[8]') FROM json_each(?) WHERE 1 ON CONFLICT(reporting_day, company_type_id, star_rating) DO UPDATE SET company_type = excluded.company_type, min_weekly_income = excluded.min_weekly_income, max_weekly_income = excluded.max_weekly_income, company_count = excluded.company_count, source_started_at = excluded.source_started_at, captured_at = excluded.captured_at").bind(asJson(tuples)),
+    db.prepare("INSERT INTO global_star_income_buffers (reporting_day, company_type_id, company_type, star_rating, min_weekly_income, max_weekly_income, third_lowest_weekly_income, company_count, source_started_at, captured_at) SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]'), json_extract(value, '$[6]'), json_extract(value, '$[7]'), json_extract(value, '$[8]'), json_extract(value, '$[9]') FROM json_each(?) WHERE 1 ON CONFLICT(reporting_day, company_type_id, star_rating) DO UPDATE SET company_type = excluded.company_type, min_weekly_income = excluded.min_weekly_income, max_weekly_income = excluded.max_weekly_income, third_lowest_weekly_income = excluded.third_lowest_weekly_income, company_count = excluded.company_count, source_started_at = excluded.source_started_at, captured_at = excluded.captured_at").bind(asJson(tuples)),
     db.prepare("INSERT INTO global_star_income_buffer_snapshots (reporting_day, scheduled_at, source_started_at, source_completed_at, company_count, benchmark_company_count, company_type_count, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(reporting_day) DO UPDATE SET scheduled_at = excluded.scheduled_at, source_started_at = excluded.source_started_at, source_completed_at = excluded.source_completed_at, company_count = excluded.company_count, benchmark_company_count = excluded.benchmark_company_count, company_type_count = excluded.company_type_count, captured_at = excluded.captured_at")
       .bind(reportingDay, scheduledAt, sourceStartedAt, sourceCompletedAt, stagedCompanyCount, benchmarkCompanyCount, new Set(types.map(type => type.id)).size, sourceCompletedAt),
   ])
@@ -3648,7 +3667,7 @@ async function handleGlobalRankingQueueBatch(batch: { messages: QueueMessage[]; 
     if (body.kind === "faction-weekly-finalize") {
       const weekStartAt = typeof body.weekStartAt === "string" ? body.weekStartAt : ""
       const parsedStart = Date.parse(weekStartAt)
-      if (!Number.isFinite(parsedStart) || new Date(utcSundayStart(parsedStart)).toISOString() !== weekStartAt) {
+      if (!Number.isFinite(parsedStart) || !isWeeklyFactionBoundary(parsedStart) || new Date(parsedStart).toISOString() !== weekStartAt) {
         message.ack()
         continue
       }
@@ -4080,7 +4099,7 @@ async function getLatestGlobalStarIncomeBufferSnapshot(db: D1Database): Promise<
   const snapshot = await db.prepare("SELECT reporting_day AS reportingDay, scheduled_at AS scheduledAt, source_started_at AS sourceStartedAt, source_completed_at AS sourceCompletedAt, company_count AS companyCount, benchmark_company_count AS benchmarkCompanyCount, company_type_count AS companyTypeCount, captured_at AS capturedAt FROM global_star_income_buffer_snapshots ORDER BY reporting_day DESC LIMIT 1")
     .first<{ reportingDay: string; scheduledAt: string; sourceStartedAt: string; sourceCompletedAt: string; companyCount: number; benchmarkCompanyCount: number; companyTypeCount: number; capturedAt: string }>()
   if (!snapshot) return { starIncomeBuffers: [], starIncomeBufferSnapshot: null }
-  const rows = await db.prepare("SELECT company_type_id AS companyTypeId, company_type AS companyType, star_rating AS starRating, min_weekly_income AS minWeeklyIncome, max_weekly_income AS maxWeeklyIncome, company_count AS companyCount, source_started_at AS sourceStartedAt, captured_at AS capturedAt FROM global_star_income_buffers WHERE reporting_day = ? ORDER BY company_type_id ASC, star_rating ASC")
+  const rows = await db.prepare("SELECT company_type_id AS companyTypeId, company_type AS companyType, star_rating AS starRating, min_weekly_income AS minWeeklyIncome, max_weekly_income AS maxWeeklyIncome, third_lowest_weekly_income AS thirdLowestWeeklyIncome, company_count AS companyCount, source_started_at AS sourceStartedAt, captured_at AS capturedAt FROM global_star_income_buffers WHERE reporting_day = ? ORDER BY company_type_id ASC, star_rating ASC")
     .bind(snapshot.reportingDay).all<GlobalStarIncomeBuffer & { sourceStartedAt: string; capturedAt: string }>()
   return { starIncomeBuffers: rows.results ?? [], starIncomeBufferSnapshot: snapshot }
 }
@@ -5609,12 +5628,16 @@ async function handleAdminRequest(
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 50) || 50))
   if (url.pathname === "/api/admin/faction/weekly-boundaries" && request.method === "GET") {
     const boundaryLimit = Math.min(26, Math.max(1, Number(url.searchParams.get("limit") || 12) || 12))
-    const currentSundayMs = utcSundayStart(Date.now())
-    const boundaryTimes = Array.from({ length: boundaryLimit }, (_, index) =>
-      new Date(currentSundayMs - index * WEEK_MS).toISOString())
+    const currentBoundaryMs = weeklyFactionWindowStart(Date.now())
+    const boundaryTimes: string[] = []
+    let boundaryCursor = currentBoundaryMs
+    for (let index = 0; index < boundaryLimit; index += 1) {
+      boundaryTimes.push(new Date(boundaryCursor).toISOString())
+      boundaryCursor = weeklyFactionPreviousBoundaryStart(boundaryCursor)
+    }
     const reportWeekStarts = Array.from(new Set([
       ...boundaryTimes,
-      ...boundaryTimes.map((value) => new Date(Date.parse(value) - WEEK_MS).toISOString()),
+      ...boundaryTimes.map((value) => new Date(weeklyFactionPreviousBoundaryStart(Date.parse(value))).toISOString()),
     ]))
     const boundaryPlaceholders = boundaryTimes.map(() => "?").join(", ")
     const reportPlaceholders = reportWeekStarts.map(() => "?").join(", ")
@@ -5714,7 +5737,7 @@ async function handleAdminRequest(
       }).length
       const stats = registry ? diagnosticRun(registry.statsRunId, "personalstats") : null
       const gymEnergy = registry ? diagnosticRun(registry.gymEnergyRunId, "gym_energy", knownMemberCount) : null
-      const endingWeekStartAt = new Date(boundaryMs - WEEK_MS).toISOString()
+      const endingWeekStartAt = new Date(weeklyFactionPreviousBoundaryStart(boundaryMs)).toISOString()
       const endingWeekReport = reportByWeek.get(endingWeekStartAt) ?? null
       const startingWeekReport = reportByWeek.get(boundaryAt) ?? null
       const locked = Boolean(endingWeekReport || startingWeekReport)
@@ -5796,19 +5819,19 @@ async function handleAdminRequest(
       Array.isArray(requestedRaw) ? requestedRaw : null
     if (!boundaryAt || requestedCollections === null || requestedCollections.length === 0 ||
         requestedCollections.some((kind) => kind !== "personalstats" && kind !== "gym_energy")) {
-      return jsonResponse({ error: "Provide a Sunday boundary and one or both supported collection kinds." }, 400, origin)
+      return jsonResponse({ error: "Provide a weekly boundary and one or both supported collection kinds." }, 400, origin)
     }
     const boundaryMs = Date.parse(boundaryAt)
-    if (!Number.isFinite(boundaryMs) || new Date(utcSundayStart(boundaryMs)).toISOString() !== boundaryAt) {
-      return jsonResponse({ error: "Select a Sunday 00:00 UTC boundary." }, 400, origin)
+    if (!Number.isFinite(boundaryMs) || !isWeeklyFactionBoundary(boundaryMs) || new Date(boundaryMs).toISOString() !== boundaryAt) {
+      return jsonResponse({ error: "Select a valid weekly boundary (Sunday 19:10 EST; legacy Sunday 00:00 UTC records are also supported)." }, 400, origin)
     }
-    const currentSundayMs = utcSundayStart(Date.now())
-    if (boundaryMs > currentSundayMs) return jsonResponse({ error: "Future Sunday boundaries cannot be recovered." }, 400, origin)
+    const currentBoundaryMs = weeklyFactionWindowStart(Date.now())
+    if (boundaryMs > currentBoundaryMs) return jsonResponse({ error: "Future weekly boundaries cannot be recovered." }, 400, origin)
     if (!env.GLOBAL_RANKINGS_QUEUE || !serviceFullAccessApiKey(env)) {
       return jsonResponse({ error: "Faction collection queue or Worker service Torn API key is not configured." }, 503, origin)
     }
     const relatedWeekStarts = [
-      new Date(boundaryMs - WEEK_MS).toISOString(),
+      new Date(weeklyFactionPreviousBoundaryStart(boundaryMs)).toISOString(),
       boundaryAt,
     ]
     const reportPlaceholders = relatedWeekStarts.map(() => "?").join(", ")
@@ -5829,7 +5852,7 @@ async function handleAdminRequest(
       if (ageMs < 0 || ageMs > DAY * 1000) {
         return jsonResponse({ error: "A missing Sunday capture can only be created within 24 hours. The original historical counter values cannot be reconstructed later." }, 409, origin)
       }
-      const enqueued = await enqueueFactionWeeklyBoundaryRun(env, boundaryMs)
+      const enqueued = await enqueueFactionWeeklyBoundaryRun(env, boundaryMs, boundaryMs)
       if (!enqueued) {
         return jsonResponse({ error: "No known membership cohort covers this Sunday, or the boundary could not be queued. No capture was created." }, 409, origin)
       }
@@ -6290,19 +6313,24 @@ async function handleAdminRequest(
 
 async function runFiveMinuteScheduledJobs(env: WorkerEnv, scheduledTime: number): Promise<void> {
   // Keep membership and event-window timing on the five-minute clock.
-  // Weekly boundary/report reconciliation runs every fifteen minutes, including
-  // the exact Sunday 00:00 UTC boundary, to avoid repeating its four SELECTs
-  // on all 288 daily dispatcher ticks. Roster history is hourly; stats and
-  // gym-energy snapshots are every four hours.
+  // Weekly collection begins Sunday 19:10 EST (Monday 00:10 UTC); periodic
+  // fifteen-minute checks retry failed or delayed captures.
+  // Roster history is hourly; regular personalstats and gym-energy samples are every four hours.
   // One source outage must not suppress the other scheduled work.
   const schedulerBucket = Math.floor(scheduledTime / FIVE_MINUTE_SCHEDULER_TICK_MS)
+  const weeklyBoundaryMs = weeklyFactionBoundaryStart(scheduledTime)
+  const weeklyRetryTick = schedulerBucket % FACTION_WEEKLY_RETRY_TICK_INTERVAL === 0
   if (schedulerBucket % FACTION_MEMBERSHIP_REVALIDATION_TICK_INTERVAL === 0) {
     try { await revalidateFactionMembershipBatch(env, scheduledTime) } catch { /* Retry stale members on a later tick. */ }
   }
   try { await enqueueFactionPerformanceCollections(env, scheduledTime) } catch { /* Idempotent schedule buckets retry on a later tick. */ }
-  if (schedulerBucket % FACTION_WEEKLY_RETRY_TICK_INTERVAL === 0) {
-    try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* Retry the unique Sunday boundary on the next weekly reconciliation tick. */ }
-    try { await finalizeFactionWeeklyReport(env, utcSundayStart(scheduledTime) - WEEK_MS) } catch { /* Finalization retries on the next weekly reconciliation tick after ending captures become terminal. */ }
+  if (scheduledTime >= FIRST_EST_WEEKLY_BOUNDARY_AT && (weeklyRetryTick || scheduledTime === weeklyBoundaryMs)) {
+    try { await enqueueFactionWeeklyBoundaryRun(env, scheduledTime) } catch { /* Retry the unique weekly boundary on the next reconciliation tick. */ }
+  }
+  if (weeklyRetryTick && scheduledTime >= FIRST_EST_WEEKLY_BOUNDARY_AT) {
+    try { await finalizeFactionWeeklyReport(env, weeklyFactionPreviousBoundaryStart(weeklyBoundaryMs)) } catch { /* Finalization retries after ending captures become terminal. */ }
+  } else if (weeklyRetryTick && scheduledTime < FIRST_EST_WEEKLY_BOUNDARY_AT) {
+    try { await finalizeFactionWeeklyReport(env, weeklyFactionPreviousBoundaryStart(weeklyFactionWindowStart(scheduledTime))) } catch { /* Finish any legacy Sunday-UTC report still awaiting captures. */ }
   }
   try { await enqueueScheduledHalloweenSnapshots(env, scheduledTime) } catch { /* Retry the next event sweep. */ }
 }
@@ -8503,8 +8531,8 @@ export default {
         }
 
         const weekStartMs = Date.parse(weeks)
-        if (!Number.isFinite(weekStartMs) || new Date(utcSundayStart(weekStartMs)).toISOString() !== weeks) {
-          return jsonResponse({ error: "Select a valid Sunday 00:00 UTC report boundary." }, 400, origin)
+        if (!Number.isFinite(weekStartMs) || !isWeeklyFactionBoundary(weekStartMs) || new Date(weekStartMs).toISOString() !== weeks) {
+          return jsonResponse({ error: "Select a valid weekly report boundary." }, 400, origin)
         }
         const metricParam = (url.searchParams.get("metric") || "xantaken").trim()
         const allowedMetrics = [...WEEKLY_METRIC_NAMES, "gymEnergy"] as readonly string[]
@@ -8574,8 +8602,8 @@ export default {
         let priorRanked = new Map<string, WeeklyMemberResult & { rank: number | null }>()
         if (compareTo) {
           const compareMs = Date.parse(compareTo)
-          if (!Number.isFinite(compareMs) || new Date(utcSundayStart(compareMs)).toISOString() !== compareTo || compareMs >= weekStartMs) {
-            return jsonResponse({ error: "Choose an earlier completed Sunday report to compare." }, 400, origin)
+          if (!Number.isFinite(compareMs) || !isWeeklyFactionBoundary(compareMs) || new Date(compareMs).toISOString() !== compareTo || compareMs >= weekStartMs) {
+            return jsonResponse({ error: "Choose an earlier completed weekly report to compare." }, 400, origin)
           }
           priorReport = await db.prepare(
             "SELECT week_start_at AS weekStartAt, week_end_at AS weekEndAt, report_status AS status, finalized_at AS finalizedAt FROM faction_weekly_reports WHERE faction_id = ? AND week_start_at = ?"
@@ -8626,7 +8654,7 @@ export default {
       const db = requireDb(env)
       try {
         const nowMs = Date.now()
-        const week = utcSundayWindow(nowMs)
+        const week = weeklyFactionWindow(nowMs)
         const requestedMetric = (url.searchParams.get("metric") || "xantaken").trim()
         const allowedRankingMetrics = [...WEEKLY_METRIC_NAMES, "gymEnergy"] as readonly string[]
         const selectedMetric = allowedRankingMetrics.includes(requestedMetric)

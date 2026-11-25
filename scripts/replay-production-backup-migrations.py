@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_MIGRATION_NUMBERS = list(range(13, 41))
-EXPECTED_RESTORED_MIGRATION_COUNT = 44
-EXPECTED_PENDING_MIGRATION_NUMBERS = [40]
+EXPECTED_MIGRATION_NUMBERS = list(range(13, 42))
+EXPECTED_RESTORED_MIGRATION_COUNT = 45
+EXPECTED_PENDING_MIGRATION_NUMBERS = [41]
 
 
 def sha256_file(path: Path) -> str:
@@ -110,21 +110,21 @@ def replay_backup(
                 number = int(path.name.split("_", 1)[0])
             except ValueError:
                 continue
-            if 13 <= number <= 40:
+            if 13 <= number <= 41:
                 candidate_files.append(path)
 
         numbers = [int(path.name.split("_", 1)[0]) for path in candidate_files]
         if numbers != EXPECTED_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0040."
+                "The checked-out migration directory must contain exactly one ordered migration for every prefix 0013 through 0041."
             )
 
         # Production already has 0038_global_company_rank_snapshot_meta.sql and
         # 0039_retire_discord_poll_telemetry.sql in its live ledger. Both must be
-        # represented in the backup; the only new migration in this release is 0040.
+        # represented in the backup; the only new migration in this release is 0041.
         prior_migrations = [
             path for path in candidate_files
-            if int(path.name.split("_", 1)[0]) < 40
+            if int(path.name.split("_", 1)[0]) < 41
         ]
         missing_prior = [path.name for path in prior_migrations if path.name not in applied]
         if missing_prior:
@@ -137,14 +137,14 @@ def replay_backup(
         pending_numbers = [int(path.name.split("_", 1)[0]) for path in pending]
         if pending_numbers != EXPECTED_PENDING_MIGRATION_NUMBERS:
             raise RuntimeError(
-                "Expected only migration 0040 to be pending for this production backup; "
+                "Expected only migration 0041 to be pending for this production backup; "
                 f"found {pending_numbers}."
             )
 
         if len(applied) != EXPECTED_RESTORED_MIGRATION_COUNT:
             raise RuntimeError(
                 "Expected the production backup to contain "
-                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0039; "
+                f"{EXPECTED_RESTORED_MIGRATION_COUNT} applied migrations through 0040; "
                 f"found {len(applied)} entries."
             )
 
