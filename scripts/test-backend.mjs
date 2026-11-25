@@ -550,7 +550,10 @@ try {
       previousStarRating:null,previousStarIncome:null,previousStarGap:null,
     })
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:10:00.000Z"),true,"Monday 00:10 UTC is the approved weekly capture")
-    assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-22T18:10:00.000Z"),false,"Sunday 18:10 UTC is not the approved weekly capture")
+    assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-22T18:10:00.000Z"),false,"Sunday 18:10 UTC is not the new weekly capture")
+    assert.equal(isBeforeWeeklyStarIncomeScheduleChange("2026-11-22T18:10:00.000Z"),true,"the November 22 capture predates the November 25 cron transition")
+    assert.equal(isBeforeWeeklyStarIncomeScheduleChange("2026-11-25T02:38:34.909074Z"),false,"the cron transition instant belongs to the new schedule era")
+    assert.equal(isBeforeWeeklyStarIncomeScheduleChange("2026-11-30T00:10:00.000Z"),false,"the November 30 capture is under the new schedule")
     assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:11:00.000Z"),false,"a late minute is not the scheduled cron timestamp")
   })
 
