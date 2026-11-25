@@ -2063,7 +2063,7 @@ try {
     const directoryRefresh = workerSource.slice(directoryRefreshStart, directoryRefreshEnd)
     assert.doesNotMatch(directoryRefresh, /persistFactionDirectorSnapshot/, "profile-only directory refreshes must not create official stock history")
     const scheduled = workerSource.slice(workerSource.indexOf("async function runScheduledAutomation"), workerSource.indexOf("type AdminRefreshEndpoint"))
-    assert.match(scheduled, /refreshRankingProfiles\(env, isRankingCaptureWindow, \{ cron: controller\.cron, scheduledTime: controller\.scheduledTime \}\)/)
+    assert.match(scheduled, /isDailyCompanyCaptureWindow \? refreshRankingProfiles\(env, true, \{ cron: controller\.cron, scheduledTime: controller\.scheduledTime \}\)/)
     assert.match(floorSource, /currentOfficialStockSnapshot = officialStockSnapshots\.find\(\(point\) => point\.day === currentSnapshotDay\)/)
     assert.match(floorSource, /currentOfficialStockSnapshot\.stockQuantity - previousStockSnapshot\.stockQuantity/)
     assert.doesNotMatch(floorSource, /currentStockQuantity - previousStockSnapshot\.stockQuantity/)
