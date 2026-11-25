@@ -147,8 +147,6 @@ async function isDailyCaptureReady(
     }
   }
 
-  const start = new Date(reportingDayStartMs(reportingDay)).toISOString()
-  const end = new Date(reportingDayStartMs(reportingDay) + DAY_MS).toISOString()
   let ready = true
   try {
     for (const table of tables) {
