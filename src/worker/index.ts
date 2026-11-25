@@ -4726,7 +4726,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
     .bind(status, finishedAt, companiesChecked, companiesFailed, Number(alerts?.count ?? 0), summary, runId).run()
 }
 
-type AdminRefreshEndpoint = "company-profile" | "company-employees" | "company-stock" | "faction-directory
+type AdminRefreshEndpoint = "company-profile" | "company-employees" | "company-stock" | "faction-directory"
 type AdminEndpointRefreshConfig = { endpoints: AdminRefreshEndpoint[]; scope: "all" | "selected"; targetPlayerIds: string[] }
 
 const ADMIN_REFRESH_ENDPOINTS: AdminRefreshEndpoint[] = [
