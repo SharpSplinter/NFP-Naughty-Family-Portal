@@ -282,7 +282,6 @@ export function FloorApp() {
           if (normalized && !cancelled) {
             setResult({ profile: data.profile, employees: data.employees, stock: data.stock, incomeHistory: data.incomeHistory, model: normalized })
             setSelectedCompanyId(String(data.companyId ?? normalized.company.id))
-            setSelectedRankingType(normalized.company.typeName)
             const refreshed = await fetch(`${API_BASE}/api/me/companies`, { headers: { Authorization: `Bearer ${token}` } })
             if (refreshed.ok && !cancelled) { const saved = await refreshed.json() as { companies: SavedCompany[] }; setSavedCompanies(saved.companies || []) }
           }
@@ -580,7 +579,6 @@ export function FloorApp() {
             stockQuantity: numberOrNull(record.stockQuantity),
             rating: numberOrNull(record.rating),
           }
-          if (typeof record.companyRank === "number" && Number.isFinite(record.companyRank)) point.companyRank = record.companyRank
           return [point]
         })
         const stockRows = history.flatMap((item) => {
@@ -917,8 +915,6 @@ export function FloorApp() {
     setSavedCompanies([])
     setResult(null)
     setRankingCompanies([])
-    setGlobalRankingCompanies([])
-    setRankingsUpdatedAt("")
     setRankingError("")
     setApiKey("")
     setActiveView("overview")
@@ -968,7 +964,6 @@ export function FloorApp() {
       const normalized = runEngine(payload.profile, payload.employees, catalog)
       if (!normalized) throw new Error("Torn returned an unexpected company profile. The response was not added to your saved workspace.")
       setResult({ profile: payload.profile, employees: payload.employees, stock: payload.stock, incomeHistory: payload.incomeHistory, model: normalized })
-      setSelectedRankingType(normalized.company.typeName)
       setSelectedCompanyId(String(normalized.company.id))
       setShowCompanySelector(false)
       setActiveView("overview")
@@ -1157,7 +1152,7 @@ export function FloorApp() {
                 {snapshotSourceCreatedAt && <p className="snapshot-source-note">Imported backup created {new Date(snapshotSourceCreatedAt).toLocaleString("en-GB", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}. Dates are UTC.</p>}
                 {snapshotHistoryError && <div className="error-banner" role="alert">{snapshotHistoryError}</div>}
                 {snapshotHistoryLoading ? <div className="empty-state">Loading company history…</div> : <>
-                  {currentChartCompany && importedSummaryPoint && <div className="snapshot-summary-grid"><article className="snapshot-summary-card"><div className="snapshot-company-heading"><div><strong>{currentChartCompany.name}</strong><span>Company #{currentChartCompany.companyId} · {currentChartCompany.typeName} · imported snapshot</span></div><span className="star-rating">{importedSummaryPoint.rating == null ? "—" : `${importedSummaryPoint.rating} ★`}</span></div><div className="snapshot-metric-grid"><span><small>DAILY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyIncome ?? null)}</strong></span><span><small>WEEKLY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyIncome ?? null)}</strong></span><span><small>DAILY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyProfit ?? null)}</strong></span><span><small>WEEKLY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyProfit ?? null)}</strong></span><span><small>COMPANY RANK · IMPORTED</small><strong>{importedSummaryPoint.companyRank == null ? "—" : `#${importedSummaryPoint.companyRank}${importedSummaryPoint.companyRankTotal == null ? "" : ` / ${importedSummaryPoint.companyRankTotal}`}`}</strong></span><span><small>STOCK QUANTITY · IMPORTED</small><strong>{importedSummaryPoint.stockQuantity == null ? "—" : formatNumber(importedSummaryPoint.stockQuantity)}</strong></span></div><p className="snapshot-date-range">Imported period {currentChartCompany.history[0]?.day || "—"} to {currentChartCompany.history.at(-1)?.day || "—"} · all summary values are as of {importedSummaryPoint.day} UTC · {currentChartCompany.history.length} imported daily records</p></article></div>}
+                  {currentChartCompany && importedSummaryPoint && <div className="snapshot-summary-grid"><article className="snapshot-summary-card"><div className="snapshot-company-heading"><div><strong>{currentChartCompany.name}</strong><span>Company #{currentChartCompany.companyId} · {currentChartCompany.typeName} · imported snapshot</span></div><span className="star-rating">{importedSummaryPoint.rating == null ? "—" : `${importedSummaryPoint.rating} ★`}</span></div><div className="snapshot-metric-grid"><span><small>DAILY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyIncome ?? null)}</strong></span><span><small>WEEKLY INCOME · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyIncome ?? null)}</strong></span><span><small>DAILY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.dailyProfit ?? null)}</strong></span><span><small>WEEKLY PROFIT · IMPORTED</small><strong>{formatMoney(importedSummaryPoint.weeklyProfit ?? null)}</strong></span><span><small>STOCK QUANTITY · IMPORTED</small><strong>{importedSummaryPoint.stockQuantity == null ? "—" : formatNumber(importedSummaryPoint.stockQuantity)}</strong></span></div><p className="snapshot-date-range">Imported period {currentChartCompany.history[0]?.day || "—"} to {currentChartCompany.history.at(-1)?.day || "—"} · all summary values are as of {importedSummaryPoint.day} UTC · {currentChartCompany.history.length} imported daily records</p></article></div>}
                   {!currentChartCompany && <div className="empty-state">No imported archive matches the currently selected company. Live company readings will still appear below when available.</div>}
                   <LineChart title="Daily company income" money series={chartSeriesFor("dailyIncome")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Daily income" />
                   <LineChart title="Weekly company income" money series={chartSeriesFor("weeklyIncome")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Weekly income" />
@@ -1165,7 +1160,6 @@ export function FloorApp() {
                   <LineChart title="Weekly company profit" money series={chartSeriesFor("weeklyProfit")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Weekly profit" />
                   <LineChart title="Daily stock quantity" series={chartSeriesFor("stockQuantity")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Stock quantity" />
                   <LineChart title="Star-rating history" integerYAxis series={chartSeriesFor("rating")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Star rating (stars)" />
-                  <LineChart title="Global company ranking · same company type" integerYAxis invertY series={chartSeriesFor("companyRank")} rangeDays={chartRange} xAxisLabel="Day" yAxisLabel="Company rank (lower is better)" />
                 </>}
               </section>
               <div className="ranking-footnote"><strong>Data coverage</strong><p>Historical and live values are joined by reporting date, with live values taking precedence when both sources contain the same day. Missing days are left blank, never interpolated. Weekly profit uses the latest recorded reported weekly-profit total when available; month-to-date totals use recorded daily snapshots and can be partial if a day is missing.</p></div>
