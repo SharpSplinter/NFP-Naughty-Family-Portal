@@ -26,6 +26,7 @@ const sourceFiles = [
   "src/lib/torn/types.ts",
   "src/worker/index.ts",
   "src/worker/snapshot-provenance.ts",
+  "src/worker/weekly-faction-snapshot.ts",
   "src/worker/company-history.ts",
   "src/worker/ranking-snapshots.ts",
   "src/worker/daily-read-cache.ts",
@@ -100,6 +101,7 @@ try {
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
   const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot } = require(join(temp, "worker/d1-optimizations.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
+  const { refreshThenCaptureWeeklyFactionSnapshot, weeklyFactionReportingDay } = require(join(temp, "worker/weekly-faction-snapshot.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
   const { buildFactionCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
   const { placement } = require(join(temp, "components/floor/ranking-utils.js"))
@@ -2239,6 +2241,39 @@ try {
     assert.doesNotMatch(refreshBody, /INSERT INTO company_snapshots|INSERT INTO company_financial_snapshots|persistFactionDirectorSnapshot/, "manual company refresh must not append profile, stock, or director history")
   })
 
+  await test("weekly faction counts wait for a complete fresh directory and use the Sunday reporting date", async () => {
+    const ordered = []
+    const complete = { complete: true, memberCount: 98, pending: 0, invalidMemberCount: 0, failedMemberCount: 0 }
+    const result = await refreshThenCaptureWeeklyFactionSnapshot(
+      async () => { ordered.push("refresh"); return complete },
+      async () => { ordered.push("capture") },
+    )
+    assert.deepEqual(ordered, ["refresh", "capture"], "the count snapshot must wait for the directory refresh to finish")
+    assert.equal(result, complete)
+
+    for (const incomplete of [
+      { ...complete, complete: false, pending: 1 },
+      { ...complete, complete: false, failedMemberCount: 1, pending: 1 },
+      { ...complete, complete: false, invalidMemberCount: 1 },
+      { ...complete, complete: false, memberCount: 0 },
+    ]) {
+      let captured = false
+      await assert.rejects(
+        () => refreshThenCaptureWeeklyFactionSnapshot(async () => incomplete, async () => { captured = true }),
+        /director refresh incomplete/,
+      )
+      assert.equal(captured, false, "incomplete or failed member checks must never publish a weekly count snapshot")
+    }
+    let capturedAfterError = false
+    await assert.rejects(
+      () => refreshThenCaptureWeeklyFactionSnapshot(async () => { throw new Error("Torn unavailable") }, async () => { capturedAfterError = true }),
+      /Torn unavailable/,
+    )
+    assert.equal(capturedAfterError, false, "a failed directory refresh must not reach the snapshot writer")
+    assert.equal(weeklyFactionReportingDay("2026-11-30T00:10:00.000Z"), "2026-11-29", "Monday 00:10 UTC belongs to the preceding Sunday TCT reporting day")
+    assert.throws(() => weeklyFactionReportingDay("not-a-date"), /timestamp is invalid/)
+  })
+
   await test("weekly global star-income buffers run Monday 00:10 UTC and company collection stays daily 18:10 UTC", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
     const wranglerSource = readFileSync(join(root, "wrangler.toml"), "utf8")
@@ -2254,8 +2289,12 @@ try {
     assert.match(scheduled, /controller\.cron\.trim\(\) === "10 18 \* \* \*"/)
     assert.match(scheduled, /controller\.cron\.trim\(\) === "10 0 \* \* 1"/)
     assert.match(scheduled, /isDailyCompanyCaptureWindow \? refreshRankingProfiles\(env, true/)
-    assert.match(scheduled, /if \(isWeeklyStarIncomeBufferWindow\)\s*\{[\s\S]*startGlobalRankingRefresh\(env\)[\s\S]*captureWeeklyFactionStarCounts\(env/)
-    assert.match(scheduled, /const factionDirectoryLimit = isWeeklyStarIncomeBufferWindow \? 250 : 35/)
+    assert.match(scheduled, /const captureWeeklyFactionCounts = \(\) => refreshThenCaptureWeeklyFactionSnapshot/)
+    assert.match(scheduled, /isWeeklyStarIncomeBufferWindow \? captureWeeklyFactionCounts\(\) : refreshDirectory\(\)/)
+    assert.match(scheduled, /refreshFactionDirectoryFromServiceKey\(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow\)/)
+    assert.match(workerSource, /const pendingCount = Math\.max\(pending \+ failedMemberCount, 0\)/)
+    assert.match(workerSource, /if \(forceRefresh && \(typeof root\.rating !== "number" \|\| !Number\.isFinite\(root\.rating\)\)\)/)
+    assert.match(workerSource, /D1 batch support is required to publish a complete weekly faction star-count snapshot/)
     assert.match(workerSource, /runFiveMinuteScheduledJobs\(env, controller\.scheduledTime\)/)
     assert.match(workerSource, /const GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE = 6/)
     assert.match(workerSource, /maxPagesPerInvocation = GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE/)
