@@ -24,7 +24,6 @@ const MAX_LOCAL_CACHE_ENTRY_BYTES = 2 * 1024 * 1024
 const CACHEABLE_TABLES = new Set([
   // Both ranking snapshot tables receive at most one immutable row set per
   // reporting day and use INSERT OR IGNORE to preserve that lock-in.
-  "global_company_rank_snapshots",
   "faction_company_rank_snapshots",
 ])
 const localCache = new Map<string, CacheEntry>()
@@ -153,14 +152,7 @@ async function isDailyCaptureReady(
   let ready = true
   try {
     for (const table of tables) {
-      if (table === "global_company_rank_snapshots") {
-        // The daily Worker run only enqueues this refresh. Wait for the queue
-        // consumer to finalize the complete ranking payload and mark it done.
-        const completed = await db.prepare(
-          "SELECT 1 AS ready FROM global_rankings_refresh_runs WHERE source = 'scheduled' AND status = 'completed' AND snapshot_fetched_at >= ? AND snapshot_fetched_at < ? AND EXISTS (SELECT 1 FROM global_company_rank_snapshots WHERE reporting_day = ?) ORDER BY started_at DESC LIMIT 1",
-        ).bind(start, end, reportingDay).first<{ ready: number }>()
-        if (!completed?.ready) { ready = false; break }
-      } else if (table === "faction_company_rank_snapshots") {
+      if (table === "faction_company_rank_snapshots") {      } else if (table === "faction_company_rank_snapshots") {
         // This table is written only after the full faction directory has been
         // validated and ranked. A pending/partial directory has no lock-in row.
         const completed = await db.prepare(
