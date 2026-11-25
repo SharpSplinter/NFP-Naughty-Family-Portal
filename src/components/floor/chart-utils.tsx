@@ -60,9 +60,9 @@ export function chartDateTickIndices(days: string[], rangeDays: ChartRange): num
     return [index]
   })
 }
-export type SnapshotHistoryPoint = { day: string; period: number; capturedAt: number; dailyIncome: number | null; weeklyIncome: number | null; dailyProfit: number | null; weeklyProfit: number | null; rating: number | null; companyRank: number | null; companyRankTotal: number | null; stockQuantity: number | null; stockValue: number | null; averageEmployeeEfficiency: number | null }
+export type SnapshotHistoryPoint = { day: string; period: number; capturedAt: number; dailyIncome: number | null; weeklyIncome: number | null; dailyProfit: number | null; weeklyProfit: number | null; rating: number | null; stockQuantity: number | null; stockValue: number | null; averageEmployeeEfficiency: number | null }
 export type SnapshotHistoryCompany = { companyId: string; name: string; typeName: string; typeId: number; history: SnapshotHistoryPoint[] }
-export type SnapshotMetric = "dailyIncome" | "weeklyIncome" | "dailyProfit" | "weeklyProfit" | "stockQuantity" | "stockValue" | "rating" | "companyRank"
+export type SnapshotMetric = "dailyIncome" | "weeklyIncome" | "dailyProfit" | "weeklyProfit" | "stockQuantity" | "stockValue" | "rating"
 export type OfficialCompanyHistoryPoint = {
   day: string
   reportedWeeklyProfit?: number | null
@@ -216,13 +216,13 @@ type CompareData = { director: { companyName: string; directorName: string; dail
 type ChartResult = { model?: { company: { name: string } }; incomeHistory?: { fetchedAt: string; dailyIncome: number | null }[] } | null
 type ChartModel = { company: { name: string; dailyIncome: number | null; weeklyIncome: number | null } }
 
-export function buildChartSeriesFor(metric: SnapshotMetric, currentChartCompany: SnapshotHistoryCompany | undefined, ownCompareData: CompareData | null, result: ChartResult | null, model: ChartModel | undefined, selectedComparePlayerId: string, compareData: CompareData | null, currentRank: number | null, currentRating: number | null, officialHistory: OfficialCompanyHistoryPoint[] = []): ChartSeries[] {
+export function buildChartSeriesFor(metric: SnapshotMetric, currentChartCompany: SnapshotHistoryCompany | undefined, ownCompareData: CompareData | null, result: ChartResult | null, model: ChartModel | undefined, selectedComparePlayerId: string, compareData: CompareData | null, currentRating: number | null, officialHistory: OfficialCompanyHistoryPoint[] = []): ChartSeries[] {
     const ownValues = new Map<string, number | null>()
     currentChartCompany?.history.forEach((point) => ownValues.set(point.day, point[metric]))
     ownCompareData?.history.forEach((point) => {
       let value: number | null = null
       if (metric === "stockValue") value = stockInventoryValue(point.stock)
-      else if (metric === "rating" || metric === "companyRank") value = null
+      else if (metric === "rating") value = null
       else value = point[metric] ?? null
       if (value !== null) ownValues.set(point.day, value)
     })
@@ -233,7 +233,6 @@ export function buildChartSeriesFor(metric: SnapshotMetric, currentChartCompany:
     })
     const currentDay = new Date(Date.now() - 18 * 3600000).toISOString().slice(0, 10)
     if (metric === "rating" && currentRating !== null) ownValues.set(currentDay, currentRating)
-    if (metric === "companyRank" && currentRank !== null) ownValues.set(currentDay, currentRank)
     if ((metric === "dailyIncome" || metric === "weeklyIncome") && model) {
       const currentValue = metric === "dailyIncome" ? model.company.dailyIncome : model.company.weeklyIncome
       if (currentValue !== null) ownValues.set(new Date(Date.now() - 18 * 3600000).toISOString().slice(0, 10), currentValue)
@@ -250,7 +249,7 @@ export function buildChartSeriesFor(metric: SnapshotMetric, currentChartCompany:
       const peerByDay = new Map<string, number | null>(compareData.history.map((point) => {
         let value: number | null = null
         if (metric === "stockValue") value = stockInventoryValue(point.stock)
-        else if (metric === "rating" || metric === "companyRank") value = null
+        else if (metric === "rating") value = null
         else value = point[metric] ?? null
         return [point.day, value]
       }))
