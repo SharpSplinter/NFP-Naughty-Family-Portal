@@ -17,8 +17,8 @@ with tempfile.TemporaryDirectory() as temp:
     migrations.mkdir()
     sql = root / "restored.sql"
 
-    # Model production after migrations 0038 and 0039 have already been applied:
-    # 17 historical ledger entries + migrations 0013-0039 = 44 entries.
+    # Model production after migration 0040 has also been applied:
+    # 17 historical ledger entries + migrations 0013-0040 = 45 entries.
     statements = [
         "PRAGMA defer_foreign_keys=TRUE;",
         "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as temp:
         statements.append("INSERT INTO d1_migrations (name) VALUES ('base_migration_%02d.sql');" % index)
     sql.write_text("\n".join(statements) + "\n", encoding="utf-8")
 
-    for number in range(13, 41):
+    for number in range(13, 42):
         if number == 13:
             body = "ALTER TABLE companies ADD COLUMN notes TEXT;"
         elif number == 14:
@@ -51,11 +51,13 @@ with tempfile.TemporaryDirectory() as temp:
                 "company_count INTEGER NOT NULL, PRIMARY KEY(reporting_day, company_type_id, star_rating));"
                 "\nCREATE TABLE global_star_income_buffer_snapshots (reporting_day TEXT PRIMARY KEY);"
             )
+        elif number == 41:
+            body = "ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;"
         else:
             body = f"CREATE TABLE migration_test_{number} (id INTEGER PRIMARY KEY);"
         filename = f"{number:04d}_fixture.sql"
         (migrations / filename).write_text(body + "\n", encoding="utf-8")
-        if number < 40:
+        if number < 41:
             with sql.open("a", encoding="utf-8") as stream:
                 stream.write("INSERT INTO d1_migrations (name) VALUES ('" + filename + "');\n")
 
@@ -64,16 +66,16 @@ with tempfile.TemporaryDirectory() as temp:
 
     result = module.replay_backup(sql, migrations, sql_hash)
     assert result["result"] == "success"
-    assert result["starting_migration_count"] == 44
-    assert result["final_migration_count"] == 45
-    assert result["replayed_migrations"] == ["0040_fixture.sql"]
+    assert result["starting_migration_count"] == 45
+    assert result["final_migration_count"] == 46
+    assert result["replayed_migrations"] == ["0041_fixture.sql"]
     assert result["preserved_existing_tables"] == result["starting_application_table_count"]
     assert result["row_count_decreases"] == 0
     assert result["foreign_key_violations"] == 0
 
-    # Every previously applied migration through 0039 must be present.
+    # Every previously applied migration through 0040 must be present.
     missing_prior_sql = original_sql.replace(
-        "INSERT INTO d1_migrations (name) VALUES ('0039_fixture.sql');\n", ""
+        "INSERT INTO d1_migrations (name) VALUES ('0040_fixture.sql');\n", ""
     )
     sql.write_text(missing_prior_sql, encoding="utf-8")
     missing_prior_hash = hashlib.sha256(sql.read_bytes()).hexdigest()
@@ -83,9 +85,9 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as error:
         assert "missing previously applied migrations" in str(error)
 
-    # Migration 0040 must be pending exactly once.
+    # Migration 0041 must be pending exactly once.
     sql.write_text(
-        original_sql + "INSERT INTO d1_migrations (name) VALUES ('0040_fixture.sql');\n",
+        original_sql + "INSERT INTO d1_migrations (name) VALUES ('0041_fixture.sql');\n",
         encoding="utf-8",
     )
     already_applied_hash = hashlib.sha256(sql.read_bytes()).hexdigest()
@@ -93,16 +95,17 @@ with tempfile.TemporaryDirectory() as temp:
         module.replay_backup(sql, migrations, already_applied_hash)
         raise AssertionError("Expected an already-applied migration to be rejected.")
     except RuntimeError as error:
-        assert "Expected only migration 0040 to be pending" in str(error)
+        assert "Expected only migration 0041 to be pending" in str(error)
 
     # The additive migration may not reduce rows in a retained table.
     sql.write_text(original_sql, encoding="utf-8")
-    target = migrations / "0040_fixture.sql"
+    target = migrations / "0041_fixture.sql"
     original_target = target.read_text(encoding="utf-8")
     target.write_text(
         "DELETE FROM companies;\n"
         "CREATE TABLE global_star_income_buffers (id INTEGER PRIMARY KEY);\n"
-        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n",
+        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n"
+        "ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;\n",
         encoding="utf-8",
     )
     try:
@@ -116,7 +119,8 @@ with tempfile.TemporaryDirectory() as temp:
     target.write_text(
         "DROP TABLE companies;\n"
         "CREATE TABLE global_star_income_buffers (id INTEGER PRIMARY KEY);\n"
-        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n",
+        "CREATE TABLE global_star_income_buffer_snapshots (id INTEGER PRIMARY KEY);\n"
+        "ALTER TABLE global_star_income_buffers ADD COLUMN third_lowest_weekly_income REAL;\n",
         encoding="utf-8",
     )
     try:
@@ -134,6 +138,6 @@ with tempfile.TemporaryDirectory() as temp:
         assert "SHA-256 did not match" in str(error)
 
 print(
-    "PASS local production-backup migration replay harness: 44-entry current ledger through 0039, "
-    "only 0040 pending, additive schema preservation, integrity, foreign keys, and checksum guard."
+    "PASS local production-backup migration replay harness: 45-entry current ledger through 0040, "
+    "only 0041 pending, additive schema preservation, integrity, foreign keys, and checksum guard."
 )
