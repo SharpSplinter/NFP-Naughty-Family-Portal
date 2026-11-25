@@ -152,6 +152,14 @@ function prettyDate(value?: string | null) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
 }
 
+function prettyWeeklyBoundaryDate(value?: string | null) {
+  if (!value) return "Never"
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-US", { timeZone: "Etc/GMT+5", dateStyle: "medium", timeStyle: "short" }).format(parsed) + " EST"
+}
+
 function prettyStatus(value: string) { return value.replaceAll("-", " ").replaceAll(".", " · ") }
 
 function formatDuration(seconds?: number | null) {
@@ -504,7 +512,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
     const detail = boundary.boundaryExists
       ? "Retry " + collectionNames + " using the existing frozen member cohort. Captures will keep their actual timestamps and may be marked late."
       : "Create and queue both weekly captures for the known membership cohort. This is only available within 24 hours of the boundary."
-    if (!window.confirm("Recover the weekly boundary " + prettyDate(boundary.boundaryAt) + "?\\n\\n" + detail + "\\n\\nFinalized weekly reports are protected and will not be changed.")) return
+    if (!window.confirm("Recover the weekly boundary " + prettyWeeklyBoundaryDate(boundary.boundaryAt) + "?\\n\\n" + detail + "\\n\\nFinalized weekly reports are protected and will not be changed.")) return
     try {
       setWeeklyBoundaryRecoveryBusy(boundary.boundaryAt); setError(""); setNotice("")
       const payload = await adminFetch<{ created: boolean; queued?: Array<{ collection: string; runId: string }>; queuedCollections?: string[]; skipped?: Array<{ collection: string; reason: string }> }>(apiBase, sessionToken, "/api/admin/faction/weekly-boundaries/recover", {
@@ -791,7 +799,7 @@ const loadPrivateLiveDiagnostics = useCallback(async () => {
               const captureLabel = (run: AdminWeeklyRunDiagnostic | null) => !run?.firstCapturedAt ? "No sample captured" : "First " + prettyDate(run.firstCapturedAt) + (run.lastCapturedAt && run.lastCapturedAt !== run.firstCapturedAt ? " · last " + prettyDate(run.lastCapturedAt) : "") + (run.timingDeviationSeconds === null ? "" : " · " + (run.timingDeviationSeconds >= 0 ? "+" : "") + Math.round(run.timingDeviationSeconds / 60) + "m")
               const reportLabel = [boundary.endingWeekReport, boundary.startingWeekReport].filter(Boolean).map((report) => report!.status + " · " + report!.weekStartAt.slice(0, 10)).join(" / ")
               return <tr key={boundary.boundaryAt}>
-                <td><strong>{prettyDate(boundary.boundaryAt)}</strong><small>{boundary.status.replaceAll("_", " ")}</small></td>
+                <td><strong>{prettyWeeklyBoundaryDate(boundary.boundaryAt)}</strong><small>{boundary.status.replaceAll("_", " ")}</small></td>
                 <td><span className={"admin-status " + (boundary.stats?.status === "completed" ? "good" : boundary.stats?.stale || boundary.stats?.status === "failed" ? "danger" : "warning")}>{runLabel(boundary.stats)}</span><small>{captureLabel(boundary.stats)}</small>{boundary.stats?.lastError && <small>{boundary.stats.lastError}</small>}</td>
                 <td><span className={"admin-status " + (boundary.gymEnergy?.status === "completed" ? "good" : boundary.gymEnergy?.stale || boundary.gymEnergy?.status === "failed" ? "danger" : "warning")}>{runLabel(boundary.gymEnergy)}</span><small>{captureLabel(boundary.gymEnergy)}</small>{boundary.gymEnergy?.lastError && <small>{boundary.gymEnergy.lastError}</small>}</td>
                 <td>{boundary.knownMemberCount.toLocaleString()}</td>

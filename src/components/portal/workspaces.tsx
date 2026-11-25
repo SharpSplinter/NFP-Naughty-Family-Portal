@@ -745,7 +745,7 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
               <button type="button" onClick={() => setSelectedMember(null)}>Close profile ×</button>
             </div>
             <div className="faction-weekly-member-meta">
-              <article><small>REPORTING WINDOW</small><strong>{formatUtc(selectedMember.weekStartAt)} – {formatUtc(selectedMember.weekEndAt)}</strong></article>
+              <article><small>REPORTING WINDOW</small><strong>{formatEst(selectedMember.weekStartAt)} – {formatEst(selectedMember.weekEndAt)}</strong></article>
               <article><small>DATA STATUS</small><strong>{statusLabel(member.status)}</strong></article>
               <article><small>PARTICIPATION</small><strong>{member.participation.replace(/_/g, " ")}</strong></article>
               <article><small>KNOWN COUNTERS</small><strong>{member.knownMetricCount} / 18</strong></article>
@@ -797,7 +797,7 @@ function FactionWeeklyRankings({ playerName, onNavigate, apiBase, sessionToken }
           <div>
             <div className="halloween-status"><i /> ARCHIVED WEEKLY REPORTS</div>
             <h2>History &amp; week-to-week comparison</h2>
-            <p>Completed reports are immutable snapshots. Compare a member's weekly activity and ranking against an earlier Sunday-to-Sunday period.</p>
+            <p>Completed reports are immutable snapshots. Compare a member's weekly activity and ranking against an earlier Sunday 7:10 PM EST-to-EST period.</p>
           </div>
         </div>
         {historyError && <p className="settings-feedback error" role="alert">{historyError}</p>}
