@@ -11,6 +11,7 @@ writeFileSync(join(temp, "package.json"), JSON.stringify({ type: "commonjs" }))
 const sourceFiles = [
   "src/lib/automation/rules.ts",
   "src/lib/company/engine.ts",
+  "src/lib/company/star-income-buffers.ts",
   "src/lib/company/types.ts",
   "src/lib/torn/client.ts",
   "src/lib/torn/personalstats.ts",
@@ -94,12 +95,13 @@ try {
     "energydrinkused", "refills", "statenhancersused", "networth", "cantaken",
   ]
   const worker = require(join(temp, "worker/index.js")).default
+  const { buildGlobalStarIncomeBuffers, mergeGlobalStarIncomeBuffers, resolveStarIncomeProgress } = require(join(temp, "lib/company/star-income-buffers.js"))
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
-  const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot, readGlobalRankingSnapshotMetadata, writeGlobalRankingSnapshotMetadata } = require(join(temp, "worker/d1-optimizations.js"))
+  const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot } = require(join(temp, "worker/d1-optimizations.js"))
   const { officialSnapshotSourceTime, manualRecoverySnapshotSourceTime } = require(join(temp, "worker/snapshot-provenance.js"))
   const { withRollingWeeklyProfit } = require(join(temp, "worker/company-history.js"))
-  const { buildFactionCompanyRankSnapshots, buildGlobalCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
+  const { buildFactionCompanyRankSnapshots, isFactionDirectorySnapshotEligible } = require(join(temp, "worker/ranking-snapshots.js"))
   const { placement } = require(join(temp, "components/floor/ranking-utils.js"))
   const { estimateWeeklyProfit, financialCosts, isIsoReportingDay, reportedCompanyProfit, resolveDisplayedDailyProfit, stockCostTotal } = require(join(temp, "components/floor/financial-utils.js"))
   const { evaluateIncomeDrop, evaluateIncomeIncrease, evaluatePercentageDrop, evaluateRosterChange, isWithinQuietHours, normalizeWebhookUrl, isSnapshotStale, normalizeAlertThreshold, normalizeCooldownHours } = require(join(temp, "lib/automation/rules.js"))
@@ -501,24 +503,50 @@ try {
     assert.equal(isFactionDirectorySnapshotEligible(null,"2026-11-13T18:11:01.000Z"),false)
   })
 
-  await test("global and faction ranking snapshots preserve overall and same-type ranks", () => {
-    const companies=[
-      {companyId:"oil-a",companyName:"Oil A",companyType:"Oil Rig",companyTypeId:28,starRating:10,weeklyIncome:300,dailyIncome:50,averageDailyIncome:300/7,directorName:"A"},
-      {companyId:"tv-a",companyName:"TV A",companyType:"Television Network",companyTypeId:5,starRating:9,weeklyIncome:250,dailyIncome:40,averageDailyIncome:250/7,directorName:"B"},
-      {companyId:"oil-b",companyName:"Oil B",companyType:"Oil Rig",companyTypeId:28,starRating:10,weeklyIncome:200,dailyIncome:30,averageDailyIncome:200/7,directorName:"C"}
-    ]
+  await test("historical faction rank snapshots retain confirmed faction directors and type-local history", () => {
     const metadata={reportingDay:"2026-11-13",sourceFetchedAt:"2026-11-13T18:10:00.000Z",capturedAt:"2026-11-13T18:11:00.000Z",source:"scheduled"}
-    const globalRows=buildGlobalCompanyRankSnapshots(companies,metadata)
-    assert.deepEqual(globalRows.map(row=>[row.companyId,row.globalRank,row.typeRank]),[["oil-a",1,1],["tv-a",2,1],["oil-b",3,2]])
     const factionRows=buildFactionCompanyRankSnapshots([
       {playerId:"101",playerName:"A",factionId:"8317",companyId:"oil-b",companyName:"Oil B",companyType:"Oil Rig",companyTypeId:28,companyRating:10,dailyIncome:30,weeklyIncome:200,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:1},
       {playerId:"102",playerName:"B",factionId:"8317",companyId:"oil-a",companyName:"Oil A",companyType:"Oil Rig",companyTypeId:28,companyRating:10,dailyIncome:50,weeklyIncome:300,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:1},
-      {playerId:"103",playerName:"C",factionId:"8317",companyId:"not-in-global-list",companyName:"Faction TV",companyType:"Television Network",companyTypeId:5,companyRating:9,dailyIncome:40,weeklyIncome:250,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:1},
-      {playerId:"104",playerName:"D",factionId:"8317",companyId:"tv-a",companyName:"TV A",companyType:"Television Network",companyTypeId:5,companyRating:9,dailyIncome:40,weeklyIncome:250,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:0}
+      {playerId:"103",playerName:"C",factionId:"8317",companyId:"faction-tv",companyName:"Faction TV",companyType:"Television Network",companyTypeId:5,companyRating:9,dailyIncome:40,weeklyIncome:250,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:1},
+      {playerId:"104",playerName:"D",factionId:"8317",companyId:"not-director",companyName:"Not a Director",companyType:"Television Network",companyTypeId:5,companyRating:9,dailyIncome:40,weeklyIncome:250,memberCheckedAt:"2026-11-13T17:00:00.000Z",isDirector:0}
     ],metadata)
-    assert.deepEqual(factionRows.map(row=>[row.companyId,row.factionRank,row.typeRank]),[["oil-a",1,1],["not-in-global-list",2,1],["oil-b",3,2]])
+    assert.deepEqual(factionRows.map(row=>[row.companyId,row.factionRank,row.typeRank]),[["oil-a",1,1],["faction-tv",2,1],["oil-b",3,2]])
     assert.equal(factionRows[0].memberCheckedAt,"2026-11-13T17:00:00.000Z")
     assert.equal(factionRows.every(row=>row.factionId==="8317"),true)
+  })
+
+  await test("weekly star-income buffers aggregate by type and nearest observed star level", () => {
+    const pageA = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:8,weeklyIncome:100},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:200},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:400},
+      {companyTypeId:5,companyType:"Television Network",starRating:9,weeklyIncome:75},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:null,weeklyIncome:500},
+    ])
+    const pageB = buildGlobalStarIncomeBuffers([
+      {companyTypeId:28,companyType:"Oil Rig",starRating:10,weeklyIncome:250},
+      {companyTypeId:28,companyType:"Oil Rig",starRating:12,weeklyIncome:450},
+    ])
+    const merged = mergeGlobalStarIncomeBuffers([pageA,pageB])
+    assert.deepEqual(merged.map(row=>[row.companyTypeId,row.starRating,row.minWeeklyIncome,row.maxWeeklyIncome,row.companyCount]),[
+      [5,9,75,75,1],
+      [28,8,100,100,1],
+      [28,10,200,250,2],
+      [28,12,400,450,2],
+    ])
+    assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",10,150),{
+      nextStarRating:12,nextStarIncome:400,nextStarGap:250,
+      previousStarRating:8,previousStarIncome:100,previousStarGap:50,
+    })
+    assert.deepEqual(resolveStarIncomeProgress(merged,28,"Oil Rig",12,500),{
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
+      previousStarRating:10,previousStarIncome:250,previousStarGap:250,
+    })
+    assert.deepEqual(resolveStarIncomeProgress(merged,999,"Unknown",10,150),{
+      nextStarRating:null,nextStarIncome:null,nextStarGap:null,
+      previousStarRating:null,previousStarIncome:null,previousStarGap:null,
+    })
   })
 
   await test("faction-wide stats parser excludes deprecated Torn counters and filters legacy snapshots", () => {
@@ -2035,7 +2063,7 @@ try {
     const directoryRefresh = workerSource.slice(directoryRefreshStart, directoryRefreshEnd)
     assert.doesNotMatch(directoryRefresh, /persistFactionDirectorSnapshot/, "profile-only directory refreshes must not create official stock history")
     const scheduled = workerSource.slice(workerSource.indexOf("async function runScheduledAutomation"), workerSource.indexOf("type AdminRefreshEndpoint"))
-    assert.match(scheduled, /refreshRankingProfiles\(env, isRankingCaptureWindow, \{ cron: controller\.cron, scheduledTime: controller\.scheduledTime \}\)/)
+    assert.match(scheduled, /isDailyCompanyCaptureWindow \? refreshRankingProfiles\(env, true, \{ cron: controller\.cron, scheduledTime: controller\.scheduledTime \}\)/)
     assert.match(floorSource, /currentOfficialStockSnapshot = officialStockSnapshots\.find\(\(point\) => point\.day === currentSnapshotDay\)/)
     assert.match(floorSource, /currentOfficialStockSnapshot\.stockQuantity - previousStockSnapshot\.stockQuantity/)
     assert.doesNotMatch(floorSource, /currentStockQuantity - previousStockSnapshot\.stockQuantity/)
@@ -2211,47 +2239,33 @@ try {
     assert.doesNotMatch(refreshBody, /INSERT INTO company_snapshots|INSERT INTO company_financial_snapshots|persistFactionDirectorSnapshot/, "manual company refresh must not append profile, stock, or director history")
   })
 
-  await test("global rankings use type-specific company lists at 18:10 UTC and official snapshot only verifies at 00:10 UTC", () => {
+  await test("weekly global star-income buffers run Monday 00:10 UTC and company collection stays daily 18:10 UTC", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
     const wranglerSource = readFileSync(join(root, "wrangler.toml"), "utf8")
-    assert.match(workerSource, /TORN_API_KEY_SERVICE\?: string/, "the worker must expose its dedicated master service Full Access credential")
-    const catalogBody = workerSource.slice(workerSource.indexOf("async function fetchGlobalCompanyTypeCatalog"), workerSource.indexOf("async function getGlobalRankingApiKey"))
-    assert.match(catalogBody, /isRecord\(payload\) && isRecord\(payload\.error\)/, "Torn API error payloads must be surfaced even when HTTP status is successful")
-    const rankingKeyBody = workerSource.slice(workerSource.indexOf("async function getGlobalRankingApiKey"), workerSource.indexOf("async function startGlobalRankingRefresh"))
-    assert.match(workerSource, /function serviceFullAccessApiKey[\s\S]*TORN_API_KEY_SERVICE[\s\S]*TORN_API_KEY_FULL_ACCESS/, "the production SERVICE key must be preferred, with legacy FULL_ACCESS retained as a staging compatibility alias")
-    assert.match(rankingKeyBody, /serviceFullAccessApiKey\(env\)[\s\S]*TORN_API_KEY_CUSTOM/, "the service Full Access key must be preferred, with Custom Access as final fallback")
     const configuredCrons = wranglerSource.match(/crons\s*=\s*\[([^\]]*)\]/)?.[1]
       .match(/"([^"]+)"/g)?.map((value) => value.slice(1, -1)) ?? []
-    assert.ok(configuredCrons.includes("10 18 * * *"), "the daily ranking capture schedule must remain configured")
-    assert.ok(configuredCrons.includes("10 0 * * *"), "the official snapshot verification schedule must remain configured")
-    assert.ok(configuredCrons.includes("*/5 * * * *"), "the Halloween live snapshot scheduler must remain configured")
-    assert.match(workerSource, /controller\.cron\.trim\(\) === "\*\/5 \* \* \* \*"/, "the five-minute scheduler must have a dedicated handler")
-    assert.match(workerSource, /runFiveMinuteScheduledJobs\(env, controller\.scheduledTime\)/, "the five-minute scheduler must run bounded membership and Halloween maintenance")
-    assert.ok(workerSource.includes("https://api.torn.com/v2/company/\u0024{type.id}/companies?offset=\u0024{offset}&limit=\u0024{pageSize}"))
-    assert.ok(workerSource.includes("https://api.torn.com/v2/company/snapshot"))
-    assert.match(workerSource,/let rankingSource = "Daily cached Torn API v2 \/company\/{typeId}\/companies lists"/)
-    assert.match(workerSource,/source: rankingSource/)
-    assert.match(workerSource, /controller\.cron\.trim\(\) === "10 18 \* \* \*"/)
-    assert.match(workerSource, /controller\.cron\.trim\(\) === "10 0 \* \* \*"/)
-    assert.match(workerSource, /if \(isRankingCaptureWindow\) tasks\.push\(refreshGlobalRankingCache\(env, true\)\)/)
-    assert.match(workerSource, /if \(isOfficialVerificationWindow\) tasks\.push\(verifyGlobalRankingsAgainstOfficialSnapshot\(env, controller\.scheduledTime\)/)
-    assert.match(workerSource, /const maxAgeMs = 6 \* 60 \* 60 \* 1000/)
-    assert.match(workerSource, /uniqueIds\.size !== companies\.length/)
-    const refreshBody = workerSource.slice(workerSource.indexOf("async function refreshGlobalRankingCache"), workerSource.indexOf("async function verifyGlobalRankingsAgainstOfficialSnapshot"))
-    const verificationBody = workerSource.slice(workerSource.indexOf("async function verifyGlobalRankingsAgainstOfficialSnapshot"), workerSource.indexOf("function companyProfileRoot"))
-    assert.match(refreshBody, /startGlobalRankingRefresh/, "production ranking refreshes must use the durable queue workflow")
-    assert.doesNotMatch(refreshBody, /fetchOfficialCompanySnapshot/, "official snapshot must not be used to refresh ranking data")
-    assert.match(workerSource, /No Worker-owned Torn service API key is configured for shared company-ranking requests/, "missing ranking credentials must be surfaced as a failed refresh")
-    assert.doesNotMatch(rankingKeyBody, /savedKey|api_keys/, "shared ranking requests must never borrow a member's personal API key")
-    assert.match(workerSource, /const GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE = 6/, "global rankings must process a bounded six-page batch per Queue delivery")
-    assert.match(workerSource, /maxPagesPerInvocation = GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE/, "each queue invocation must use the explicit hard page-fetch bound")
-    assert.match(workerSource, /global_rankings_refresh_pages/, "in-progress pages must be staged separately from the published cache")
-    assert.match(workerSource, /finalizeGlobalRankingRefresh/, "staged rows must pass final validation before cache publication")
-    assert.match(wranglerSource, /binding = "GLOBAL_RANKINGS_QUEUE"/, "production must bind the resumable queue")
-    assert.match(wranglerSource, /dead_letter_queue = "ncd-global-rankings-refresh-dlq"/, "exhausted queue retries must be captured for cleanup")
-    assert.match(verificationBody, /fetchOfficialCompanySnapshot\(apiKey\)/, "official snapshot is only loaded by the verifier")
-    assert.doesNotMatch(verificationBody, /INSERT INTO global_rankings_cache|UPDATE global_rankings_cache/, "official verification must never overwrite the ranking cache")
-    assert.equal([...workerSource.matchAll(/refreshGlobalRankingCache\(/g)].length, 4, "ranking cache refresh calls must be limited to the routine, scheduled capture, stale-cache path, and explicit admin endpoint")
+    assert.ok(configuredCrons.includes("10 18 * * *"), "daily company collection remains at 18:10 UTC")
+    assert.ok(configuredCrons.includes("10 0 * * 1"), "weekly global buffers run Monday 00:10 UTC / Sunday 19:10 EST")
+    assert.ok(configuredCrons.includes("*/5 * * * *"), "the Halloween five-minute scheduler remains configured")
+    assert.equal(configuredCrons.includes("10 0 * * *"), false, "the old daily midnight verifier is retired")
+    const scheduledStart = workerSource.indexOf("async function runScheduledAutomation")
+    const scheduledEnd = workerSource.indexOf("type AdminRefreshEndpoint", scheduledStart)
+    const scheduled = workerSource.slice(scheduledStart, scheduledEnd)
+    assert.match(scheduled, /controller\.cron\.trim\(\) === "10 18 \* \* \*"/)
+    assert.match(scheduled, /controller\.cron\.trim\(\) === "10 0 \* \* 1"/)
+    assert.match(scheduled, /isDailyCompanyCaptureWindow \? refreshRankingProfiles\(env, true/)
+    assert.match(scheduled, /if \(isWeeklyStarIncomeBufferWindow\)\s*\{[\s\S]*startGlobalRankingRefresh\(env\)[\s\S]*captureWeeklyFactionStarCounts\(env/)
+    assert.match(scheduled, /const factionDirectoryLimit = isWeeklyStarIncomeBufferWindow \? 250 : 35/)
+    assert.match(workerSource, /runFiveMinuteScheduledJobs\(env, controller\.scheduledTime\)/)
+    assert.match(workerSource, /const GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE = 6/)
+    assert.match(workerSource, /maxPagesPerInvocation = GLOBAL_RANKING_PAGES_PER_QUEUE_MESSAGE/)
+    assert.match(workerSource, /companyIds: pageCompanyIds, buffers: buildGlobalStarIncomeBuffers\(pageInputs\)/)
+    assert.match(workerSource, /duplicate company IDs across company types/)
+    assert.match(workerSource, /Array\.isArray\(parsed\)/, "legacy in-flight queue pages remain resumable across deployment")
+    assert.match(wranglerSource, /binding = "GLOBAL_RANKINGS_QUEUE"/)
+    assert.match(wranglerSource, /dead_letter_queue = "ncd-global-rankings-refresh-dlq"/)
+    assert.doesNotMatch(workerSource, /verifyGlobalRankingsAgainstOfficialSnapshot|refreshGlobalRankingCache|global_rankings_cache/)
+    assert.doesNotMatch(workerSource, /INSERT INTO global_company_rank_snapshots|UPDATE global_company_rank_snapshots/)
   })
 
   await test("inactive faction memberships are revalidated in bounded scheduled batches", () => {
@@ -2318,7 +2332,7 @@ try {
     assert.ok(jobSource.includes("SET status = 'queued', last_error"), "transient failures must return the job to the queue")
     assert.doesNotMatch(transientCatch, /SET status = 'failed'/, "a transient failure must not be terminal before queue retries are exhausted")
     assert.ok(jobSource.includes("Snapshot was cancelled because this member's dashboard access is disabled."), "disabled members must stop before snapshot collection")
-    const queueSource = workerSource.slice(workerSource.indexOf("async function handleGlobalRankingQueueBatch"), workerSource.indexOf("async function refreshGlobalRankingCache"))
+    const queueSource = workerSource.slice(workerSource.indexOf("async function handleGlobalRankingQueueBatch"), workerSource.indexOf("function historicalAdvertisingBudget"))
     assert.ok(queueSource.includes("attempts < 4") && queueSource.includes("message.retry("), "live snapshot jobs must use bounded queue retries")
     assert.ok(queueSource.includes("UPDATE halloween_live_snapshot_jobs SET status = 'failed'"), "the consumer must mark the job failed after the retry limit")
     const enqueueStart = workerSource.indexOf("async function enqueueHalloweenLiveSnapshot")
@@ -2412,7 +2426,7 @@ try {
     assert.match(refreshBody, /client\.getCompanyEmployees\(\)/)
     assert.match(refreshBody, /client\.getCompanyStock\(\)/)
     assert.match(refreshBody, /WHERE player_id IN \(/, "selected-user refreshes must scope the credential query")
-    assert.match(refreshBody, /refreshGlobalRankingCache\(env, true\)/)
+    assert.doesNotMatch(refreshBody, /startGlobalRankingRefresh|fetchGlobalCompanyTypeCatalog/, "manual endpoint refreshes must not start or fetch the weekly global benchmark run")
     assert.match(refreshBody, /syncFactionDirectorDirectory\(env, apiKey, ADMIN_FACTION_DIRECTORY_BATCH_SIZE, true\)/, "manual directory refresh must force live lookup without writing director history")
     assert.match(refreshBody, /directoryBatch\.pending > 0[\s\S]*pendingFactionDirectoryJobId = adminJobId/, "manual directory refresh must queue automatic continuation when more batches remain")
     assert.match(workerSource, /continueAdminFactionDirectoryRefresh\(env, halloweenJobId\)/, "queued continuation must process each remaining faction-directory batch")
@@ -2435,11 +2449,11 @@ try {
     const rankingBody = workerSource.slice(rankingStart, rankingEnd)
     assert.match(rankingBody, /const sourceSnapshotAt = captureHistory \? officialSnapshotSourceTime\(sourceTimestamp, snapshotSchedule\) : null/)
     assert.match(rankingBody, /if \(sourceSnapshotAt\) \{\s*const fetchedAt = sourceSnapshotAt\.toISOString\(\)/)
-    assert.match(workerSource, /refreshRankingProfiles\(env, false\)/, "global admin refresh must not append ranking history")
-    assert.match(workerSource, /refreshFactionDirectoryFromServiceKey\(env, 35, true\)/, "global admin refresh must force a live directory batch through the Worker service key without history")
+    assert.match(workerSource, /refreshRankingProfiles\(env, true/, "scheduled daily company collection records approved history")
+    assert.match(refreshBody, /syncFactionDirectorDirectory\(env, apiKey, ADMIN_FACTION_DIRECTORY_BATCH_SIZE, true\)/, "manual directory refresh uses the Worker service key and does not write history")
     assert.doesNotMatch(workerSource, /refreshFactionDirectoryFromAnyKey/, "global admin refresh must never borrow a saved member key for shared faction data")
     const queueHandlerStart = workerSource.indexOf("async function handleGlobalRankingQueueBatch")
-    const queueHandlerEnd = workerSource.indexOf("\nasync function refreshGlobalRankingCache", queueHandlerStart)
+    const queueHandlerEnd = workerSource.indexOf("\nfunction historicalAdvertisingBudget", queueHandlerStart)
     const queueHandler = workerSource.slice(queueHandlerStart, queueHandlerEnd)
     const directorQueueBranches = Array.from(queueHandler.matchAll(/if \(body\.kind === FACTION_DIRECTOR_ADMIN_QUEUE_KIND && halloweenJobId\)/g))
     assert.equal(directorQueueBranches.length, 2, "the main queue and dead-letter queue must each handle faction-directory messages")
@@ -5159,60 +5173,28 @@ try {
     assert.deepEqual(otherPlayer, { reservedAt: 10_000, waitMs: 0 }, "reservations must be isolated by player ID")
   })
 
-  await test("global ranking endpoint reads singleton metadata and publishes it with the completed snapshot", async () => {
-    let metadata = null
-    let reads = 0
-    let writes = 0
-    const database = {
-      prepare(sql) {
-        if (sql.includes("SELECT") && sql.includes("global_company_rank_snapshot_meta")) {
-          assert.match(sql, /WHERE singleton_id = 1/)
-          assert.doesNotMatch(sql, /MAX\(|COUNT\(\*\)|global_company_rank_snapshots/,
-            "normal requests must not scan the historical snapshot table")
-          return { async first() { reads += 1; return metadata } }
-        }
-        if (sql.includes("INSERT INTO global_company_rank_snapshot_meta")) {
-          return {
-            bind(...values) { this.values = values; return this },
-            async run() {
-              writes += 1
-              const [reportingDay, sourceFetchedAt, companyCount, updatedAt] = this.values
-              metadata = { reportingDay, sourceFetchedAt, companyCount, updatedAt }
-              return { success: true }
-            },
-          }
-        }
-        throw new Error("Unexpected ranking metadata SQL: " + sql)
-      },
-    }
-    assert.equal(await readGlobalRankingSnapshotMetadata(database), null)
-    const snapshot = {
-      reportingDay: "2026-11-18",
-      sourceFetchedAt: "2026-11-18T18:11:03.763Z",
-      companyCount: 15_362,
-      updatedAt: "2026-11-18T18:11:04.000Z",
-    }
-    await writeGlobalRankingSnapshotMetadata(database, snapshot)
-    assert.deepEqual(await readGlobalRankingSnapshotMetadata(database), snapshot)
-    assert.equal(reads, 2)
-    assert.equal(writes, 1)
-
+  await test("weekly star-income buffers publish compact aggregates and retain legacy history", () => {
     const workerSource = readFileSync(join(root, "src/worker/index.ts"), "utf8")
-    const rankingStart = workerSource.indexOf('if (url.pathname === "/api/rankings" && request.method === "GET")')
-    const rankingEnd = workerSource.indexOf("const rows = await requireDb(env).prepare", rankingStart)
-    const rankingHandler = workerSource.slice(rankingStart, rankingEnd)
-    assert.ok(rankingStart >= 0 && rankingEnd > rankingStart)
-    assert.match(rankingHandler, /readGlobalRankingSnapshotMetadata/)
-    assert.doesNotMatch(rankingHandler, /MAX\(source_fetched_at\)|COUNT\(\*\).*global_company_rank_snapshots/)
-    const finalizeStart = workerSource.indexOf("async function finalizeGlobalRankingRefresh")
-    const finalizeEnd = workerSource.indexOf("async function processGlobalRankingQueueMessage", finalizeStart)
-    assert.match(workerSource.slice(finalizeStart, finalizeEnd), /writeGlobalRankingSnapshotMetadata/)
-    const migration = readFileSync(join(root, "migrations/auth/0038_global_company_rank_snapshot_meta.sql"), "utf8")
-    assert.match(migration, /CREATE TABLE IF NOT EXISTS global_company_rank_snapshot_meta/)
-    assert.match(migration, /MAX\(source_fetched_at\)/)
-    assert.match(migration, /COUNT\(\*\)/)
-    assert.doesNotMatch(migration, /DELETE FROM global_company_rank_snapshots|DROP TABLE/i,
-      "the metadata migration must not delete history")
+    const helperSource = readFileSync(join(root, "src/lib/company/star-income-buffers.ts"), "utf8")
+    const floorSource = readFileSync(join(root, "src/components/floor/floor-app.tsx"), "utf8")
+    const migration = readFileSync(join(root, "migrations/auth/0039_global_star_income_buffers.sql"), "utf8")
+    assert.match(workerSource, /INSERT INTO global_star_income_buffers/)
+    assert.match(workerSource, /INSERT INTO global_star_income_buffer_snapshots/)
+    assert.match(workerSource, /companyIds: pageCompanyIds, buffers: buildGlobalStarIncomeBuffers\(pageInputs\)/)
+    assert.match(workerSource, /getLatestGlobalStarIncomeBufferSnapshot/)
+    assert.match(workerSource, /starIncomeBuffers/)
+    assert.match(helperSource, /minWeeklyIncome/)
+    assert.match(helperSource, /maxWeeklyIncome/)
+    assert.match(helperSource, /companyCount/)
+    assert.match(helperSource, /nextStarGap/)
+    assert.match(helperSource, /previousStarGap/)
+    assert.match(floorSource, /resolveStarIncomeProgress/)
+    assert.doesNotMatch(floorSource, /\/api\/rankings\?scope=global|globalRankingCompanies|Company Rankings/)
+    assert.match(floorSource, /NEXT STAR GAP/)
+    assert.match(floorSource, /PREVIOUS STAR BUFFER/)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffers/)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS global_star_income_buffer_snapshots/)
+    assert.doesNotMatch(migration, /DELETE FROM|DROP TABLE/i, "the new migration must preserve existing ranking history")
   })
 
   await test("production Worker routes call all four D1 optimization helpers", () => {
@@ -5247,12 +5229,12 @@ try {
     assert.equal(dailyReportingDay(Date.parse("2026-11-15T18:00:00.000Z")), "2026-11-15")
     assert.equal(dailyCacheTtlSeconds(Date.parse("2026-11-15T17:59:59.000Z")), 1)
     assert.equal(dailyCacheTtlSeconds(Date.parse("2026-11-15T18:00:00.000Z")), 86400)
-    assert.deepEqual(cacheableDailySnapshotTables("SELECT * FROM global_company_rank_snapshots WHERE reporting_day = ?"), ["global_company_rank_snapshots"])
+    assert.equal(cacheableDailySnapshotTables("SELECT * FROM global_company_rank_snapshots WHERE reporting_day = ?"), null, "retired global company placement rows must not be cached")
     assert.deepEqual(cacheableDailySnapshotTables("SELECT * FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ?"), ["faction_company_rank_snapshots"])
     assert.equal(cacheableDailySnapshotTables("SELECT * FROM faction_weekly_reports r JOIN faction_weekly_member_results m ON m.faction_id = r.faction_id"), null, "weekly records use a different reporting boundary and stay outside the daily cache")
     assert.equal(cacheableDailySnapshotTables("SELECT * FROM sessions s JOIN players p ON p.player_id = s.player_id"), null)
     assert.equal(cacheableDailySnapshotTables("SELECT * FROM global_company_rank_snapshots r, sessions s WHERE s.player_id = r.company_id"), null, "comma joins cannot bypass the source-table allowlist")
-    assert.equal(cacheableDailySnapshotTables("SELECT company_id FROM global_company_rank_snapshots WHERE captured_at < datetime('now')"), null, "time-dependent expressions are not cached")
+    assert.equal(cacheableDailySnapshotTables("SELECT company_id FROM faction_company_rank_snapshots WHERE captured_at < datetime('now')"), null, "time-dependent expressions are not cached")
     assert.equal(cacheableDailySnapshotTables("SELECT * FROM company_snapshots WHERE date(fetched_at, '-18 hours') = ?"), null, "manual catch-up/restore can still add historical rows")
     assert.equal(cacheableDailySnapshotTables("SELECT * FROM faction_member_stat_snapshots ORDER BY captured_at DESC LIMIT 1"), null)
   })
@@ -5270,7 +5252,7 @@ try {
         return {
           bind(...values) { bindings = values; return this },
           async first() {
-            if (sql.includes("FROM global_rankings_refresh_runs")) {
+            if (sql.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) {
               readinessReads += 1
               return ready ? { ready: 1 } : null
             }
@@ -5278,7 +5260,7 @@ try {
             return { companyId: String(bindings[0] ?? "unknown"), weeklyIncome: 123456 }
           },
           async all() {
-            if (sql.includes("FROM global_rankings_refresh_runs")) {
+            if (sql.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) {
               readinessReads += 1
               return { results: ready ? [{ ready: 1 }] : [] }
             }
@@ -5290,9 +5272,9 @@ try {
       },
     }
     const cachedDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-test")
-    const sql = "SELECT company_id AS companyId, weekly_income AS weeklyIncome FROM global_company_rank_snapshots WHERE reporting_day = ?"
-    const first = await cachedDb.prepare(sql).bind("2026-11-15").all()
-    const second = await cachedDb.prepare(sql).bind("2026-11-15").all()
+    const sql = "SELECT company_id AS companyId, weekly_income AS weeklyIncome FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ?"
+    const first = await cachedDb.prepare(sql).bind("2026-11-15", "8317").all()
+    const second = await cachedDb.prepare(sql).bind("2026-11-15", "8317").all()
     assert.equal(snapshotReads, 2, "an incomplete daily capture must bypass the cache")
     assert.equal(readinessReads, 1, "the negative readiness probe should be briefly memoized per isolate")
     assert.equal(first.results.length, 1)
@@ -5301,18 +5283,18 @@ try {
     ready = true
     // A new namespace models a different Worker deployment/isolated D1 cache scope.
     const readyDb = withDailySnapshotReadCache(database, "backend-cache-readthrough-ready-test")
-    const third = await readyDb.prepare(sql).bind("2026-11-15").all()
-    const fourth = await readyDb.prepare(sql).bind("2026-11-15").all()
+    const third = await readyDb.prepare(sql).bind("2026-11-15", "8317").all()
+    const fourth = await readyDb.prepare(sql).bind("2026-11-15", "8317").all()
     assert.equal(snapshotReads, 3, "the second request after successful lock-in should be served from cache")
     assert.equal(readinessReads, 2, "the ready marker should prevent a D1 readiness read on every request")
     assert.deepEqual(fourth.results, third.results)
 
-    const differentPlayer = await readyDb.prepare(sql).bind("2026-11-16").all()
+    const differentPlayer = await readyDb.prepare(sql).bind("2026-11-16", "8317").all()
     assert.equal(snapshotReads, 4, "different bound parameters must never share cached rows")
     assert.equal(differentPlayer.results[0].companyId, "2026-11-16")
-    const firstSql = "SELECT company_id AS companyId FROM global_company_rank_snapshots WHERE reporting_day = ? AND company_id = ?"
-    const firstRead = await readyDb.prepare(firstSql).bind("2026-11-15", "first-company").first()
-    const firstCacheHit = await readyDb.prepare(firstSql).bind("2026-11-15", "first-company").first()
+    const firstSql = "SELECT company_id AS companyId FROM faction_company_rank_snapshots WHERE reporting_day = ? AND faction_id = ? AND company_id = ?"
+    const firstRead = await readyDb.prepare(firstSql).bind("2026-11-15", "8317", "first-company").first()
+    const firstCacheHit = await readyDb.prepare(firstSql).bind("2026-11-15", "8317", "first-company").first()
     assert.equal(snapshotReads, 5, "first() results are cached as well as all() result sets")
     assert.deepEqual(firstCacheHit, firstRead)
 
@@ -5336,12 +5318,12 @@ try {
         return {
           bind(...args) { values = args; return this },
           async first() {
-            if (query.includes("FROM global_rankings_refresh_runs")) return { ready: 1 }
+            if (query.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) return { ready: 1 }
             snapshotReads += 1
             return { companyId: String(values[0] ?? "global"), weeklyIncome: 654321 }
           },
           async all() {
-            if (query.includes("FROM global_rankings_refresh_runs")) return { results: [{ ready: 1 }] }
+            if (query.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) return { results: [{ ready: 1 }] }
             snapshotReads += 1
             return { results: [{ companyId: String(values[0] ?? "global"), weeklyIncome: 654321 }] }
           },
@@ -5350,7 +5332,7 @@ try {
       },
     }
     const kvBacked = withDailySnapshotReadCache(kvDatabase, "backend-cache-kv-persistence-test", kv)
-    await kvBacked.prepare(sql).bind("shared-report").all()
+    await kvBacked.prepare(sql).bind("shared-report", "8317").all()
     assert.ok(kvWrites.length >= 2, "a successful daily capture writes both the readiness marker and snapshot result to KV")
     const nextBoundary = Date.parse(dailyReportingDay(Date.now()) + "T18:00:00.000Z") + 86400000
     assert.ok(kvWrites.every(write => write.expiration === Math.floor(nextBoundary / 1000)), "KV keys expire exactly at the next 18:00 UTC reporting boundary")
@@ -5368,12 +5350,12 @@ try {
         return {
           bind() { return this },
           async first() {
-            if (query.includes("FROM global_rankings_refresh_runs")) { isolatedReadinessReads += 1; return { ready: 1 } }
+            if (query.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) { isolatedReadinessReads += 1; return { ready: 1 } }
             isolatedD1SnapshotReads += 1
             return { companyId: "unexpected-d1", weeklyIncome: 0 }
           },
           async all() {
-            if (query.includes("FROM global_rankings_refresh_runs")) { isolatedReadinessReads += 1; return { results: [{ ready: 1 }] } }
+            if (query.includes("SELECT 1 AS ready FROM faction_company_rank_snapshots")) { isolatedReadinessReads += 1; return { results: [{ ready: 1 }] } }
             isolatedD1SnapshotReads += 1
             return { results: [{ companyId: "unexpected-d1", weeklyIncome: 0 }] }
           },
@@ -5382,7 +5364,7 @@ try {
       },
     }
     const isolatedDb = isolatedCacheModule.withDailySnapshotReadCache(isolatedDatabase, "backend-cache-kv-persistence-test", kv)
-    const sharedHit = await isolatedDb.prepare(sql).bind("shared-report").all()
+    const sharedHit = await isolatedDb.prepare(sql).bind("shared-report", "8317").all()
     assert.equal(isolatedD1SnapshotReads, 0, "a fresh Worker isolate reads the global KV cache instead of D1")
     assert.equal(isolatedReadinessReads, 0, "a fresh Worker isolate also reads the shared readiness marker")
     assert.equal(sharedHit.results[0].companyId, "shared-report")
