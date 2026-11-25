@@ -59,3 +59,10 @@ export function isExpectedWeeklyStarIncomeSchedule(timestamp: string): boolean {
   return Number.isFinite(date.getTime()) && date.getUTCDay() === 1 && date.getUTCHours() === 0 &&
     date.getUTCMinutes() === 10 && date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0
 }
+
+
+/** The Monday 00:10 UTC cron was introduced on 2026-11-25; earlier captures belong to the prior Sunday 18:10 UTC schedule. */
+export function isBeforeWeeklyStarIncomeScheduleChange(timestamp: string): boolean {
+  const date = new Date(timestamp)
+  return Number.isFinite(date.getTime()) && date.getTime() < Date.parse("2026-11-25T02:38:34.909074Z")
+}
