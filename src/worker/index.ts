@@ -3950,7 +3950,7 @@ async function persistCompleteFactionRankingSnapshot(db: D1Database): Promise<bo
   return true
 }
 
-async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; failedMemberCount: number; complete: boolean }> {
+async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limit = 20, forceRefresh = false, forceRefreshAll = false): Promise<{ processed: number; pending: number; directors: Record<string, unknown>[]; memberCount: number; invalidMemberCount: number; failedMemberCount: number; complete: boolean }> {
   const client = createTornApiClient(env, apiKey, "faction-directory-refresh")
   const memberPayload = await client.getFactionMembers()
   if (!(Array.isArray(memberPayload.members) || isRecord(memberPayload.members))) throw new Error("Torn did not return a valid faction member roster.")
@@ -3983,7 +3983,7 @@ async function syncFactionDirectorDirectory(env: WorkerEnv, apiKey: string, limi
   for (const { item, id } of members) {
     const name = typeof item.name === "string" ? item.name : `Player #${id}`
     const checked = checkedAtForPlayer(id)
-    if (checked && now - checked < freshnessWindowMs) continue
+    if (!forceRefreshAll && checked && now - checked < freshnessWindowMs) continue
     if (processed >= limit) { pending += 1; continue }
     processed += 1
     const checkedAt = new Date().toISOString()
@@ -4083,11 +4083,11 @@ async function getLatestGlobalStarIncomeBufferSnapshot(db: D1Database): Promise<
   return { starIncomeBuffers: rows.results ?? [], starIncomeBufferSnapshot: snapshot }
 }
 
-async function refreshFactionDirectoryFromServiceKey(env: WorkerEnv, limit = 35, forceRefresh = false): Promise<Awaited<ReturnType<typeof syncFactionDirectorDirectory>>> {
+async function refreshFactionDirectoryFromServiceKey(env: WorkerEnv, limit = 35, forceRefresh = false, forceRefreshAll = false): Promise<Awaited<ReturnType<typeof syncFactionDirectorDirectory>>> {
   if (!env.DB) throw new Error("The faction directory database is unavailable.")
   const apiKey = workerServiceTornApiKey(env)
   if (!apiKey) throw new Error("The Worker-owned Torn service API key is unavailable.")
-  return syncFactionDirectorDirectory(env, apiKey, limit, forceRefresh)
+  return syncFactionDirectorDirectory(env, apiKey, limit, forceRefresh, forceRefreshAll)
 }
 
 async function refreshRankingProfiles(env: WorkerEnv, captureHistory = false, snapshotSchedule?: { cron: string; scheduledTime: number }): Promise<{ companiesChecked: number; companiesFailed: number; snapshotsAdded: number; snapshotsSkipped: number; snapshotsRejected: number }> {
@@ -4700,7 +4700,7 @@ async function runScheduledAutomation(controller: { scheduledTime: number; cron:
   const isWeeklyStarIncomeBufferWindow = controller.cron.trim() === "10 0 * * 1"
   const startedAt = new Date(controller.scheduledTime).toISOString()
   const factionDirectoryLimit = isWeeklyStarIncomeBufferWindow ? 250 : 35
-  const refreshDirectory = () => refreshFactionDirectoryFromServiceKey(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow)
+  const refreshDirectory = () => refreshFactionDirectoryFromServiceKey(env, factionDirectoryLimit, isWeeklyStarIncomeBufferWindow, isWeeklyStarIncomeBufferWindow)
   const captureWeeklyFactionCounts = () => refreshThenCaptureWeeklyFactionSnapshot(
     () => refreshDirectory(),
     () => captureWeeklyFactionStarCounts(env, startedAt),
