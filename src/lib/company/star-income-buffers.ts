@@ -51,3 +51,11 @@ export function resolveStarIncomeProgress(buffers: readonly GlobalStarIncomeBuff
     previousStarGap: previous && income !== null ? Math.max(0, income - previous.maxWeeklyIncome) : null,
   }
 }
+
+
+/** The weekly global benchmark is valid only for the Monday 00:10 UTC cron. */
+export function isExpectedWeeklyStarIncomeSchedule(timestamp: string): boolean {
+  const date = new Date(timestamp)
+  return Number.isFinite(date.getTime()) && date.getUTCDay() === 1 && date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 10 && date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0
+}

@@ -96,7 +96,7 @@ try {
     "energydrinkused", "refills", "statenhancersused", "networth", "cantaken",
   ]
   const worker = require(join(temp, "worker/index.js")).default
-  const { buildGlobalStarIncomeBuffers, mergeGlobalStarIncomeBuffers, resolveStarIncomeProgress } = require(join(temp, "lib/company/star-income-buffers.js"))
+  const { buildGlobalStarIncomeBuffers, mergeGlobalStarIncomeBuffers, resolveStarIncomeProgress, isExpectedWeeklyStarIncomeSchedule } = require(join(temp, "lib/company/star-income-buffers.js"))
   const { dailyReportingDay, dailyCacheTtlSeconds, cacheableDailySnapshotTables, withDailySnapshotReadCache } = require(join(temp, "worker/daily-read-cache.js"))
   const { D1RequestReadMeter, buildFirstRowSql } = require(join(temp, "worker/d1-read-accounting.js"))
   const { SESSION_ACCESS_SQL, loadSessionAccess, sessionAccessIsDenied, readAutomationPreferences, DEFAULT_AUTOMATION_PREFERENCES, reserveHalloweenRequestSlot } = require(join(temp, "worker/d1-optimizations.js"))
@@ -549,6 +549,9 @@ try {
       nextStarRating:null,nextStarIncome:null,nextStarGap:null,
       previousStarRating:null,previousStarIncome:null,previousStarGap:null,
     })
+    assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:10:00.000Z"),true,"Monday 00:10 UTC is the approved weekly capture")
+    assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-22T18:10:00.000Z"),false,"Sunday 18:10 UTC is not the approved weekly capture")
+    assert.equal(isExpectedWeeklyStarIncomeSchedule("2026-11-23T00:11:00.000Z"),false,"a late minute is not the scheduled cron timestamp")
   })
 
   await test("faction-wide stats parser excludes deprecated Torn counters and filters legacy snapshots", () => {
